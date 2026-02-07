@@ -1,0 +1,104 @@
+# Copyright 2026 Jeremy Hahn
+# SPDX-License-Identifier: MIT
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)" || (echo "Files need formatting:" && gofmt -l . && exit 1)
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
+        env:
+          CGO_ENABLED: '1'
+
+      - name: Per-package coverage
+        run: |
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Coverage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          FAIL=0
+          for pkg in dane noiseproto spkipin truststrap; do
+            go test -count=1 -race -coverprofile="coverage-${pkg}.out" -covermode=atomic "./pkg/${pkg}/..."
+            COV=$(go tool cover -func="coverage-${pkg}.out" | grep total | awk '{print $3}' | tr -d '%')
+            if [ -z "$COV" ]; then COV="0.0"; fi
+            INT=$(echo "$COV" | cut -d. -f1)
+            if [ "$INT" -lt 90 ]; then
+              echo "| pkg/${pkg} | ${COV}% | :x: FAIL |" >> $GITHUB_STEP_SUMMARY
+              FAIL=1
+            else
+              echo "| pkg/${pkg} | ${COV}% | :white_check_mark: PASS |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total: ${TOTAL}**" >> $GITHUB_STEP_SUMMARY
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::Coverage threshold (90%) not met for one or more packages"
+            exit 1
+          fi
+
+      - name: Build CLI
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/truststrap ./cmd/truststrap
+
+      - name: Verify binary
+        run: ./bin/truststrap version
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.6.2
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: gosec
+        run: >-
+          gosec -exclude=G104,G115,G304,G402
+          -severity medium -confidence medium
+          -exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor
+          -exclude-generated
+          ./...
+
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck
+        run: govulncheck -show verbose ./... || echo "::warning::govulncheck found vulnerabilities (see output above)"

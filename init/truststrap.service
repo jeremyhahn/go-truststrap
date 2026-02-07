@@ -1,0 +1,50 @@
+# Copyright 2026 Jeremy Hahn
+# SPDX-License-Identifier: MIT
+
+[Unit]
+Description=truststrap Noise_NK bootstrap server
+Documentation=https://github.com/jeremyhahn/go-truststrap
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=truststrap
+Group=truststrap
+
+EnvironmentFile=-/etc/truststrap/truststrap.env
+
+ExecStart=/usr/local/bin/truststrap serve \
+    --bundle-file=${TRUSTSTRAP_BUNDLE_FILE} \
+    --key-file=${TRUSTSTRAP_KEY_FILE} \
+    --listen=${TRUSTSTRAP_LISTEN} \
+    --max-connections=${TRUSTSTRAP_MAX_CONNECTIONS} \
+    --log-format=${TRUSTSTRAP_LOG_FORMAT}
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=truststrap
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+ReadWritePaths=/etc/truststrap
+
+[Install]
+WantedBy=multi-user.target
