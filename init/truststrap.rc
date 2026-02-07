@@ -1,0 +1,104 @@
+#!/bin/sh
+# Copyright 2026 Jeremy Hahn
+# SPDX-License-Identifier: MIT
+#
+# truststrap - Noise_NK bootstrap server
+#
+# chkconfig: 2345 95 05
+# description: truststrap serves CA certificate bundles over Noise_NK
+#
+### BEGIN INIT INFO
+# Provides:          truststrap
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: truststrap bootstrap server
+# Description:       Serves CA certificate bundles over Noise_NK encrypted channels
+### END INIT INFO
+
+NAME=truststrap
+DAEMON=/usr/local/bin/truststrap
+PIDFILE=/var/run/truststrap.pid
+LOGFILE=/var/log/truststrap.log
+USER=truststrap
+
+# Source configuration
+if [ -f /etc/default/truststrap ]; then
+    . /etc/default/truststrap
+elif [ -f /etc/conf.d/truststrap ]; then
+    . /etc/conf.d/truststrap
+fi
+
+BUNDLE_FILE="${TRUSTSTRAP_BUNDLE_FILE:-/etc/truststrap/ca-bundle.pem}"
+KEY_FILE="${TRUSTSTRAP_KEY_FILE:-/etc/truststrap/noise.key}"
+LISTEN="${TRUSTSTRAP_LISTEN:-:8445}"
+MAX_CONNECTIONS="${TRUSTSTRAP_MAX_CONNECTIONS:-100}"
+LOG_FORMAT="${TRUSTSTRAP_LOG_FORMAT:-text}"
+
+DAEMON_ARGS="serve --bundle-file=${BUNDLE_FILE} --key-file=${KEY_FILE} --listen=${LISTEN} --max-connections=${MAX_CONNECTIONS} --log-format=${LOG_FORMAT}"
+
+do_start() {
+    printf "Starting %s: " "$NAME"
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        printf "already running (pid %s)\n" "$(cat "$PIDFILE")"
+        return 1
+    fi
+    if command -v start-stop-daemon >/dev/null 2>&1; then
+        start-stop-daemon --start --quiet --background \
+            --make-pidfile --pidfile "$PIDFILE" \
+            --chuid "$USER" \
+            --startas /bin/sh -- -c "exec $DAEMON $DAEMON_ARGS >> $LOGFILE 2>&1"
+    else
+        su -s /bin/sh "$USER" -c "$DAEMON $DAEMON_ARGS >> $LOGFILE 2>&1 &"
+        echo $! > "$PIDFILE"
+    fi
+    printf "done\n"
+}
+
+do_stop() {
+    printf "Stopping %s: " "$NAME"
+    if [ ! -f "$PIDFILE" ]; then
+        printf "not running\n"
+        return 0
+    fi
+    PID=$(cat "$PIDFILE")
+    if ! kill -0 "$PID" 2>/dev/null; then
+        printf "not running (stale pidfile)\n"
+        rm -f "$PIDFILE"
+        return 0
+    fi
+    kill -TERM "$PID"
+    TIMEOUT=15
+    while [ $TIMEOUT -gt 0 ] && kill -0 "$PID" 2>/dev/null; do
+        sleep 1
+        TIMEOUT=$((TIMEOUT - 1))
+    done
+    if kill -0 "$PID" 2>/dev/null; then
+        kill -KILL "$PID"
+    fi
+    rm -f "$PIDFILE"
+    printf "done\n"
+}
+
+do_status() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        printf "%s is running (pid %s)\n" "$NAME" "$(cat "$PIDFILE")"
+        return 0
+    fi
+    printf "%s is not running\n" "$NAME"
+    return 1
+}
+
+case "$1" in
+    start)   do_start ;;
+    stop)    do_stop ;;
+    restart) do_stop; do_start ;;
+    status)  do_status ;;
+    *)
+        printf "Usage: %s {start|stop|restart|status}\n" "$0"
+        exit 1
+        ;;
+esac
+
+exit $?

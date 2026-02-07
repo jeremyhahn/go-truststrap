@@ -1,0 +1,49 @@
+# Copyright 2026 Jeremy Hahn
+# SPDX-License-Identifier: MIT
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - bodyclose
+    - durationcheck
+    - errname
+    - errorlint
+    - goconst
+    - gocritic
+    - gofmt
+    - goimports
+    - misspell
+    - nilerr
+    - noctx
+    - prealloc
+    - unconvert
+    - unparam
+    - wastedassign
+
+linters-settings:
+  gosec:
+    excludes:
+      - G402
+  errcheck:
+    check-type-assertions: true
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+issues:
+  exclude-dirs:
+    - test/integration
+    - vendor
+  exclude-rules:
+    - path: _test\.go
+      linters: [goconst, errcheck]

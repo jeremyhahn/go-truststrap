@@ -1,0 +1,45 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage/
+
+# Dependency directories
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+
+# Integration test generated artifacts
+test/integration/testdata/*.pem
+test/integration/testdata/*.key
+test/integration/testdata/*.csr
+test/integration/testdata/*.cnf
+test/integration/testdata/*.srl
+test/integration/testdata/*.env
+test/integration/testdata/*.txt
+test/integration/testdata/db.*
+test/integration/testdata/Corefile
+test/integration/testdata/K*
+
+CLAUDE.md
