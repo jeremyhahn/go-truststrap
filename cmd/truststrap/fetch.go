@@ -310,7 +310,7 @@ func fetchHTTPBundle(ctx context.Context, client *http.Client, serverURL string)
 
 	slog.Debug("fetching CA bundle", "url", url)
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- URL is from operator-provided config, not user input
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}

@@ -18,7 +18,7 @@ const (
 
 	// UsageDANETA (DANE-TA) specifies a trust anchor for the domain.
 	// PKIX validation is not required; the TLSA record itself establishes trust.
-	// This is the primary use case for go-keychain's CA integration.
+	// This is the primary use case for go-xkms's CA integration.
 	UsageDANETA uint8 = 2
 
 	// UsageDANEEE (DANE-EE) pins a specific end-entity certificate.

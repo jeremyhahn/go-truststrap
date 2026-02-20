@@ -114,7 +114,7 @@ func (b *DirectBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReq
 
 	b.logger.Debug("fetching CA bundle via direct HTTPS", "url", httpReq.URL.String())
 
-	resp, err := b.client.Do(httpReq)
+	resp, err := b.client.Do(httpReq) // #nosec G704 -- URL is from operator-provided config, not user input
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDirectFetchFailed, err)
 	}

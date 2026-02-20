@@ -103,7 +103,7 @@ func createTestIntermediateCA(t *testing.T, parent *x509.Certificate, parentKey 
 
 // encodeCertsToPEM encodes certificates to PEM format.
 func encodeCertsToPEM(certs []*x509.Certificate) []byte {
-	var result []byte
+	result := make([]byte, 0, len(certs)*1024)
 	for _, cert := range certs {
 		block := &pem.Block{
 			Type:  "CERTIFICATE",

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.automatethethings.truststrap.NoiseNKSessionTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-02-07T19:41:09.225Z" hostname="vstation-01" time="0.174">
+  <properties/>
+  <testcase name="encrypt throws before handshake completes()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.096"/>
+  <testcase name="x25519 is deterministic()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.02"/>
+  <testcase name="decrypt throws before handshake completes()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.013"/>
+  <testcase name="createHandshakeMessage1 returns 32-byte ephemeral key()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.008"/>
+  <testcase name="createHandshakeMessage1 returns different keys each time()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.015"/>
+  <testcase name="processHandshakeMessage2 rejects short message()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.009"/>
+  <testcase name="x25519 scalar mult base produces 32-byte output()" classname="com.automatethethings.truststrap.NoiseNKSessionTest" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

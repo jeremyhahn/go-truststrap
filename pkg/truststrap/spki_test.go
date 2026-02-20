@@ -426,3 +426,42 @@ func TestSPKIBootstrapper_Close(t *testing.T) {
 func TestSPKIBootstrapper_ImplementsBootstrapper(t *testing.T) {
 	var _ Bootstrapper = (*SPKIBootstrapper)(nil)
 }
+
+func TestSPKIBootstrapper_FetchCABundle_CustomBundlePath(t *testing.T) {
+	bundle := newTestCertBundle(t)
+	customPath := "/api/v1/ca/bundle"
+
+	var receivedPath string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		w.Write(bundle.combinedPEM)
+	}))
+	defer server.Close()
+
+	serverCert := server.TLS.Certificates[0]
+	parsed, err := x509.ParseCertificate(serverCert.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse server cert: %v", err)
+	}
+	pin := spkipin.ComputeSPKIPin(parsed)
+
+	bs, err := NewSPKIBootstrapper(&SPKIConfig{
+		ServerURL:     server.URL,
+		SPKIPinSHA256: pin,
+		BundlePath:    customPath,
+	})
+	if err != nil {
+		t.Fatalf("NewSPKIBootstrapper() error = %v", err)
+	}
+	defer bs.Close()
+
+	_, err = bs.FetchCABundle(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("FetchCABundle() error = %v", err)
+	}
+
+	if receivedPath != customPath {
+		t.Errorf("received path = %q, want %q", receivedPath, customPath)
+	}
+}

@@ -25,7 +25,7 @@ const (
 
 // ClientConfig configures the SPKI-pinned TLS bootstrap client.
 type ClientConfig struct {
-	// ServerURL is the base URL of the keychain server (e.g., "https://kms.example.com:8443").
+	// ServerURL is the base URL of the xKMS server (e.g., "https://kms.example.com:8443").
 	ServerURL string
 
 	// SPKIPinSHA256 is the hex-encoded SHA-256 hash of the server's SPKI.
@@ -36,9 +36,12 @@ type ClientConfig struct {
 
 	// Logger for structured logging. Defaults to slog.Default().
 	Logger *slog.Logger
+
+	// BundlePath is the REST API path for the CA bundle endpoint. Default: CABundlePath.
+	BundlePath string
 }
 
-// Client fetches CA bundles from a keychain server using SPKI-pinned TLS.
+// Client fetches CA bundles from an xKMS server using SPKI-pinned TLS.
 type Client struct {
 	config     *ClientConfig
 	httpClient *http.Client
@@ -62,6 +65,9 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.BundlePath == "" {
+		cfg.BundlePath = CABundlePath
+	}
 
 	tlsConfig, err := NewPinnedTLSConfig(cfg.SPKIPinSHA256)
 	if err != nil {
@@ -83,7 +89,7 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 // FetchCABundle retrieves the CA certificate bundle from the server.
 // storeType and algorithm are optional filters (pass empty string to skip).
 func (c *Client) FetchCABundle(ctx context.Context, storeType, algorithm string) ([]byte, error) {
-	url := c.config.ServerURL + CABundlePath
+	url := c.config.ServerURL + c.config.BundlePath
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -101,7 +107,7 @@ func (c *Client) FetchCABundle(ctx context.Context, storeType, algorithm string)
 
 	c.logger.Debug("fetching CA bundle", "url", req.URL.String())
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- URL is from operator-provided config, not user input
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.automatethethings.truststrap.TrustStrapClientTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-02-07T19:41:09.403Z" hostname="vstation-01" time="133.244">
+  <properties/>
+  <testcase name="fetchWithMethod NOISE throws when server address blank()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.014"/>
+  <testcase name="fetchWithMethod SPKI throws when pin blank()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.008"/>
+  <testcase name="fetchWithMethod DANE throws when server URL blank()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.001"/>
+  <testcase name="fetchCABundle tries all enabled methods and throws BootstrapFailedException()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.144"/>
+  <testcase name="fetchWithMethod SPKI throws when server URL blank()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.001"/>
+  <testcase name="fetchWithMethod NOISE throws when server static key blank()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.0"/>
+  <testcase name="fetchWithMethod DIRECT throws when server URL blank()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.001"/>
+  <testcase name="fetchWithMethod NOISE throws on invalid address format()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.002"/>
+  <testcase name="fetchWithMethod NOISE throws on unreachable host()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="133.061"/>
+  <testcase name="fetchCABundle throws NoMethodsConfiguredException when no methods enabled()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.002"/>
+  <testcase name="constructor accepts config and does not throw()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.001"/>
+  <testcase name="fetchWithMethod SPKI throws when pin wrong length()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.001"/>
+  <testcase name="fetchWithMethod NOISE throws when server static key wrong length()" classname="com.automatethethings.truststrap.TrustStrapClientTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Feb 07, 2026 2:41:09 PM com.automatethethings.truststrap.TrustStrapClient fetchCABundle
+INFO: Attempting bootstrap method: DANE
+Feb 07, 2026 2:41:09 PM com.automatethethings.truststrap.TrustStrapClient fetchWithDANE
+WARNING: DANE: Full TLSA verification not yet implemented, falling back to insecure fetch
+Feb 07, 2026 2:41:09 PM com.automatethethings.truststrap.TrustStrapClient fetchCABundle
+WARNING: Bootstrap method DANE failed: Direct bootstrap failed: Network error fetching from https://nonexistent.invalid:9999/v1/ca/bootstrap
+Feb 07, 2026 2:41:09 PM com.automatethethings.truststrap.TrustStrapClient fetchCABundle
+INFO: Attempting bootstrap method: DIRECT
+Feb 07, 2026 2:41:09 PM com.automatethethings.truststrap.TrustStrapClient fetchCABundle
+WARNING: Bootstrap method DIRECT failed: Direct bootstrap failed: Network error fetching from https://nonexistent.invalid:9999/v1/ca/bootstrap
+]]></system-err>
+</testsuite>

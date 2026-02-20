@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.automatethethings.truststrap.config.TrustStrapConfigTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-02-07T19:43:22.650Z" hostname="vstation-01" time="0.013">
+  <properties/>
+  <testcase name="hasConfiguredMethod returns false when no methods have URLs()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="default config has no enabled methods()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="BootstrapMethod fromName handles case insensitivity()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="getEnabledMethods returns only enabled methods()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="deriveFromUrl returns same config for invalid URL()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="hasConfiguredMethod returns true for configured Noise()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="deriveFromUrl returns same config for blank URL()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="hasConfiguredMethod returns true for configured DANE()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="hasConfiguredMethod returns true for configured SPKI()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="deriveFromUrl populates all method configs from URL()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="hasConfiguredMethod returns false for Noise with missing key()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="deriveFromUrl uses default port 8443 when no port specified()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="hasConfiguredMethod returns true for configured Direct()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="getEnabledMethods respects method order()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <testcase name="hasConfiguredMethod returns false for SPKI with missing pin()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="default method order is DANE, NOISE, SPKI, DIRECT()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.001"/>
+  <testcase name="default timeout is 15 seconds()" classname="com.automatethethings.truststrap.config.TrustStrapConfigTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

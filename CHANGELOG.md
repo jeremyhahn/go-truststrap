@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0-alpha] - 2025-XX-XX
 
 ### Added
-- Initial extraction from go-keychain bootstrap subsystem
+- Initial extraction from go-xkms bootstrap subsystem
 - DANE/TLSA bootstrapper with DNSSEC validation
 - Noise_NK bootstrapper for pre-shared key based trust
 - SPKI-pinned TLS bootstrapper
