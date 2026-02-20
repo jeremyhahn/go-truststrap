@@ -18,7 +18,7 @@ Client                     DNS (DNSSEC)              Server
   |-- TLSA query ----------->|                        |
   |<-- TLSA records (AD=1) --|                        |
   |                                                    |
-  |-- HTTPS GET /v1/ca/bootstrap (InsecureSkipVerify) |
+  |-- HTTPS GET /v1/ca/bootstrap (InsecureSkipVerify)  |
   |<-- CA bundle (PEM) -------------------------------|
   |                                                    |
   [Verify bundle against TLSA records]

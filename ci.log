@@ -1,0 +1,49 @@
+[36mDownloading dependencies...[0m
+[32mDependencies downloaded[0m
+[36mChecking formatting...[0m
+[32mFormatting check passed[0m
+[36mRunning go vet...[0m
+[32mgo vet passed[0m
+[36mRunning linter...[0m
+0 issues.
+[32mLint passed[0m
+[36mRunning security scanner...[0m
+[32mSecurity scan passed - no issues found[0m
+[36mReport: bin/gosec-report.txt[0m
+[36mRunning vulnerability scanner...[0m
+[32mVulnerability scan passed[0m
+[36mRunning Trivy vulnerability scan...[0m
+[33mtrivy not found - skipping (install with: make install-trivy)[0m
+[36mBuilding packages...[0m
+[32mBuild successful[0m
+[36mRunning all unit tests...[0m
+ok  	github.com/jeremyhahn/go-truststrap/cmd/truststrap	1.373s
+ok  	github.com/jeremyhahn/go-truststrap/pkg/dane	1.142s
+ok  	github.com/jeremyhahn/go-truststrap/pkg/noiseproto	1.243s
+ok  	github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap	5.458s
+ok  	github.com/jeremyhahn/go-truststrap/pkg/spkipin	1.216s
+ok  	github.com/jeremyhahn/go-truststrap/pkg/truststrap	7.449s
+[32mAll tests passed[0m
+[36mRunning per-package coverage analysis...[0m
+Package                                    Coverage   Status
+-------                                    --------   ------
+ok  	github.com/jeremyhahn/go-truststrap/pkg/dane	1.151s	coverage: 94.0% of statements
+[32mpkg/dane                                      93.7%     PASS[0m
+ok  	github.com/jeremyhahn/go-truststrap/pkg/noiseproto	1.273s	coverage: 92.5% of statements
+ok  	github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap	6.243s	coverage: 89.7% of statements
+[32mpkg/noiseproto                                90.3%     PASS[0m
+ok  	github.com/jeremyhahn/go-truststrap/pkg/spkipin	1.245s	coverage: 97.1% of statements
+[32mpkg/spkipin                                   97.1%     PASS[0m
+ok  	github.com/jeremyhahn/go-truststrap/pkg/truststrap	9.111s	coverage: 94.8% of statements
+[32mpkg/truststrap                                94.7%     PASS[0m
+
+ok  	github.com/jeremyhahn/go-truststrap/cmd/truststrap	1.348s	coverage: 92.1% of statements
+ok  	github.com/jeremyhahn/go-truststrap/pkg/dane	1.129s	coverage: 94.0% of statements
+ok  	github.com/jeremyhahn/go-truststrap/pkg/noiseproto	1.321s	coverage: 92.5% of statements
+ok  	github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap	5.457s	coverage: 89.7% of statements
+ok  	github.com/jeremyhahn/go-truststrap/pkg/spkipin	1.217s	coverage: 97.1% of statements
+ok  	github.com/jeremyhahn/go-truststrap/pkg/truststrap	7.096s	coverage: 94.8% of statements
+[36mTotal: 92.6%[0m
+[36mReport: coverage/coverage.html[0m
+[32mAll packages meet 90% coverage threshold[0m
+[32mCI pipeline complete[0m

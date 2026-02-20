@@ -6,7 +6,7 @@
 go get github.com/jeremyhahn/go-truststrap
 ```
 
-The module requires Go 1.24+ and has no CGO dependencies (`CGO_ENABLED=0` compatible).
+The module requires Go 1.26+ and has no CGO dependencies (`CGO_ENABLED=0` compatible).
 
 ### Dependencies
 
@@ -14,9 +14,9 @@ The module requires Go 1.24+ and has no CGO dependencies (`CGO_ENABLED=0` compat
 - `github.com/miekg/dns` -- DNS resolution for DANE/TLSA
 - `golang.org/x/crypto` -- Curve25519 operations
 
-## Using with go-keychain
+## Using with go-xkms
 
-go-truststrap was extracted from go-keychain's bootstrap subsystem. The `BundleProvider` interface is designed for direct compatibility:
+go-truststrap was extracted from go-xkms's bootstrap subsystem. The `BundleProvider` interface is designed for direct compatibility:
 
 ```go
 // go-truststrap's interface
@@ -25,9 +25,9 @@ type BundleProvider interface {
 }
 ```
 
-Any type implementing `CABundle() ([]byte, error)` satisfies this interface, including go-keychain's gRPC `CABundler`. To serve CA bundles from a go-keychain server:
+Any type implementing `CABundle() ([]byte, error)` satisfies this interface, including go-xkms's gRPC `CABundler`. To serve CA bundles from a go-xkms server:
 
-### Server Side (go-keychain)
+### Server Side (go-xkms)
 
 ```go
 import "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
@@ -36,7 +36,7 @@ import "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
     StaticKey:  noiseKey,
-    CABundler:  grpcService, // go-keychain's gRPC service
+    CABundler:  grpcService, // go-xkms's gRPC service
 })
 ```
 
@@ -57,7 +57,7 @@ bundle, err := client.FetchCABundle(ctx, "root", "ECDSA")
 
 ## Using Standalone
 
-go-truststrap works independently of go-keychain. Implement `BundleProvider` to serve certificates from any source:
+go-truststrap works independently of go-xkms. Implement `BundleProvider` to serve certificates from any source:
 
 ```go
 type FileBundler struct {
@@ -81,7 +81,7 @@ server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
 Containers typically start with a minimal trust store. go-truststrap is well-suited for container initialization:
 
 ```dockerfile
-FROM golang:1.24 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 go build -o /truststrap ./cmd/truststrap

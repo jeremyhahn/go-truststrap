@@ -206,3 +206,38 @@ func TestClient_Close(t *testing.T) {
 	err = client.Close()
 	assert.NoError(t, err)
 }
+
+func TestClient_FetchCABundle_CustomBundlePath(t *testing.T) {
+	customPath := "/api/v1/ca/bundle"
+	expectedBundle := []byte("custom-path-bundle")
+
+	server, pin := startTestTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, customPath, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		w.Write(expectedBundle)
+	}))
+
+	client, err := NewClient(&ClientConfig{
+		ServerURL:      server.URL,
+		SPKIPinSHA256:  pin,
+		ConnectTimeout: 5 * time.Second,
+		BundlePath:     customPath,
+	})
+	require.NoError(t, err)
+	defer client.Close()
+
+	bundle, err := client.FetchCABundle(context.Background(), "", "")
+	require.NoError(t, err)
+	assert.Equal(t, expectedBundle, bundle)
+}
+
+func TestClient_NewClient_DefaultBundlePath(t *testing.T) {
+	pin := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+	client, err := NewClient(&ClientConfig{
+		ServerURL:     "https://example.com",
+		SPKIPinSHA256: pin,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, CABundlePath, client.config.BundlePath)
+}

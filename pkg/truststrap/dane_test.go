@@ -163,6 +163,31 @@ func TestNewDANEBootstrapper_CustomTimeout(t *testing.T) {
 	}
 }
 
+func TestNewDANEBootstrapper_CustomBundlePath(t *testing.T) {
+	bs, err := NewDANEBootstrapper(&DANEConfig{
+		ServerURL:  "https://kms.example.com:8443",
+		BundlePath: "/api/v1/ca/bundle",
+	})
+	if err != nil {
+		t.Fatalf("NewDANEBootstrapper() error = %v, want nil", err)
+	}
+	if bs.bundlePath != "/api/v1/ca/bundle" {
+		t.Errorf("bundlePath = %q, want %q", bs.bundlePath, "/api/v1/ca/bundle")
+	}
+}
+
+func TestNewDANEBootstrapper_DefaultBundlePath(t *testing.T) {
+	bs, err := NewDANEBootstrapper(&DANEConfig{
+		ServerURL: "https://kms.example.com:8443",
+	})
+	if err != nil {
+		t.Fatalf("NewDANEBootstrapper() error = %v, want nil", err)
+	}
+	if bs.bundlePath != DefaultDANEBundlePath {
+		t.Errorf("bundlePath = %q, want %q", bs.bundlePath, DefaultDANEBundlePath)
+	}
+}
+
 func TestDANEBootstrapper_FetchCABundle_NoResolver(t *testing.T) {
 	bs, err := NewDANEBootstrapper(&DANEConfig{
 		ServerURL: "https://kms.example.com:8443",

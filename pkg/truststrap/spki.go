@@ -34,6 +34,9 @@ type SPKIConfig struct {
 
 	// Logger for structured logging. If nil, slog.Default() is used.
 	Logger *slog.Logger
+
+	// BundlePath is the REST API path for the CA bundle endpoint. Default: "/v1/ca/bootstrap".
+	BundlePath string
 }
 
 // SPKIBootstrapper implements Bootstrapper using SPKI-pinned TLS.
@@ -73,6 +76,7 @@ func NewSPKIBootstrapper(cfg *SPKIConfig) (*SPKIBootstrapper, error) {
 		SPKIPinSHA256:  cfg.SPKIPinSHA256,
 		ConnectTimeout: connectTO,
 		Logger:         logger,
+		BundlePath:     cfg.BundlePath,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)

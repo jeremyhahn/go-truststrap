@@ -20,7 +20,7 @@ Client                              Server
   [SHA-256(cert.RawSubjectPublicKeyInfo)]
   [Compare with expected pin]
   |                                   |
-  |-- GET /v1/ca/bootstrap ---------->|  (authenticated TLS)
+  |-- GET /v1/ca/bootstrap --------->|  (authenticated TLS)
   |<-- CA bundle (PEM) ---------------|
   |                                   |
   [Write to local trust store]

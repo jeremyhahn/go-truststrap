@@ -42,7 +42,7 @@ const (
 )
 
 // BundleProvider provides CA certificate bundles. This is a minimal interface
-// that go-keychain's CABundler implementations automatically satisfy.
+// that go-xkms's CABundler implementations automatically satisfy.
 type BundleProvider interface {
 	CABundle() ([]byte, error)
 }

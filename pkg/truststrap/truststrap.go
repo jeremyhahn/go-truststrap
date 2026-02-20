@@ -44,7 +44,7 @@ import (
 
 // BundleProvider provides CA certificate bundles for embedded bootstrapping.
 // Any type that implements CABundle() ([]byte, error) satisfies this interface,
-// including go-keychain's grpc.CABundler.
+// including go-xkms's grpc.CABundler.
 type BundleProvider interface {
 	CABundle() ([]byte, error)
 }

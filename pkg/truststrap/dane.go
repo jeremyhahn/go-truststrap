@@ -27,8 +27,8 @@ const (
 	// daneMaxResponseSize is the maximum allowed response body size (1 MB).
 	daneMaxResponseSize = 1 << 20
 
-	// daneBundlePath is the REST API path for the bootstrap CA bundle endpoint.
-	daneBundlePath = "/v1/ca/bootstrap"
+	// DefaultDANEBundlePath is the REST API path for the bootstrap CA bundle endpoint.
+	DefaultDANEBundlePath = "/v1/ca/bootstrap"
 
 	// pemCertificateType is the PEM block type for X.509 certificates.
 	pemCertificateType = "CERTIFICATE"
@@ -68,6 +68,9 @@ type DANEConfig struct {
 
 	// Logger for structured logging. If nil, slog.Default() is used.
 	Logger *slog.Logger
+
+	// BundlePath is the REST API path for the CA bundle endpoint. Default: "/v1/ca/bootstrap".
+	BundlePath string
 }
 
 // DANEBootstrapper implements Bootstrapper using DANE/TLSA DNS verification.
@@ -79,12 +82,13 @@ type DANEConfig struct {
 // security guarantees, so this bootstrapper unconditionally requires the
 // Authenticated Data (AD) flag in DNS responses.
 type DANEBootstrapper struct {
-	serverURL string
-	hostname  string
-	port      uint16
-	resolver  TLSAResolver
-	connectTO time.Duration
-	logger    *slog.Logger
+	serverURL  string
+	hostname   string
+	port       uint16
+	resolver   TLSAResolver
+	connectTO  time.Duration
+	logger     *slog.Logger
+	bundlePath string
 }
 
 // NewDANEBootstrapper creates a new DANE/TLSA bootstrapper. The server URL
@@ -136,15 +140,21 @@ func NewDANEBootstrapper(cfg *DANEConfig) (*DANEBootstrapper, error) {
 		logger = slog.Default()
 	}
 
+	bundlePath := cfg.BundlePath
+	if bundlePath == "" {
+		bundlePath = DefaultDANEBundlePath
+	}
+
 	resolver := cfg.Resolver
 
 	return &DANEBootstrapper{
-		serverURL: cfg.ServerURL,
-		hostname:  hostname,
-		port:      port,
-		resolver:  resolver,
-		connectTO: connectTO,
-		logger:    logger.With("component", "dane_bootstrapper"),
+		serverURL:  cfg.ServerURL,
+		hostname:   hostname,
+		port:       port,
+		resolver:   resolver,
+		connectTO:  connectTO,
+		logger:     logger.With("component", "dane_bootstrapper"),
+		bundlePath: bundlePath,
 	}, nil
 }
 
@@ -191,7 +201,7 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 	}
 	defer httpClient.CloseIdleConnections()
 
-	bundleURL := b.serverURL + daneBundlePath
+	bundleURL := b.serverURL + b.bundlePath
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, bundleURL, nil)
 	if err != nil {
@@ -211,7 +221,7 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 
 	b.logger.Debug("fetching CA bundle via DANE-verified HTTPS", "url", bundleURL)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is from operator-provided config, not user input
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}
