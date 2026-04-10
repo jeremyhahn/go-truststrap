@@ -146,6 +146,18 @@ func NewDANEBootstrapper(cfg *DANEConfig) (*DANEBootstrapper, error) {
 	}
 
 	resolver := cfg.Resolver
+	if resolver == nil && cfg.DNSServer != "" {
+		resolverCfg := &dane.ResolverConfig{
+			Server:        cfg.DNSServer,
+			UseTLS:        cfg.DNSOverTLS,
+			TLSServerName: cfg.DNSTLSServerName,
+		}
+		var err error
+		resolver, err = dane.NewResolver(resolverCfg)
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to create DANE resolver: %w", ErrInvalidConfig, err)
+		}
+	}
 
 	return &DANEBootstrapper{
 		serverURL:  cfg.ServerURL,

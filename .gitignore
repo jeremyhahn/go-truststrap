@@ -43,3 +43,5 @@ test/integration/testdata/Corefile
 test/integration/testdata/K*
 
 CLAUDE.md
+go.work
+go.work.sum
