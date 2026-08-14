@@ -72,6 +72,27 @@ type TLSAResolver interface {
 	LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*dane.TLSARecord, error)
 }
 
+// contentTypePEMCertChain is the MIME type every bootstrapper reports for a
+// PEM-encoded CA bundle.
+const contentTypePEMCertChain = "application/pem-certificate-chain"
+
+// The certificate store types accepted in CABundleRequest.StoreType. Matching
+// is case-insensitive; these are the canonical spellings.
+const (
+	storeTypeRoot         = "root"
+	storeTypeIntermediate = "intermediate"
+	storeTypeLeaf         = "leaf"
+	storeTypeEndEntity    = "end-entity"
+)
+
+// The public key algorithms accepted in CABundleRequest.Algorithm.
+const (
+	algorithmRSA     = "RSA"
+	algorithmECDSA   = "ECDSA"
+	algorithmEd25519 = "Ed25519"
+	algorithmDSA     = "DSA"
+)
+
 // CABundleRequest specifies optional filters for CA bundle retrieval.
 type CABundleRequest struct {
 	// StoreType filters by certificate store type: "root", "intermediate",

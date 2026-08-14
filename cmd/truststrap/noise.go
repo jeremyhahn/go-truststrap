@@ -42,7 +42,7 @@ Subcommands:
 
 // noiseFetchCmd fetches a CA bundle via the Noise_NK bootstrap protocol.
 var noiseFetchCmd = &cobra.Command{
-	Use:   "fetch",
+	Use:   cmdFetch,
 	Short: "Fetch CA bundle via Noise_NK protocol",
 	Long: `Connect to a Noise_NK bootstrap server and retrieve the CA certificate
 bundle over an encrypted channel. The server's Curve25519 static public
@@ -62,7 +62,7 @@ The corresponding public key is displayed on stdout.`,
 
 // noiseShowCmd displays the public key from a key file.
 var noiseShowCmd = &cobra.Command{
-	Use:   "show",
+	Use:   cmdShow,
 	Short: "Show the public key from a key file",
 	Long: `Read a hex-encoded Noise static private key from a file and display
 the corresponding Curve25519 public key as a hex string.`,

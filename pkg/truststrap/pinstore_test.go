@@ -62,15 +62,15 @@ func TestMemoryPinStore_Get_NotFound(t *testing.T) {
 		t.Fatal("Get() should return error for missing pin")
 	}
 
-	var notFound ErrPinNotFound
+	var notFound PinNotFoundError
 	if !errors.As(err, &notFound) {
-		t.Fatalf("Get() error type = %T, want ErrPinNotFound", err)
+		t.Fatalf("Get() error type = %T, want PinNotFoundError", err)
 	}
 	if notFound.Host != "missing.example.com" {
-		t.Errorf("ErrPinNotFound.Host = %q, want %q", notFound.Host, "missing.example.com")
+		t.Errorf("PinNotFoundError.Host = %q, want %q", notFound.Host, "missing.example.com")
 	}
 	if notFound.Port != 443 {
-		t.Errorf("ErrPinNotFound.Port = %d, want 443", notFound.Port)
+		t.Errorf("PinNotFoundError.Port = %d, want 443", notFound.Port)
 	}
 }
 
@@ -83,9 +83,9 @@ func TestMemoryPinStore_Put_NilPin(t *testing.T) {
 		t.Fatal("Put(nil) should return error")
 	}
 
-	var nilPin ErrNilPin
+	var nilPin NilPinError
 	if !errors.As(err, &nilPin) {
-		t.Errorf("Put(nil) error type = %T, want ErrNilPin", err)
+		t.Errorf("Put(nil) error type = %T, want NilPinError", err)
 	}
 }
 
@@ -99,9 +99,9 @@ func TestMemoryPinStore_Put_InvalidPin_EmptyHost(t *testing.T) {
 		t.Fatal("Put(empty host) should return error")
 	}
 
-	var invalid ErrInvalidPin
+	var invalid InvalidPinError
 	if !errors.As(err, &invalid) {
-		t.Errorf("Put(empty host) error type = %T, want ErrInvalidPin", err)
+		t.Errorf("Put(empty host) error type = %T, want InvalidPinError", err)
 	}
 }
 
@@ -126,9 +126,9 @@ func TestMemoryPinStore_Put_InvalidPin_BadPort(t *testing.T) {
 				t.Fatal("Put(bad port) should return error")
 			}
 
-			var invalid ErrInvalidPin
+			var invalid InvalidPinError
 			if !errors.As(err, &invalid) {
-				t.Errorf("Put(bad port) error type = %T, want ErrInvalidPin", err)
+				t.Errorf("Put(bad port) error type = %T, want InvalidPinError", err)
 			}
 		})
 	}
@@ -160,9 +160,9 @@ func TestMemoryPinStore_Put_InvalidPin_BadSPKI(t *testing.T) {
 				t.Fatalf("Put(bad SPKI %q) should return error", tt.spki)
 			}
 
-			var invalid ErrInvalidPin
+			var invalid InvalidPinError
 			if !errors.As(err, &invalid) {
-				t.Errorf("Put(bad SPKI) error type = %T, want ErrInvalidPin", err)
+				t.Errorf("Put(bad SPKI) error type = %T, want InvalidPinError", err)
 			}
 		})
 	}
@@ -357,29 +357,29 @@ func TestMemoryPinStore_ConcurrentAccess(t *testing.T) {
 
 // ---- Error type tests ----
 
-func TestErrPinNotFound_Error(t *testing.T) {
-	err := ErrPinNotFound{Host: "kms.example.com", Port: 8443}
+func TestPinNotFoundError_Error(t *testing.T) {
+	err := PinNotFoundError{Host: "kms.example.com", Port: 8443}
 	got := err.Error()
 	want := "truststrap: pin not found for kms.example.com:8443"
 	if got != want {
-		t.Errorf("ErrPinNotFound.Error() = %q, want %q", got, want)
+		t.Errorf("PinNotFoundError.Error() = %q, want %q", got, want)
 	}
 }
 
-func TestErrNilPin_Error(t *testing.T) {
-	err := ErrNilPin{}
+func TestNilPinError_Error(t *testing.T) {
+	err := NilPinError{}
 	got := err.Error()
 	want := "truststrap: pin must not be nil"
 	if got != want {
-		t.Errorf("ErrNilPin.Error() = %q, want %q", got, want)
+		t.Errorf("NilPinError.Error() = %q, want %q", got, want)
 	}
 }
 
-func TestErrInvalidPin_Error(t *testing.T) {
-	err := ErrInvalidPin{Reason: "host must not be empty"}
+func TestInvalidPinError_Error(t *testing.T) {
+	err := InvalidPinError{Reason: "host must not be empty"}
 	got := err.Error()
 	want := "truststrap: invalid pin: host must not be empty"
 	if got != want {
-		t.Errorf("ErrInvalidPin.Error() = %q, want %q", got, want)
+		t.Errorf("InvalidPinError.Error() = %q, want %q", got, want)
 	}
 }

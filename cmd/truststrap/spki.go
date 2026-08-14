@@ -36,7 +36,7 @@ Subcommands:
 
 // spkiFetchCmd fetches a CA bundle using SPKI-pinned TLS.
 var spkiFetchCmd = &cobra.Command{
-	Use:   "fetch",
+	Use:   cmdFetch,
 	Short: "Fetch CA bundle with SPKI-pinned TLS",
 	Long: `Fetch a CA certificate bundle from a server using SPKI pin verification
 instead of standard CA-based TLS verification.
@@ -48,7 +48,7 @@ Use 'truststrap spki show' to compute the pin from a certificate file.`,
 
 // spkiShowCmd computes and displays the SPKI pin from a PEM certificate file.
 var spkiShowCmd = &cobra.Command{
-	Use:   "show",
+	Use:   cmdShow,
 	Short: "Show SPKI pin (SHA-256) of a PEM certificate file",
 	Long: `Compute and display the SHA-256 hash of the SubjectPublicKeyInfo (SPKI)
 from a PEM-encoded certificate file. This pin can be used for SPKI-pinned

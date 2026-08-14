@@ -83,9 +83,9 @@ func TestNewTOFUBootstrapper_NilPinStore(t *testing.T) {
 	if bs != nil {
 		t.Error("NewTOFUBootstrapper(nil store) should return nil bootstrapper")
 	}
-	var required ErrTOFUPinStoreRequired
+	var required TOFUPinStoreRequiredError
 	if !errors.As(err, &required) {
-		t.Errorf("error type = %T, want ErrTOFUPinStoreRequired", err)
+		t.Errorf("error type = %T, want TOFUPinStoreRequiredError", err)
 	}
 }
 
@@ -236,7 +236,7 @@ func TestTOFUBootstrapper_SecondCallUsesStoredPin(t *testing.T) {
 }
 
 // TestTOFUBootstrapper_ConfirmFuncRejection verifies that when ConfirmFunc
-// returns an error the pin is NOT persisted and ErrTOFURejected is returned.
+// returns an error the pin is NOT persisted and TOFURejectedError is returned.
 func TestTOFUBootstrapper_ConfirmFuncRejection(t *testing.T) {
 	bundle := newTestCertBundle(t)
 
@@ -271,15 +271,15 @@ func TestTOFUBootstrapper_ConfirmFuncRejection(t *testing.T) {
 		t.Fatal("FetchCABundle() should return error when ConfirmFunc rejects")
 	}
 
-	var rejected ErrTOFURejected
+	var rejected TOFURejectedError
 	if !errors.As(fetchErr, &rejected) {
-		t.Fatalf("error type = %T, want ErrTOFURejected", fetchErr)
+		t.Fatalf("error type = %T, want TOFURejectedError", fetchErr)
 	}
 	if rejected.Host != bs.host {
-		t.Errorf("ErrTOFURejected.Host = %q, want %q", rejected.Host, bs.host)
+		t.Errorf("TOFURejectedError.Host = %q, want %q", rejected.Host, bs.host)
 	}
 	if !errors.Is(fetchErr, rejection) {
-		t.Error("ErrTOFURejected should wrap the ConfirmFunc error")
+		t.Error("TOFURejectedError should wrap the ConfirmFunc error")
 	}
 
 	// The pin must NOT have been persisted.
@@ -378,7 +378,7 @@ func TestTOFUBootstrapper_BundleFetchServerError(t *testing.T) {
 }
 
 // TestTOFUBootstrapper_CaptureUnreachableServer verifies that a dial failure
-// during the capture phase returns ErrTOFUCaptureFailed.
+// during the capture phase returns TOFUCaptureFailedError.
 func TestTOFUBootstrapper_CaptureUnreachableServer(t *testing.T) {
 	store := NewMemoryPinStore()
 	bs, err := NewTOFUBootstrapper(&TOFUConfig{
@@ -403,9 +403,9 @@ func TestTOFUBootstrapper_CaptureUnreachableServer(t *testing.T) {
 		t.Fatal("FetchCABundle() should return error for unreachable server")
 	}
 
-	var captureFailed ErrTOFUCaptureFailed
+	var captureFailed TOFUCaptureFailedError
 	if !errors.As(fetchErr, &captureFailed) {
-		t.Errorf("error type = %T, want ErrTOFUCaptureFailed", fetchErr)
+		t.Errorf("error type = %T, want TOFUCaptureFailedError", fetchErr)
 	}
 }
 
@@ -569,48 +569,48 @@ func TestAutoBootstrapper_TOFUNilConfigSkipped(t *testing.T) {
 
 // ---- TOFU error type tests ----
 
-func TestErrTOFURejected_Error(t *testing.T) {
+func TestTOFURejectedError_Error(t *testing.T) {
 	pin := validPin("kms.example.com", 8443)
 	inner := errors.New("denied")
-	err := ErrTOFURejected{Host: "kms.example.com", Port: 8443, Pin: pin, Err: inner}
+	err := TOFURejectedError{Host: "kms.example.com", Port: 8443, Pin: pin, Err: inner}
 	msg := err.Error()
 	if !strings.Contains(msg, "kms.example.com") {
-		t.Errorf("ErrTOFURejected.Error() = %q, want host in message", msg)
+		t.Errorf("TOFURejectedError.Error() = %q, want host in message", msg)
 	}
 	if !strings.Contains(msg, "8443") {
-		t.Errorf("ErrTOFURejected.Error() = %q, want port in message", msg)
+		t.Errorf("TOFURejectedError.Error() = %q, want port in message", msg)
 	}
 }
 
-func TestErrTOFURejected_Unwrap(t *testing.T) {
+func TestTOFURejectedError_Unwrap(t *testing.T) {
 	inner := errors.New("operator rejected")
-	err := ErrTOFURejected{Err: inner}
+	err := TOFURejectedError{Err: inner}
 	if !errors.Is(err, inner) {
-		t.Error("errors.Is(ErrTOFURejected, inner) must be true via Unwrap")
+		t.Error("errors.Is(TOFURejectedError, inner) must be true via Unwrap")
 	}
 }
 
-func TestErrTOFUCaptureFailed_Error(t *testing.T) {
+func TestTOFUCaptureFailedError_Error(t *testing.T) {
 	inner := errors.New("dial failed")
-	err := ErrTOFUCaptureFailed{Err: inner}
+	err := TOFUCaptureFailedError{Err: inner}
 	msg := err.Error()
 	if !strings.Contains(msg, "capture failed") {
-		t.Errorf("ErrTOFUCaptureFailed.Error() = %q, want 'capture failed'", msg)
+		t.Errorf("TOFUCaptureFailedError.Error() = %q, want 'capture failed'", msg)
 	}
 }
 
-func TestErrTOFUCaptureFailed_Unwrap(t *testing.T) {
+func TestTOFUCaptureFailedError_Unwrap(t *testing.T) {
 	inner := errors.New("connection refused")
-	err := ErrTOFUCaptureFailed{Err: inner}
+	err := TOFUCaptureFailedError{Err: inner}
 	if !errors.Is(err, inner) {
-		t.Error("errors.Is(ErrTOFUCaptureFailed, inner) must be true via Unwrap")
+		t.Error("errors.Is(TOFUCaptureFailedError, inner) must be true via Unwrap")
 	}
 }
 
-func TestErrTOFUPinStoreRequired_Error(t *testing.T) {
-	err := ErrTOFUPinStoreRequired{}
+func TestTOFUPinStoreRequiredError_Error(t *testing.T) {
+	err := TOFUPinStoreRequiredError{}
 	msg := err.Error()
 	if !strings.Contains(msg, "pin store") {
-		t.Errorf("ErrTOFUPinStoreRequired.Error() = %q, want 'pin store'", msg)
+		t.Errorf("TOFUPinStoreRequiredError.Error() = %q, want 'pin store'", msg)
 	}
 }

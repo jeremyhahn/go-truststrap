@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -41,7 +42,7 @@ type TOFUConfig struct {
 
 	// ConfirmFunc is an optional hook called before a newly captured pin is
 	// persisted. Returning an error causes the bootstrap to fail with
-	// ErrTOFURejected and prevents the pin from being stored.
+	// TOFURejectedError and prevents the pin from being stored.
 	// When nil, new pins are auto-accepted with a WARNING log entry.
 	ConfirmFunc func(ctx context.Context, pin *Pin) error
 
@@ -82,7 +83,7 @@ func NewTOFUBootstrapper(cfg *TOFUConfig) (*TOFUBootstrapper, error) {
 		return nil, fmt.Errorf("%w: server URL required", ErrInvalidConfig)
 	}
 	if cfg.PinStore == nil {
-		return nil, ErrTOFUPinStoreRequired{}
+		return nil, TOFUPinStoreRequiredError{}
 	}
 
 	host, port, err := hostPortFromURL(cfg.ServerURL)
@@ -130,10 +131,11 @@ func NewTOFUBootstrapper(cfg *TOFUConfig) (*TOFUBootstrapper, error) {
 func (b *TOFUBootstrapper) FetchCABundle(ctx context.Context, req *CABundleRequest) (*CABundleResponse, error) {
 	existingPin, err := b.pinStore.Get(ctx, b.host, b.port)
 	if err != nil {
-		if _, notFound := err.(ErrPinNotFound); !notFound {
+		var notFound PinNotFoundError
+		if !errors.As(err, &notFound) {
 			return nil, fmt.Errorf("%w: pin store Get: %w", ErrFetchFailed, err)
 		}
-		// ErrPinNotFound: first use — capture the pin, confirm, persist.
+		// PinNotFoundError: first use — capture the pin, confirm, persist.
 		existingPin, err = b.captureAndPersistPin(ctx)
 		if err != nil {
 			return nil, err
@@ -156,12 +158,12 @@ func (b *TOFUBootstrapper) captureAndPersistPin(ctx context.Context) (*Pin, erro
 
 	leafDER, err := b.captureCert(ctx)
 	if err != nil {
-		return nil, ErrTOFUCaptureFailed{Err: err}
+		return nil, TOFUCaptureFailedError{Err: err}
 	}
 
 	leaf, parseErr := x509.ParseCertificate(leafDER)
 	if parseErr != nil {
-		return nil, ErrTOFUCaptureFailed{Err: fmt.Errorf("parse captured certificate: %w", parseErr)}
+		return nil, TOFUCaptureFailedError{Err: fmt.Errorf("parse captured certificate: %w", parseErr)}
 	}
 
 	spkiPin := spkipin.ComputeSPKIPin(leaf)
@@ -183,7 +185,7 @@ func (b *TOFUBootstrapper) captureAndPersistPin(ctx context.Context) (*Pin, erro
 
 	if b.confirmFunc != nil {
 		if confirmErr := b.confirmFunc(ctx, pin); confirmErr != nil {
-			return nil, ErrTOFURejected{
+			return nil, TOFURejectedError{
 				Host: b.host,
 				Port: b.port,
 				Pin:  pin,
@@ -293,7 +295,7 @@ func (b *TOFUBootstrapper) fetchWithPin(ctx context.Context, pin string, req *CA
 	return &CABundleResponse{
 		BundlePEM:    bundlePEM,
 		Certificates: derCerts,
-		ContentType:  "application/pem-certificate-chain",
+		ContentType:  contentTypePEMCertChain,
 	}, nil
 }
 

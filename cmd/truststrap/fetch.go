@@ -39,7 +39,7 @@ const (
 type fetchMethod func(ctx context.Context) ([]byte, error)
 
 var fetchCmd = &cobra.Command{
-	Use:   "fetch",
+	Use:   cmdFetch,
 	Short: "Auto-fetch CA bundle using configured methods",
 	Long: `Automatically try bootstrap methods in priority order to fetch the CA
 certificate bundle. Each configured method is tried in sequence; the first

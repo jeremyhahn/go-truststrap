@@ -158,7 +158,7 @@ func (b *DirectBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReq
 	return &CABundleResponse{
 		BundlePEM:    body,
 		Certificates: derCerts,
-		ContentType:  "application/pem-certificate-chain",
+		ContentType:  contentTypePEMCertChain,
 	}, nil
 }
 

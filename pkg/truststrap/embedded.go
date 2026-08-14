@@ -50,7 +50,7 @@ func (b *EmbeddedBootstrapper) FetchCABundle(ctx context.Context, req *CABundleR
 	return &CABundleResponse{
 		BundlePEM:    bundlePEM,
 		Certificates: derCerts,
-		ContentType:  "application/pem-certificate-chain",
+		ContentType:  contentTypePEMCertChain,
 	}, nil
 }
 
@@ -92,18 +92,18 @@ type storeTypeMatcher func(cert *x509.Certificate) bool
 
 // storeTypeMatchers provides O(1) lookup for store type matching.
 var storeTypeMatchers = map[string]storeTypeMatcher{
-	"root": func(cert *x509.Certificate) bool {
+	storeTypeRoot: func(cert *x509.Certificate) bool {
 		// Root certificates are self-signed CA certificates.
 		return cert.IsCA && cert.CheckSignatureFrom(cert) == nil
 	},
-	"intermediate": func(cert *x509.Certificate) bool {
+	storeTypeIntermediate: func(cert *x509.Certificate) bool {
 		// Intermediate certificates are CA certificates that are not self-signed.
 		return cert.IsCA && cert.CheckSignatureFrom(cert) != nil
 	},
-	"leaf": func(cert *x509.Certificate) bool {
+	storeTypeLeaf: func(cert *x509.Certificate) bool {
 		return !cert.IsCA
 	},
-	"end-entity": func(cert *x509.Certificate) bool {
+	storeTypeEndEntity: func(cert *x509.Certificate) bool {
 		return !cert.IsCA
 	},
 }
@@ -113,10 +113,10 @@ type algorithmMatcher func(alg x509.PublicKeyAlgorithm) bool
 
 // algorithmMatchers provides O(1) lookup for algorithm matching.
 var algorithmMatchers = map[string]algorithmMatcher{
-	"RSA":     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.RSA },
-	"ECDSA":   func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.ECDSA },
-	"Ed25519": func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.Ed25519 },
-	"DSA":     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.DSA },
+	algorithmRSA:     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.RSA },
+	algorithmECDSA:   func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.ECDSA },
+	algorithmEd25519: func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.Ed25519 },
+	algorithmDSA:     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.DSA },
 }
 
 // filterCertificates filters certificates by store type and algorithm,

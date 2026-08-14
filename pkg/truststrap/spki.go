@@ -126,7 +126,7 @@ func (b *SPKIBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 	return &CABundleResponse{
 		BundlePEM:    bundlePEM,
 		Certificates: derCerts,
-		ContentType:  "application/pem-certificate-chain",
+		ContentType:  contentTypePEMCertChain,
 	}, nil
 }
 

@@ -12,6 +12,34 @@ import (
 	"strings"
 )
 
+const (
+	// methodGetCABundle is the only bootstrap method the handler dispatches.
+	methodGetCABundle = "get_ca_bundle"
+
+	// pemBlockTypeCertificate is the PEM block type of an X.509 certificate.
+	pemBlockTypeCertificate = "CERTIFICATE"
+
+	// contentTypePEMCertChain is the MIME type reported for a PEM CA bundle.
+	contentTypePEMCertChain = "application/pem-certificate-chain"
+)
+
+// The certificate store types accepted in Request.StoreType. Matching is
+// case-insensitive; these are the canonical spellings.
+const (
+	storeTypeRoot         = "root"
+	storeTypeIntermediate = "intermediate"
+	storeTypeLeaf         = "leaf"
+	storeTypeEndEntity    = "end-entity"
+)
+
+// The public key algorithms accepted in Request.Algorithm.
+const (
+	algorithmRSA     = "RSA"
+	algorithmECDSA   = "ECDSA"
+	algorithmEd25519 = "Ed25519"
+	algorithmDSA     = "DSA"
+)
+
 // Request is the JSON request format for bootstrap operations.
 type Request struct {
 	// Method identifies the bootstrap operation to perform.
@@ -63,7 +91,7 @@ func NewHandler(bundler BundleProvider, logger *slog.Logger) *Handler {
 
 	// Register handlers using map-based dispatch for O(1) lookup.
 	h.handlers = map[string]handlerFunc{
-		"get_ca_bundle": h.handleGetCABundle,
+		methodGetCABundle: h.handleGetCABundle,
 	}
 
 	return h
@@ -113,7 +141,7 @@ func (h *Handler) handleGetCABundle(req *Request) (*Response, error) {
 
 	for _, cert := range certs {
 		block := &pem.Block{
-			Type:  "CERTIFICATE",
+			Type:  pemBlockTypeCertificate,
 			Bytes: cert.Raw,
 		}
 		filteredPEM = append(filteredPEM, pem.EncodeToMemory(block)...)
@@ -123,7 +151,7 @@ func (h *Handler) handleGetCABundle(req *Request) (*Response, error) {
 	return &Response{
 		BundlePEM:    string(filteredPEM),
 		Certificates: derCerts,
-		ContentType:  "application/pem-certificate-chain",
+		ContentType:  contentTypePEMCertChain,
 	}, nil
 }
 
@@ -138,7 +166,7 @@ func parsePEMBundle(data []byte) ([]*x509.Certificate, error) {
 		if block == nil {
 			break
 		}
-		if block.Type != "CERTIFICATE" {
+		if block.Type != pemBlockTypeCertificate {
 			continue
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
@@ -157,16 +185,16 @@ type storeTypeMatcher func(cert *x509.Certificate) bool
 
 // storeTypeMatchers provides O(1) lookup for store type matching.
 var storeTypeMatchers = map[string]storeTypeMatcher{
-	"root": func(cert *x509.Certificate) bool {
+	storeTypeRoot: func(cert *x509.Certificate) bool {
 		return cert.IsCA && cert.CheckSignatureFrom(cert) == nil
 	},
-	"intermediate": func(cert *x509.Certificate) bool {
+	storeTypeIntermediate: func(cert *x509.Certificate) bool {
 		return cert.IsCA && cert.CheckSignatureFrom(cert) != nil
 	},
-	"leaf": func(cert *x509.Certificate) bool {
+	storeTypeLeaf: func(cert *x509.Certificate) bool {
 		return !cert.IsCA
 	},
-	"end-entity": func(cert *x509.Certificate) bool {
+	storeTypeEndEntity: func(cert *x509.Certificate) bool {
 		return !cert.IsCA
 	},
 }
@@ -177,10 +205,10 @@ type algorithmMatcher func(alg x509.PublicKeyAlgorithm) bool
 
 // algorithmMatchers provides O(1) lookup for algorithm matching.
 var algorithmMatchers = map[string]algorithmMatcher{
-	"RSA":     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.RSA },
-	"ECDSA":   func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.ECDSA },
-	"Ed25519": func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.Ed25519 },
-	"DSA":     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.DSA },
+	algorithmRSA:     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.RSA },
+	algorithmECDSA:   func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.ECDSA },
+	algorithmEd25519: func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.Ed25519 },
+	algorithmDSA:     func(alg x509.PublicKeyAlgorithm) bool { return alg == x509.DSA },
 }
 
 // filterCertificates applies optional store type and algorithm filters

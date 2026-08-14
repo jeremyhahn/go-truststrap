@@ -38,7 +38,7 @@ var daneCmd = &cobra.Command{
 
 // daneFetchCmd fetches a CA bundle with DANE/TLSA verification.
 var daneFetchCmd = &cobra.Command{
-	Use:   "fetch",
+	Use:   cmdFetch,
 	Short: "Fetch CA bundle with DANE/TLSA verification",
 	Long: `Fetch a CA certificate bundle from a server after verifying its TLS
 certificate against DANE TLSA records retrieved from DNS.
@@ -70,7 +70,7 @@ certificate against each record.`,
 
 // daneShowCmd displays TLSA records from DNS.
 var daneShowCmd = &cobra.Command{
-	Use:   "show",
+	Use:   cmdShow,
 	Short: "Display TLSA records for a domain",
 	Long: `Query and display DANE TLSA records for a given hostname and port.
 Queries DNS for _<port>._tcp.<hostname> TLSA records and displays

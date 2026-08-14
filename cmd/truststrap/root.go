@@ -20,6 +20,19 @@ var (
 	logFormat  string
 )
 
+const (
+	// cmdFetch and cmdShow are the subcommand verbs shared by the dane, noise
+	// and spki command groups.
+	cmdFetch = "fetch"
+	cmdShow  = "show"
+
+	// logFormatText is the default --log-format value.
+	logFormatText = "text"
+
+	// logFormatJSON emits structured log records.
+	logFormatJSON = "json"
+)
+
 // logLevel controls the global slog level at runtime.
 var logLevel = new(slog.LevelVar)
 
@@ -52,7 +65,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 	rootCmd.PersistentFlags().StringVar(&format, "format", "pem", "output format (pem|der|json)")
 	rootCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "output file (default: stdout)")
-	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "text", "log output format (text|json)")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", logFormatText, "log output format (text|json)")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(fetchCmd)
@@ -86,13 +99,13 @@ func initLogging() {
 	}
 
 	handlers := map[string]func(io.Writer, *slog.HandlerOptions) slog.Handler{
-		"text": func(w io.Writer, o *slog.HandlerOptions) slog.Handler { return slog.NewTextHandler(w, o) },
-		"json": func(w io.Writer, o *slog.HandlerOptions) slog.Handler { return slog.NewJSONHandler(w, o) },
+		logFormatText: func(w io.Writer, o *slog.HandlerOptions) slog.Handler { return slog.NewTextHandler(w, o) },
+		logFormatJSON: func(w io.Writer, o *slog.HandlerOptions) slog.Handler { return slog.NewJSONHandler(w, o) },
 	}
 
 	factory, ok := handlers[logFormat]
 	if !ok {
-		factory = handlers["text"]
+		factory = handlers[logFormatText]
 	}
 
 	handler := factory(os.Stderr, opts)

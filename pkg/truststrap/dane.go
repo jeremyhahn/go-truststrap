@@ -298,7 +298,7 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 	return &CABundleResponse{
 		BundlePEM:    body,
 		Certificates: derCerts,
-		ContentType:  "application/pem-certificate-chain",
+		ContentType:  contentTypePEMCertChain,
 	}, nil
 }
 

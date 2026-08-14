@@ -93,7 +93,7 @@ func (c *Client) GetCABundle(ctx context.Context, storeType, algorithm string) (
 	}
 
 	req := &Request{
-		Method:    "get_ca_bundle",
+		Method:    methodGetCABundle,
 		StoreType: storeType,
 		Algorithm: algorithm,
 	}

@@ -51,20 +51,20 @@ func computeCertFingerprint(der []byte) string {
 // validatePin returns a typed error if the pin fields are invalid.
 func validatePin(p *Pin) error {
 	if p == nil {
-		return ErrNilPin{}
+		return NilPinError{}
 	}
 	if p.Host == "" {
-		return ErrInvalidPin{Reason: "host must not be empty"}
+		return InvalidPinError{Reason: "host must not be empty"}
 	}
 	if p.Port < 1 || p.Port > 65535 {
-		return ErrInvalidPin{Reason: fmt.Sprintf("port %d is out of range 1-65535", p.Port)}
+		return InvalidPinError{Reason: fmt.Sprintf("port %d is out of range 1-65535", p.Port)}
 	}
 	if len(p.SPKISHA256) != 64 {
-		return ErrInvalidPin{Reason: fmt.Sprintf("SPKI SHA-256 pin must be 64 hex chars, got %d", len(p.SPKISHA256))}
+		return InvalidPinError{Reason: fmt.Sprintf("SPKI SHA-256 pin must be 64 hex chars, got %d", len(p.SPKISHA256))}
 	}
 	normalized := strings.ToLower(p.SPKISHA256)
 	if _, err := hex.DecodeString(normalized); err != nil {
-		return ErrInvalidPin{Reason: "SPKI SHA-256 pin is not valid hex"}
+		return InvalidPinError{Reason: "SPKI SHA-256 pin is not valid hex"}
 	}
 	return nil
 }
@@ -73,11 +73,11 @@ func validatePin(p *Pin) error {
 // Implementations must be safe for concurrent use.
 type PinStore interface {
 	// Get retrieves the pin for the given host and port.
-	// Returns ErrPinNotFound when no pin has been recorded.
+	// Returns PinNotFoundError when no pin has been recorded.
 	Get(ctx context.Context, host string, port int) (*Pin, error)
 
-	// Put persists a pin. Returns ErrNilPin if pin is nil, or
-	// ErrInvalidPin if validation fails.
+	// Put persists a pin. Returns NilPinError if pin is nil, or
+	// InvalidPinError if validation fails.
 	Put(ctx context.Context, pin *Pin) error
 
 	// Delete removes the pin for the given host and port.
@@ -102,21 +102,21 @@ func NewMemoryPinStore() *MemoryPinStore {
 	}
 }
 
-// Get retrieves the pin for host:port. Returns ErrPinNotFound when absent.
+// Get retrieves the pin for host:port. Returns PinNotFoundError when absent.
 func (s *MemoryPinStore) Get(_ context.Context, host string, port int) (*Pin, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	p, ok := s.pins[pinKey(host, port)]
 	if !ok {
-		return nil, ErrPinNotFound{Host: host, Port: port}
+		return nil, PinNotFoundError{Host: host, Port: port}
 	}
 	// Return a copy so callers cannot mutate stored state.
 	cp := *p
 	return &cp, nil
 }
 
-// Put validates and stores the pin. Returns ErrNilPin or ErrInvalidPin on
+// Put validates and stores the pin. Returns NilPinError or InvalidPinError on
 // validation failure.
 func (s *MemoryPinStore) Put(_ context.Context, pin *Pin) error {
 	if err := validatePin(pin); err != nil {
