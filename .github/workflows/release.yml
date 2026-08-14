@@ -77,6 +77,35 @@ jobs:
             type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
+      # devops.md §8: every container image is gated on CRITICAL/HIGH *before*
+      # it reaches a registry. Build the amd64 leg locally, scan it, then
+      # publish the multi-arch manifest from the same layer cache.
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: go-truststrap:scan
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+
+      # The trivy CLI works identically on both hosts; trivy-action's setup
+      # cannot authenticate to github.com from a Gitea runner.
+      - name: Install trivy CLI
+        run: |
+          TRIVY_VERSION=$(curl -fsSL https://api.github.com/repos/aquasecurity/trivy/releases/latest \
+            | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" trivy
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Trivy image gate (fail on CRITICAL/HIGH)
+        run: trivy image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 go-truststrap:scan
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

@@ -8,6 +8,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
@@ -145,7 +146,10 @@ func TestNewPinnedTLSConfig_Valid(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, tlsCfg)
 	assert.True(t, tlsCfg.InsecureSkipVerify)
-	assert.NotNil(t, tlsCfg.VerifyPeerCertificate)
+	assert.NotNil(t, tlsCfg.VerifyConnection)
+	// Session tickets must stay off: a resumed handshake skips the verifier,
+	// which would silently bypass the pin.
+	assert.True(t, tlsCfg.SessionTicketsDisabled)
 }
 
 func TestNewPinnedTLSConfig_EmptyPin(t *testing.T) {
@@ -176,7 +180,7 @@ func TestNewPinnedTLSConfig_VerifyCallback_Match(t *testing.T) {
 	require.NoError(t, err)
 
 	// Simulate the TLS handshake callback with the matching certificate.
-	err = tlsCfg.VerifyPeerCertificate([][]byte{cert.Raw}, nil)
+	err = tlsCfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}})
 	assert.NoError(t, err)
 }
 
@@ -190,7 +194,7 @@ func TestNewPinnedTLSConfig_VerifyCallback_Mismatch(t *testing.T) {
 	tlsCfg, err := NewPinnedTLSConfig(pin)
 	require.NoError(t, err)
 
-	err = tlsCfg.VerifyPeerCertificate([][]byte{cert2.Raw}, nil)
+	err = tlsCfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert2}})
 	assert.ErrorIs(t, err, ErrSPKIPinMismatch)
 }
 
@@ -201,31 +205,21 @@ func TestNewPinnedTLSConfig_VerifyCallback_NoCerts(t *testing.T) {
 	tlsCfg, err := NewPinnedTLSConfig(pin)
 	require.NoError(t, err)
 
-	err = tlsCfg.VerifyPeerCertificate([][]byte{}, nil)
+	err = tlsCfg.VerifyConnection(tls.ConnectionState{PeerCertificates: nil})
 	assert.ErrorIs(t, err, ErrNoCertificates)
 }
 
-func TestNewPinnedTLSConfig_VerifyCallback_InvalidDER(t *testing.T) {
+func TestNewPinnedTLSConfig_VerifyCallback_MatchLaterInChain(t *testing.T) {
 	cert, _ := generateTestCert(t)
+	other, _ := generateTestCert(t)
 	pin := ComputeSPKIPin(cert)
 
 	tlsCfg, err := NewPinnedTLSConfig(pin)
 	require.NoError(t, err)
 
-	// Present only invalid DER data. All certs fail to parse, resulting in
-	// an empty parsed cert slice. This triggers ErrNoCertificates from VerifySPKIPin.
-	err = tlsCfg.VerifyPeerCertificate([][]byte{{0x00, 0x01, 0x02}}, nil)
-	assert.ErrorIs(t, err, ErrNoCertificates)
-}
-
-func TestNewPinnedTLSConfig_VerifyCallback_MixedValidInvalid(t *testing.T) {
-	cert, _ := generateTestCert(t)
-	pin := ComputeSPKIPin(cert)
-
-	tlsCfg, err := NewPinnedTLSConfig(pin)
-	require.NoError(t, err)
-
-	// Present one invalid cert and one valid matching cert.
-	err = tlsCfg.VerifyPeerCertificate([][]byte{{0x00}, cert.Raw}, nil)
+	// Any certificate in the presented chain may carry the pinned key.
+	err = tlsCfg.VerifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{other, cert},
+	})
 	assert.NoError(t, err)
 }

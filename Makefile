@@ -49,7 +49,8 @@ GOSEC_EXCLUDE := G104,G115,G304,G402
 	coverage coverage-report coverage-dane coverage-noiseproto coverage-spkipin coverage-truststrap \
 	bench-dane bench-noiseproto bench-spkipin bench-truststrap \
 	integration-test integration-test-bootstrap \
-	fmt fmt-check vet lint gosec vuln trivy check check-insecure-tls \
+	fmt fmt-check vet lint gosec vuln mod-verify trivy trivy-image security \
+	check check-insecure-tls \
 	ci ci-local \
 	install-tools install-gosec install-govulncheck install-trivy \
 	docker-build docker-run \
@@ -314,24 +315,45 @@ vuln: ## Run govulncheck vulnerability scanner
 		exit 1; \
 	fi
 
-trivy: ## Run Trivy filesystem vulnerability scanner
-	@printf "$(CYAN)Running Trivy vulnerability scan...$(NC)\n"
+mod-verify: ## Verify module integrity against go.sum
+	@printf "$(CYAN)Verifying module integrity...$(NC)\n"
+	@$(GO) mod verify
+	@printf "$(GREEN)Module integrity verified$(NC)\n"
+
+trivy: ## Run Trivy filesystem scan (dependency CVEs + leaked secrets)
+	@printf "$(CYAN)Running Trivy filesystem scan...$(NC)\n"
 	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
 	if [ -n "$$TRIVY_BIN" ]; then \
-		$$TRIVY_BIN fs --severity CRITICAL,HIGH --exit-code 1 . && \
-		printf "$(GREEN)Trivy scan passed - no critical/high vulnerabilities$(NC)\n"; \
+		$$TRIVY_BIN fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 . && \
+		printf "$(GREEN)Trivy scan passed - no critical/high findings$(NC)\n"; \
 	else \
 		printf "$(YELLOW)trivy not found - skipping (install with: make install-trivy)$(NC)\n"; \
 	fi
 
-check: fmt-check vet lint gosec vuln trivy ## Run all code quality and security checks
+trivy-image: ## Scan the built container image (devops.md §8 — every image is scanned)
+	@printf "$(CYAN)Running Trivy image scan on $(DOCKER_IMAGE):$(DOCKER_TAG)...$(NC)\n"
+	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
+	if [ -n "$$TRIVY_BIN" ]; then \
+		$$TRIVY_BIN image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 $(DOCKER_IMAGE):$(DOCKER_TAG) && \
+		printf "$(GREEN)Trivy image scan passed$(NC)\n"; \
+	else \
+		printf "$(YELLOW)trivy not found - skipping (install with: make install-trivy)$(NC)\n"; \
+	fi
+
+# devops.md §8 — the mandatory security-analysis suite. CI calls this target so
+# the pipeline and a developer's machine run exactly the same checks.
+# The container image is scanned by docker-build, which is where it exists.
+security: gosec vuln mod-verify trivy ## Run the full security suite (gosec, govulncheck, go mod verify, trivy fs)
+	@printf "$(GREEN)Security suite passed$(NC)\n"
+
+check: fmt-check vet lint security ## Run all code quality and security checks
 	@printf "$(GREEN)All checks passed$(NC)\n"
 
 ## ============================================================================
 ## CI Pipeline
 ## ============================================================================
 
-ci-local: deps fmt-check vet lint gosec vuln trivy build test coverage ## Run full CI pipeline locally
+ci-local: deps fmt-check vet lint security build test coverage ## Run full CI pipeline locally
 	@printf "$(GREEN)CI pipeline complete$(NC)\n"
 
 ci: ci-local ## Run CI pipeline (alias for ci-local)
@@ -381,10 +403,11 @@ install-tools: install-gosec install-govulncheck install-trivy ## Install all de
 ## Docker
 ## ============================================================================
 
-docker-build: ## Build Docker image
+docker-build: ## Build Docker image and scan it with Trivy
 	@printf "$(CYAN)Building Docker image $(DOCKER_IMAGE):$(DOCKER_TAG)...$(NC)\n"
 	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) -t $(DOCKER_IMAGE):latest .
 	@printf "$(GREEN)Docker image built$(NC)\n"
+	@$(MAKE) --no-print-directory trivy-image
 
 docker-run: ## Run Docker container
 	@printf "$(CYAN)Running Docker container...$(NC)\n"

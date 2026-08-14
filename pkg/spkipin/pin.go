@@ -44,6 +44,13 @@ func VerifySPKIPin(certs []*x509.Certificate, expectedPin string) error {
 // This is used for bootstrap scenarios where the CA certificate is not yet
 // available (chicken-and-egg problem). The pin is distributed out-of-band
 // and provides cryptographic assurance that we are connecting to the right server.
+//
+// The returned config uses the same custom-verifier pattern as the DANE and
+// TOFU strategies: InsecureSkipVerify disables WebPKI verification only,
+// VerifyConnection is the sole verifier, and session tickets are disabled so
+// every connection performs a full handshake through it. VerifyPeerCertificate
+// alone is not enough — it is skipped on a resumed session, which would let a
+// resumed connection bypass the pin entirely.
 func NewPinnedTLSConfig(expectedPin string) (*tls.Config, error) {
 	if expectedPin == "" {
 		return nil, ErrNoPinConfigured
@@ -57,21 +64,14 @@ func NewPinnedTLSConfig(expectedPin string) (*tls.Config, error) {
 	}
 
 	return &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, //nolint:gosec // Skip CA verification - we verify via SPKI pin
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			if len(rawCerts) == 0 {
+		MinVersion:             tls.VersionTLS12,
+		InsecureSkipVerify:     true, //nolint:gosec // custom-verifier pattern: VerifyConnection below performs SPKI pin validation
+		SessionTicketsDisabled: true,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
 				return ErrNoCertificates
 			}
-			certs := make([]*x509.Certificate, 0, len(rawCerts))
-			for _, rawCert := range rawCerts {
-				cert, parseErr := x509.ParseCertificate(rawCert)
-				if parseErr != nil {
-					continue
-				}
-				certs = append(certs, cert)
-			}
-			return VerifySPKIPin(certs, expectedPin)
+			return VerifySPKIPin(cs.PeerCertificates, expectedPin)
 		},
 	}, nil
 }
