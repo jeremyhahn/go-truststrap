@@ -451,6 +451,9 @@ help: ## Show this help message
 		awk 'BEGIN {FS = ":.*?## "}; {printf "$(CYAN)%-28s$(NC) %s\n", $$1, $$2}'
 
 SUBMODULE_TAGS := 
+# Builds never resolve through a workspace: modules come from Gitea tags
+# (dependency-resolution.md §2). Immunizes against stray go.work files.
+export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
 # SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
