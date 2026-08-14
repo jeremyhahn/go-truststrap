@@ -55,29 +55,30 @@ func TestLoadOrGenerateKey_InvalidHex(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKeyLoad)
 }
 
-func TestLoadOrGenerateKey_ReadPermissionError(t *testing.T) {
+// A read failure that is not os.ErrNotExist must surface as ErrKeyLoad rather
+// than falling through to key generation. Using a regular file as the parent
+// component yields ENOTDIR, which is uid-independent -- unlike a mode-0000
+// directory, which root reads straight through.
+func TestLoadOrGenerateKey_ReadError(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Make the dir unreadable to trigger a non-NotExist error
-	dirPath := filepath.Join(tmpDir, "restricted")
-	require.NoError(t, os.Mkdir(dirPath, 0700))
-	restrictedKeyPath := filepath.Join(dirPath, "test.key")
-	require.NoError(t, os.WriteFile(restrictedKeyPath, []byte("data"), 0600))
-	require.NoError(t, os.Chmod(dirPath, 0000))
-	defer os.Chmod(dirPath, 0700) // cleanup
+	notADir := filepath.Join(tmpDir, "regular-file")
+	require.NoError(t, os.WriteFile(notADir, []byte("data"), 0600))
 
-	_, err := loadOrGenerateKey(restrictedKeyPath)
+	_, err := loadOrGenerateKey(filepath.Join(notADir, "test.key"))
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyLoad)
 }
 
-func TestLoadOrGenerateKey_WritePermissionError(t *testing.T) {
+// The key file is absent, so generation runs, but the write cannot land. A
+// missing parent directory fails with ENOENT for every uid; a mode-0500
+// directory would not, because CI job containers run as root and root bypasses
+// the discretionary access check.
+func TestLoadOrGenerateKey_WriteError(t *testing.T) {
 	tmpDir := t.TempDir()
-	restrictedDir := filepath.Join(tmpDir, "noperm")
-	require.NoError(t, os.Mkdir(restrictedDir, 0500)) // read+exec only
-	defer os.Chmod(restrictedDir, 0700)
+	missingDir := filepath.Join(tmpDir, "does-not-exist")
 
-	keyPath := filepath.Join(restrictedDir, "test.key")
+	keyPath := filepath.Join(missingDir, "test.key")
 	_, err := loadOrGenerateKey(keyPath)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGeneration)

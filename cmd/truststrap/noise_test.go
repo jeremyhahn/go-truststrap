@@ -136,14 +136,15 @@ func TestNoiseFetch_ConnectionRefused(t *testing.T) {
 }
 
 func TestNoiseGenerate_WriteError(t *testing.T) {
-	// Write to a read-only directory.
+	// Write into a directory that does not exist. Permission bits are not
+	// usable here: CI job containers run as root, and root bypasses the
+	// discretionary access check, so a mode-0500 directory would still accept
+	// the write. A missing parent fails with ENOENT for every uid.
 	tmpDir := t.TempDir()
-	restrictedDir := filepath.Join(tmpDir, "noperm")
-	require.NoError(t, os.Mkdir(restrictedDir, 0500))
-	defer os.Chmod(restrictedDir, 0700)
+	missingDir := filepath.Join(tmpDir, "does-not-exist")
 
 	cmd := noiseGenerateCmd
-	cmd.Flags().Set("output", filepath.Join(restrictedDir, "test.key"))
+	cmd.Flags().Set("output", filepath.Join(missingDir, "test.key"))
 
 	err := runNoiseGenerate(cmd, nil)
 	assert.Error(t, err)
