@@ -15,6 +15,10 @@ on:
     branches: [main, develop]   # CUSTOMIZE: this repo has no master branch
   pull_request:
     branches: [main, develop]
+  # Gitea has no API to re-run a finished run, so a run that failed for the
+  # runner's own reasons can only be repeated by inventing a commit unless the
+  # workflow can be dispatched by hand (ci-template v1.3).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,9 +33,9 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -58,9 +62,9 @@ jobs:
     name: Security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -120,7 +124,7 @@ jobs:
     name: Trivy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # CUSTOMIZE: skip-dirs — the integration harness under test/ only.
       # Everything that ships in a release is scanned.
@@ -173,9 +177,9 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -196,9 +200,9 @@ jobs:
     needs: [lint, build]
     timeout-minutes: 30       # CUSTOMIZE: suite runs in ~30s; 30m is headroom
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
