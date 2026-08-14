@@ -103,6 +103,19 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// The suite needs a real CoreDNS to serve the TLSA records the DANE
+	// resolver validates. Say so plainly rather than failing later inside
+	// exec.Start with a bare "file not found": this suite ran green on one
+	// workstation and nowhere else precisely because the dependency was
+	// implicit. `make integration-test` builds an image that has it.
+	if _, err := exec.LookPath("coredns"); err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR: coredns is not on PATH.")
+		fmt.Fprintln(os.Stderr, "  The integration suite drives a real CoreDNS instance.")
+		fmt.Fprintln(os.Stderr, "  Run `make integration-test`, which builds and runs the")
+		fmt.Fprintln(os.Stderr, "  containerised suite (test/integration/Dockerfile) with it baked in.")
+		os.Exit(1)
+	}
+
 	// Start CoreDNS.
 	fmt.Println("==> Starting CoreDNS on port", metaDNSPort)
 	corednsCmd = exec.Command("coredns", "-conf", filepath.Join(testdataDir, "Corefile"))

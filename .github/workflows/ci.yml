@@ -216,6 +216,23 @@ jobs:
             exit 1
           fi
 
+  # The suite drives a real CoreDNS serving the TLSA records the DANE resolver
+  # validates. It ran dark until 2026-08-14 because it took coredns from
+  # whatever was on the developer's PATH — green in 1.7s on one workstation,
+  # unable to run anywhere else. `make integration-test` now builds
+  # test/integration/Dockerfile with coredns and the source baked in, so this
+  # job needs nothing from the host but a Docker daemon (devops.md §4).
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run integration suite (containerised)
+        run: make integration-test
+
   # The single required check (devops.md §1). Every job above must appear in
   # BOTH the needs list and the results check — a gate that can pass vacuously
   # is worse than no gate. Do not use join(needs.*.result); it evaluates empty
@@ -224,7 +241,7 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, security, trivy, build, test]
+    needs: [lint, security, trivy, build, test, integration]
     steps:
       - name: Fail closed on any non-success
         run: |
@@ -235,4 +252,5 @@ jobs:
           check trivy    "${{ needs.trivy.result }}"
           check build    "${{ needs.build.result }}"
           check test     "${{ needs.test.result }}"
+          check integration "${{ needs.integration.result }}"
           exit $BAD

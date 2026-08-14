@@ -18,14 +18,20 @@ COVERAGE_DIR := coverage
 
 # Go
 GO          := go
-GOFLAGS     := CGO_ENABLED=0
+# NOT named GOFLAGS: that is a reserved Go environment variable, and make
+# re-exports any variable it inherited from the environment. With GOFLAGS set
+# in the environment (a common setting, e.g. -mod=mod) make handed go the value
+# below and every build died with `parsing $GOFLAGS: non-flag "CGO_ENABLED=0"`.
+GO_ENV      := CGO_ENABLED=0
 LDFLAGS     := -ldflags="-s -w -X main.version=$(VERSION)"
 GOTEST      := $(GO) test -count=1 -race
 GOBENCH     := $(GO) test -bench=. -benchmem -count=1
 
 # Docker
-DOCKER_IMAGE := $(PROJECT)
-DOCKER_TAG   := $(VERSION)
+DOCKER            := docker
+DOCKER_IMAGE      := $(PROJECT)
+DOCKER_TAG        := $(VERSION)
+INTEGRATION_IMAGE := $(PROJECT)-integration:latest
 
 # Packages
 PKG_DANE       := ./pkg/dane/...
@@ -54,7 +60,7 @@ GOSEC_EXCLUDE := G115,G304,G402
 	test test-dane test-noiseproto test-spkipin test-truststrap test-cli \
 	coverage coverage-report coverage-dane coverage-noiseproto coverage-spkipin coverage-truststrap \
 	bench-dane bench-noiseproto bench-spkipin bench-truststrap \
-	integration-test integration-test-bootstrap \
+	integration-test integration-test-host integration-test-bootstrap \
 	fmt fmt-check vet lint gosec vuln mod-verify trivy trivy-image security \
 	check check-insecure-tls \
 	ci ci-local \
@@ -72,13 +78,13 @@ all: deps fmt vet build test ## Build and test everything
 
 build: ## Build all packages
 	@printf "$(CYAN)Building packages...$(NC)\n"
-	@$(GOFLAGS) $(GO) build ./...
+	@$(GO_ENV) $(GO) build ./...
 	@printf "$(GREEN)Build successful$(NC)\n"
 
 build-cli: ## Build CLI binary (CGO_ENABLED=0)
 	@printf "$(CYAN)Building CLI binary...$(NC)\n"
 	@mkdir -p $(BUILD_DIR)
-	@$(GOFLAGS) $(GO) build $(LDFLAGS) -o $(CLI_BINARY) ./cmd/truststrap
+	@$(GO_ENV) $(GO) build $(LDFLAGS) -o $(CLI_BINARY) ./cmd/truststrap
 	@printf "$(GREEN)CLI binary: $(CLI_BINARY)$(NC)\n"
 
 clean: ## Remove build artifacts
@@ -229,12 +235,26 @@ bench-truststrap: ## Run all benchmarks
 ## Integration Tests
 ## ============================================================================
 
-integration-test: build-cli ## Run all integration tests
+# devops.md §4: `make integration-test` runs the suite in a container. The
+# suite drives a real CoreDNS, and taking that from whatever happens to be on
+# the developer's PATH is what kept it dark — green in 1.7s here, unable to run
+# anywhere else. The image bakes coredns and the source in; nothing is mounted.
+integration-test: ## Run all integration tests (containerised)
+	@printf "$(CYAN)Building integration test image...$(NC)\n"
+	@$(DOCKER) build -f test/integration/Dockerfile -t $(INTEGRATION_IMAGE) .
+	@printf "$(CYAN)Running all integration tests...$(NC)\n"
+	@$(DOCKER) run --rm $(INTEGRATION_IMAGE)
+	@printf "$(GREEN)All integration tests passed$(NC)\n"
+
+# The uncontainerised path, kept for iterating inside the image (it is what the
+# image's CMD runs) and for a developer who already has coredns on PATH. It is
+# NOT the §4 contract: CI calls integration-test.
+integration-test-host: build-cli ## Run integration tests directly (needs coredns on PATH)
 	@printf "$(CYAN)Running all integration tests...$(NC)\n"
 	@$(GOTEST) -v -tags=integration -timeout 120s ./test/integration/...
 	@printf "$(GREEN)All integration tests passed$(NC)\n"
 
-integration-test-bootstrap: build-cli ## Run bootstrap integration tests
+integration-test-bootstrap: build-cli ## Run bootstrap integration tests (needs coredns on PATH)
 	@printf "$(CYAN)Running bootstrap integration tests...$(NC)\n"
 	@$(GOTEST) -v -tags=integration -timeout 120s ./test/integration/...
 	@printf "$(GREEN)Bootstrap integration tests passed$(NC)\n"
@@ -461,12 +481,12 @@ release: check test build-cli ## Create a release (run checks, tests, build)
 release-binaries: ## Build release binaries for all platforms
 	@printf "$(CYAN)Building release binaries...$(NC)\n"
 	@mkdir -p dist
-	@$(GOFLAGS) GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o dist/truststrap-linux-amd64 ./cmd/truststrap
-	@$(GOFLAGS) GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o dist/truststrap-linux-arm64 ./cmd/truststrap
-	@$(GOFLAGS) GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o dist/truststrap-darwin-amd64 ./cmd/truststrap
-	@$(GOFLAGS) GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o dist/truststrap-darwin-arm64 ./cmd/truststrap
-	@$(GOFLAGS) GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o dist/truststrap-windows-amd64.exe ./cmd/truststrap
-	@$(GOFLAGS) GOOS=windows GOARCH=arm64 $(GO) build $(LDFLAGS) -o dist/truststrap-windows-arm64.exe ./cmd/truststrap
+	@$(GO_ENV) GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o dist/truststrap-linux-amd64 ./cmd/truststrap
+	@$(GO_ENV) GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o dist/truststrap-linux-arm64 ./cmd/truststrap
+	@$(GO_ENV) GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o dist/truststrap-darwin-amd64 ./cmd/truststrap
+	@$(GO_ENV) GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o dist/truststrap-darwin-arm64 ./cmd/truststrap
+	@$(GO_ENV) GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o dist/truststrap-windows-amd64.exe ./cmd/truststrap
+	@$(GO_ENV) GOOS=windows GOARCH=arm64 $(GO) build $(LDFLAGS) -o dist/truststrap-windows-arm64.exe ./cmd/truststrap
 	@printf "$(GREEN)Release binaries built in dist/$(NC)\n"
 
 ## ============================================================================
