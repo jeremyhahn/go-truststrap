@@ -1,0 +1,9 @@
+# Trivy suppressions for go-truststrap.
+#
+# devops.md §8: every entry needs a written reason and a date. The gate is
+# CRITICAL/HIGH on `trivy fs` (dependency CVEs, leaked secrets,
+# misconfigurations) and it does NOT use --ignore-unfixed — source-tree
+# findings are always actionable.
+#
+# There are no suppressions as of 2026-08-14. Keep it that way if you can:
+# the fix for a dependency CVE is `make deps-latest`, not a line in this file.

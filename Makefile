@@ -37,12 +37,18 @@ PKG_CLI        := ./cmd/truststrap/...
 # Coverage threshold
 COVERAGE_THRESHOLD := 90
 
-# Security scanner exclusions
-# G104: Unhandled errors on conn.Close() in cleanup paths (intentional)
-# G115: Integer overflow int->uint16 for port numbers (validated by cobra flags)
-# G304: File inclusion via variable (CLI tool reads user-specified files by design)
-# G402: InsecureSkipVerify (DANE/direct modes intentionally skip CA verification)
-GOSEC_EXCLUDE := G104,G115,G304,G402
+# Security scanner exclusions (devops.md §8 — each needs a written reason).
+# Keep this list identical to -exclude in .github/workflows/ci.yml, where the
+# long-form justifications live. Checked against the code 2026-08-14; G104 was
+# dropped in the same pass because it no longer fires anywhere in the tree.
+# G115: narrowing conversions. framing.go bounds len(data) against
+#       MaxFrameSize before the uint16 cast; the rest are operator-supplied
+#       CLI flags (--port, --selector, --matching-type), never peer input.
+# G304: os.ReadFile on operator-supplied paths. No request-derived path exists.
+# G402: the custom-verifier pattern in pkg/dane, pkg/spkipin and pkg/truststrap
+#       — WebPKI chain building is disabled and VerifyConnection performs the
+#       stronger check (TLSA match, SPKI pin, or TOFU capture) in its place.
+GOSEC_EXCLUDE := G115,G304,G402
 
 .PHONY: all build clean deps tidy build-cli \
 	test test-dane test-noiseproto test-spkipin test-truststrap test-cli \

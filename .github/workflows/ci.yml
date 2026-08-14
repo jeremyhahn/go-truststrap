@@ -1,130 +1,129 @@
-# Copyright 2026 Jeremy Hahn
-# SPDX-License-Identifier: MIT
+# ci-template: v1 — canonical CI for all first-party Go repos.
+# Source of truth: software/templates/github-actions/ci.yml in the
+# automatethethings repo. Copied into each repo (never workflow_call: the
+# template lives inside the security boundary and cannot be referenced from
+# github.com). Blocks marked CUSTOMIZE are the only expected divergence;
+# everything else drifting from the template is a defect (devops.md §8).
+#
+# Runs identically on Gitea Actions (dev) and GitHub Actions (public mirror);
+# host-specific steps are guarded on github.server_url (devops.md §1).
 
 name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop]   # CUSTOMIZE: this repo has no master branch
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  GO_VERSION: "1.26.6"        # latest stable — bumped portfolio-wide (devops.md §9)
+  COVERAGE_THRESHOLD: 90      # CUSTOMIZE: matches COVERAGE_THRESHOLD in the Makefile
+
 jobs:
-  test:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-
-      - name: Download dependencies
-        run: go mod download
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Check formatting
-        run: test -z "$(gofmt -l .)" || (echo "Files need formatting:" && gofmt -l . && exit 1)
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "${UNFORMATTED}" ]; then
+            echo "Files not formatted:"; echo "${UNFORMATTED}"; exit 1
+          fi
 
       - name: Vet
         run: go vet ./...
 
-      - name: Test with race detector
-        run: go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
-        env:
-          CGO_ENABLED: '1'
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
-      - name: Per-package coverage
-        run: |
-          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | Coverage | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          FAIL=0
-          for pkg in dane noiseproto spkipin truststrap; do
-            go test -count=1 -race -coverprofile="coverage-${pkg}.out" -covermode=atomic "./pkg/${pkg}/..."
-            COV=$(go tool cover -func="coverage-${pkg}.out" | grep total | awk '{print $3}' | tr -d '%')
-            if [ -z "$COV" ]; then COV="0.0"; fi
-            INT=$(echo "$COV" | cut -d. -f1)
-            if [ "$INT" -lt 90 ]; then
-              echo "| pkg/${pkg} | ${COV}% | :x: FAIL |" >> $GITHUB_STEP_SUMMARY
-              FAIL=1
-            else
-              echo "| pkg/${pkg} | ${COV}% | :white_check_mark: PASS |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
-          TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Total: ${TOTAL}**" >> $GITHUB_STEP_SUMMARY
-          if [ "$FAIL" -eq 1 ]; then
-            echo "::error::Coverage threshold (90%) not met for one or more packages"
-            exit 1
-          fi
+      # .golangci.yml must enable staticcheck, errcheck, unused, ineffassign,
+      # misspell, gocritic (devops.md §8) — the umbrella with the security
+      # linters off does not satisfy the gate.
+      - name: golangci-lint
+        run: golangci-lint run --timeout=5m ./...
 
-      - name: Build CLI
-        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/truststrap ./cmd/truststrap
-
-      - name: Verify binary
-        run: ./bin/truststrap version
-
-  lint:
+  security:
+    name: Security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.10.1
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-      - name: gosec
-        run: >-
-          gosec -exclude=G104,G115,G304,G402
-          -severity medium -confidence medium
-          -exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor
-          -exclude-generated
-          ./...
+      # CUSTOMIZE (with justification): this list is identical to
+      # GOSEC_EXCLUDE in the Makefile. Every rule below was checked against
+      # the code on 2026-08-14; G104 was dropped in the same pass because it
+      # no longer fires anywhere in the tree.
+      #
+      #   G115 integer overflow on narrowing conversion. Three shapes here:
+      #        pkg/noiseproto/bootstrap/framing.go bounds len(data) against
+      #        MaxFrameSize and returns ErrFrameTooLarge *before* the uint16
+      #        conversion, so that one is a false positive; the rest are
+      #        --port / --selector / --matching-type CLI flags narrowed to the
+      #        protocol's wire widths, supplied by the local operator, not by
+      #        a peer. Attacker-controlled narrowing would be a real finding
+      #        this exclusion would hide, so review new conversions by hand.
+      #   G304 file inclusion via variable: every os.ReadFile call it flags
+      #        reads a path the operator named on the command line — the key
+      #        file, the certificate to pin, the version file. There is no
+      #        request-derived path anywhere in the tree.
+      #   G402 TLS InsecureSkipVerify: the custom-verifier pattern, used in
+      #        exactly three places (pkg/dane/tlsconfig.go, pkg/spkipin/pin.go,
+      #        pkg/truststrap/tofu.go). Each disables WebPKI chain building
+      #        only and supplies a VerifyConnection callback that performs the
+      #        stronger check — DANE/TLSA matching, SPKI pin comparison, or
+      #        TOFU leaf capture. This is the whole point of the library;
+      #        without it there is nothing to bootstrap trust from.
+      - name: Run gosec
+        run: gosec -fmt=sarif -out=gosec.sarif -exclude=G115,G304,G402 -exclude-dir=test -exclude-dir=examples -severity=medium -confidence=medium ./...
 
-  vuln:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Upload gosec SARIF
+        # Gitea has no code-scanning API; the upload 404s and fails the job.
+        if: always() && github.server_url == 'https://github.com'
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          go-version-file: go.mod
-
-      - name: Verify module integrity
-        run: go mod verify
+          sarif_file: gosec.sarif
+          category: gosec
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      # Blocking, per devops.md §8. govulncheck is also the §9 forcing function
-      # for toolchain currency, so a warning here would defeat its purpose.
-      - name: govulncheck
-        run: govulncheck -show verbose ./...
+      # Also the toolchain-currency forcing function: fails on stdlib vulns
+      # in an outdated Go (devops.md §9).
+      - name: Run govulncheck
+        run: govulncheck ./...
 
-  # devops.md §8: trivy fs gates dependency CVEs, leaked secrets and
-  # misconfigurations in the tree on CRITICAL/HIGH, on both hosts.
-  #
-  # trivy-action downloads its setup from github.com and cannot authenticate
-  # from a Gitea runner, and code-scanning SARIF upload is a GitHub-only
-  # mechanic — both are guarded on github.server_url. The Gitea leg installs
-  # the trivy CLI from the release tarball and runs the same gate, so neither
-  # host is left unscanned.
+      - name: Verify module integrity
+        run: go mod verify
+
   trivy:
+    name: Trivy
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v4
 
+      # CUSTOMIZE: skip-dirs — the integration harness under test/ only.
+      # Everything that ships in a release is scanned.
       - name: Trivy scan (SARIF for code scanning)
+        # trivy-action's setup checks out aquasecurity/trivy from github.com
+        # with the runner token, which a Gitea token cannot authenticate.
         if: github.server_url == 'https://github.com'
         uses: aquasecurity/trivy-action@master
         with:
@@ -134,6 +133,8 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           exit-code: 0
+          skip-dirs: test
+          trivyignores: .trivyignore
 
       - name: Upload Trivy SARIF
         if: always() && github.server_url == 'https://github.com'
@@ -152,17 +153,79 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 1
           format: table
+          skip-dirs: test
+          trivyignores: .trivyignore
 
-      - name: Install trivy CLI (Gitea)
+      # Same gate on Gitea, via the trivy CLI installed from the release
+      # tarball (anonymous download — no github.com auth involved).
+      - name: Install Trivy (Gitea)
         if: github.server_url != 'https://github.com'
-        run: |
-          TRIVY_VERSION=$(curl -fsSL https://api.github.com/repos/aquasecurity/trivy/releases/latest \
-            | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-            | tar -xz -C "$HOME/.local/bin" trivy
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Trivy gate (Gitea)
         if: github.server_url != 'https://github.com'
-        run: trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 .
+        run: trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table --skip-dirs test --ignorefile .trivyignore .
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build all packages
+        run: go build ./...
+
+      # CUSTOMIZE: the shipped artifact is a static CLI; build it the way the
+      # release workflow does and prove the binary actually runs.
+      - name: Build CLI
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/truststrap ./cmd/truststrap
+
+      - name: Verify binary
+        run: ./bin/truststrap version
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    timeout-minutes: 30       # CUSTOMIZE: suite runs in ~30s; 30m is headroom
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests with coverage
+        run: |
+          go test -race -count=1 -timeout=900s -coverprofile=coverage.out ./...
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          if [ $(echo "${COVERAGE} < ${{ env.COVERAGE_THRESHOLD }}" | bc -l) -eq 1 ]; then
+            echo "FAIL: coverage ${COVERAGE}% is below minimum ${{ env.COVERAGE_THRESHOLD }}%"
+            exit 1
+          fi
+
+  # The single required check (devops.md §1). Every job above must appear in
+  # BOTH the needs list and the results check — a gate that can pass vacuously
+  # is worse than no gate. Do not use join(needs.*.result); it evaluates empty
+  # on Gitea and reports success while jobs fail.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, security, trivy, build, test]
+    steps:
+      - name: Fail closed on any non-success
+        run: |
+          check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+          BAD=0
+          check lint     "${{ needs.lint.result }}"
+          check security "${{ needs.security.result }}"
+          check trivy    "${{ needs.trivy.result }}"
+          check build    "${{ needs.build.result }}"
+          check test     "${{ needs.test.result }}"
+          exit $BAD
