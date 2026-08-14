@@ -73,6 +73,22 @@ resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
         ServerStaticKey: "ab12cd34...",
     },
 })
+
+// TOFU -- trust-on-first-use with a persistent pin store
+store := truststrap.NewMemoryPinStore() // or a replicated implementation
+resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
+    MethodOrder: []truststrap.Method{truststrap.MethodTOFU},
+    TOFU: &truststrap.TOFUConfig{
+        ServerURL: "https://kms.example.com:8443",
+        PinStore:  store,
+        // ConfirmFunc is optional; nil means auto-accept with a warning log.
+        ConfirmFunc: func(ctx context.Context, pin *truststrap.Pin) error {
+            fmt.Printf("TOFU: accepting pin %s for %s:%d\n",
+                pin.SPKISHA256, pin.Host, pin.Port)
+            return nil
+        },
+    },
+})
 ```
 
 ### CLI
@@ -133,8 +149,24 @@ sudo systemctl enable --now truststrap
 | **SPKI Pinning** | SHA-256 hash of server's SPKI | Medium | Can distribute a hex pin via config management |
 | **Direct HTTPS** | System trust store (OS CA bundle) | Baseline | Fallback when the OS already has a usable trust store |
 | **Embedded** | In-process call (no network) | N/A | KMS runs in the same process |
+| **TOFU** | First-use pin capture, then strict SPKI | Adaptive | Environments where no out-of-band credential is available; see caveat below |
 
 AutoFetch tries them in the order above and returns the first success. Configure only what your environment supports -- unconfigured methods are skipped.
+
+### TOFU Semantics and Security Caveat
+
+`TOFUBootstrapper` implements trust-on-first-use SPKI pinning:
+
+1. **First connection**: a TLS handshake is performed solely to capture the server's leaf certificate SPKI pin. No application data is exchanged over this unverified connection. The captured pin is passed to an optional `ConfirmFunc` before being persisted via the `PinStore` interface.
+2. **Subsequent connections**: the stored pin is retrieved and used for strict SPKI verification (identical to `SPKIBootstrapper`). Pin mismatches are hard errors; the stored pin is never silently overwritten.
+
+**Security caveat**: the first connection is by definition unauthenticated. An attacker who can intercept the initial dial can substitute their own certificate. TOFU is appropriate only when:
+- A stronger method (DANE, Noise, SPKI) is unavailable at the time of first contact, AND
+- The environment is trusted enough that the first dial is unlikely to be intercepted (e.g. a provisioning VLAN, localhost, or a private network segment).
+
+Downstream projects should back the `PinStore` interface with replicated, durable storage (e.g. a Raft KV store) so pins are consistent across cluster members and survive process restarts. `MemoryPinStore` is provided for ephemeral processes and unit tests.
+
+`MethodTOFU` is intentionally absent from `DefaultMethodOrder`. It participates in `AutoBootstrapper` only when the caller explicitly includes it in `MethodOrder` and provides a non-nil `TOFUConfig`, preventing accidental TOFU fallback in environments that require a strictly pinned or DANE-verified trust model.
 
 ## Architecture
 
@@ -146,6 +178,8 @@ pkg/truststrap/            Bootstrapper interface, AutoBootstrapper, AutoFetch
   spki.go                  SPKI-pinned TLS bootstrapper
   direct.go                Direct HTTPS bootstrapper
   embedded.go              In-process bootstrapper
+  tofu.go                  Trust-on-first-use SPKI-pinning bootstrapper
+  pinstore.go              Pin struct, PinStore interface, MemoryPinStore
 
 pkg/dane/                  RFC 6698 DANE/TLSA primitives
   resolver.go              DNS TLSA lookup with DNSSEC validation

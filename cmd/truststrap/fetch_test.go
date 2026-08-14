@@ -88,59 +88,6 @@ func TestBuildMethodMap_DANEWithServerURL(t *testing.T) {
 	assert.Contains(t, methods, "direct")
 }
 
-func TestParseDERCerts_Empty(t *testing.T) {
-	_, err := parseDERCerts(nil)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrFetchFailed)
-}
-
-func TestParseDERCerts_EmptySlice(t *testing.T) {
-	_, err := parseDERCerts([][]byte{})
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrFetchFailed)
-}
-
-func TestParseDERCerts_InvalidDER(t *testing.T) {
-	_, err := parseDERCerts([][]byte{[]byte("not a cert")})
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrFetchFailed)
-}
-
-func TestParseDERCerts_ValidCert(t *testing.T) {
-	certFile := createTestCertFile(t)
-	cert, err := loadCertFromPEMFile(certFile)
-	require.NoError(t, err)
-
-	certs, err := parseDERCerts([][]byte{cert.Raw})
-	require.NoError(t, err)
-	assert.Len(t, certs, 1)
-	assert.Equal(t, "Test CA", certs[0].Subject.CommonName)
-}
-
-func TestParseDERCerts_MixedValidInvalid(t *testing.T) {
-	certFile := createTestCertFile(t)
-	cert, err := loadCertFromPEMFile(certFile)
-	require.NoError(t, err)
-
-	certs, err := parseDERCerts([][]byte{[]byte("bad"), cert.Raw})
-	require.NoError(t, err)
-	assert.Len(t, certs, 1)
-}
-
-func TestParseDERCerts_MultipleCerts(t *testing.T) {
-	certFile1 := createTestCertFile(t)
-	cert1, err := loadCertFromPEMFile(certFile1)
-	require.NoError(t, err)
-
-	certFile2 := createTestCertFile(t)
-	cert2, err := loadCertFromPEMFile(certFile2)
-	require.NoError(t, err)
-
-	certs, err := parseDERCerts([][]byte{cert1.Raw, cert2.Raw})
-	require.NoError(t, err)
-	assert.Len(t, certs, 2)
-}
-
 func TestRunFetch_NoMethodsConfigured(t *testing.T) {
 	cmd := fetchCmd
 	cmd.Flags().Set("server-url", "")

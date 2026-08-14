@@ -5,9 +5,17 @@ package truststrap
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,6 +32,92 @@ type mockTLSAResolver struct {
 
 func (m *mockTLSAResolver) LookupTLSA(_ context.Context, _ string, _ uint16) ([]*dane.TLSARecord, error) {
 	return m.records, m.err
+}
+
+// daneTestServer is an HTTPS test server whose serving chain is anchored at
+// a freshly minted CA, so connections pass DANE channel verification against
+// the record returned by tlsaRecord.
+type daneTestServer struct {
+	server *httptest.Server
+	caCert *x509.Certificate
+	caPEM  []byte
+}
+
+// tlsaRecord returns a DANE-TA (usage=2) TLSA record matching the SPKI of
+// the server's CA certificate.
+func (s *daneTestServer) tlsaRecord() *dane.TLSARecord {
+	sum := sha256.Sum256(s.caCert.RawSubjectPublicKeyInfo)
+	return &dane.TLSARecord{
+		Usage:        dane.UsageDANETA,
+		Selector:     dane.SelectorSPKI,
+		MatchingType: dane.MatchingSHA256,
+		CertData:     sum[:],
+	}
+}
+
+// newDANETestServer starts an HTTPS test server presenting a leaf+CA chain
+// with loopback IP SANs so DANE-TA verification of the serving channel
+// (including the hostname check) succeeds.
+func newDANETestServer(t *testing.T, handler http.Handler) *daneTestServer {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "dane-test-root"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate leaf key: %v", err)
+	}
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "dane-test-server"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create leaf cert: %v", err)
+	}
+
+	srv := httptest.NewUnstartedServer(handler)
+	srv.TLS = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{leafDER, caDER},
+			PrivateKey:  leafKey,
+		}},
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	return &daneTestServer{
+		server: srv,
+		caCert: caCert,
+		caPEM:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+	}
 }
 
 func TestNewDANEBootstrapper_Success(t *testing.T) {
@@ -257,29 +351,19 @@ func TestDANEBootstrapper_FetchCABundle_NoDANETARecords(t *testing.T) {
 func TestDANEBootstrapper_FetchCABundle_SuccessWithDANEVerification(t *testing.T) {
 	bundle := newTestCertBundle(t)
 
-	// Compute the TLSA record data for the root cert: DANE-TA + SPKI + SHA-256.
-	spkiHash := sha256.Sum256(bundle.rsaRootCert.RawSubjectPublicKeyInfo)
-
-	resolver := &mockTLSAResolver{
-		records: []*dane.TLSARecord{
-			{
-				Usage:        dane.UsageDANETA,
-				Selector:     dane.SelectorSPKI,
-				MatchingType: dane.MatchingSHA256,
-				CertData:     spkiHash[:],
-			},
-		},
-	}
-
-	// Create a TLS test server that serves the CA bundle.
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The served bundle contains the serving CA (matches the TLSA record)
+	// plus an unrelated root.
+	var ds *daneTestServer
+	ds = newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(bundle.combinedPEM)
+		w.Write(ds.caPEM)
+		w.Write(bundle.rsaRootPEM)
 	}))
-	defer server.Close()
+
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -303,26 +387,17 @@ func TestDANEBootstrapper_FetchCABundle_SuccessWithDANEVerification(t *testing.T
 func TestDANEBootstrapper_FetchCABundle_DANEVerificationFails(t *testing.T) {
 	bundle := newTestCertBundle(t)
 
-	// Provide a DANE-TA record with wrong data so verification fails.
-	resolver := &mockTLSAResolver{
-		records: []*dane.TLSARecord{
-			{
-				Usage:        dane.UsageDANETA,
-				Selector:     dane.SelectorSPKI,
-				MatchingType: dane.MatchingSHA256,
-				CertData:     make([]byte, 32), // Wrong hash data.
-			},
-		},
-	}
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The serving channel passes DANE verification, but the served bundle
+	// contains no certificate matching a DANE-TA record.
+	ds := newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(bundle.combinedPEM)
 	}))
-	defer server.Close()
+
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -338,10 +413,12 @@ func TestDANEBootstrapper_FetchCABundle_DANEVerificationFails(t *testing.T) {
 	}
 }
 
-func TestDANEBootstrapper_FetchCABundle_ServerReturns500(t *testing.T) {
-	// Compute a valid TLSA record so we pass the DNS phase.
-	bundle := newTestCertBundle(t)
-	spkiHash := sha256.Sum256(bundle.rsaRootCert.RawSubjectPublicKeyInfo)
+func TestDANEBootstrapper_FetchCABundle_ChannelVerificationFails(t *testing.T) {
+	// The server presents a chain that matches no TLSA record, so the TLS
+	// handshake itself must be rejected before any bundle bytes are read.
+	ds := newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler reached despite failed channel verification")
+	}))
 
 	resolver := &mockTLSAResolver{
 		records: []*dane.TLSARecord{
@@ -349,18 +426,40 @@ func TestDANEBootstrapper_FetchCABundle_ServerReturns500(t *testing.T) {
 				Usage:        dane.UsageDANETA,
 				Selector:     dane.SelectorSPKI,
 				MatchingType: dane.MatchingSHA256,
-				CertData:     spkiHash[:],
+				CertData:     make([]byte, 32), // Matches nothing.
 			},
 		},
 	}
 
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	bs, err := NewDANEBootstrapper(&DANEConfig{
+		ServerURL: ds.server.URL,
+		Resolver:  resolver,
+	})
+	if err != nil {
+		t.Fatalf("NewDANEBootstrapper() error = %v", err)
+	}
+
+	resp, err := bs.FetchCABundle(context.Background(), nil)
+	if resp != nil {
+		t.Error("FetchCABundle() should return nil response when channel verification fails")
+	}
+	if !errors.Is(err, ErrDANEVerificationFailed) {
+		t.Errorf("FetchCABundle() error = %v, want %v", err, ErrDANEVerificationFailed)
+	}
+	if !errors.Is(err, dane.ErrTLSAVerificationFailed) {
+		t.Errorf("FetchCABundle() error = %v, want wrapped %v", err, dane.ErrTLSAVerificationFailed)
+	}
+}
+
+func TestDANEBootstrapper_FetchCABundle_ServerReturns500(t *testing.T) {
+	ds := newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}))
-	defer server.Close()
+
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -377,28 +476,15 @@ func TestDANEBootstrapper_FetchCABundle_ServerReturns500(t *testing.T) {
 }
 
 func TestDANEBootstrapper_FetchCABundle_EmptyBody(t *testing.T) {
-	bundle := newTestCertBundle(t)
-	spkiHash := sha256.Sum256(bundle.rsaRootCert.RawSubjectPublicKeyInfo)
-
-	resolver := &mockTLSAResolver{
-		records: []*dane.TLSARecord{
-			{
-				Usage:        dane.UsageDANETA,
-				Selector:     dane.SelectorSPKI,
-				MatchingType: dane.MatchingSHA256,
-				CertData:     spkiHash[:],
-			},
-		},
-	}
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ds := newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		// Write nothing.
 	}))
-	defer server.Close()
+
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -415,31 +501,19 @@ func TestDANEBootstrapper_FetchCABundle_EmptyBody(t *testing.T) {
 }
 
 func TestDANEBootstrapper_FetchCABundle_WithQueryParams(t *testing.T) {
-	bundle := newTestCertBundle(t)
-	spkiHash := sha256.Sum256(bundle.rsaRootCert.RawSubjectPublicKeyInfo)
-
 	var receivedStoreType, receivedAlgorithm string
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var ds *daneTestServer
+	ds = newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedStoreType = r.URL.Query().Get("store_type")
 		receivedAlgorithm = r.URL.Query().Get("algorithm")
 		w.WriteHeader(http.StatusOK)
-		w.Write(bundle.combinedPEM)
+		w.Write(ds.caPEM)
 	}))
-	defer server.Close()
 
-	resolver := &mockTLSAResolver{
-		records: []*dane.TLSARecord{
-			{
-				Usage:        dane.UsageDANETA,
-				Selector:     dane.SelectorSPKI,
-				MatchingType: dane.MatchingSHA256,
-				CertData:     spkiHash[:],
-			},
-		},
-	}
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -496,28 +570,15 @@ func TestDANEBootstrapper_FetchCABundle_UnreachableServer(t *testing.T) {
 }
 
 func TestDANEBootstrapper_FetchCABundle_InvalidPEMResponse(t *testing.T) {
-	bundle := newTestCertBundle(t)
-	spkiHash := sha256.Sum256(bundle.rsaRootCert.RawSubjectPublicKeyInfo)
-
-	resolver := &mockTLSAResolver{
-		records: []*dane.TLSARecord{
-			{
-				Usage:        dane.UsageDANETA,
-				Selector:     dane.SelectorSPKI,
-				MatchingType: dane.MatchingSHA256,
-				CertData:     spkiHash[:],
-			},
-		},
-	}
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ds := newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not PEM data"))
 	}))
-	defer server.Close()
+
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -534,37 +595,24 @@ func TestDANEBootstrapper_FetchCABundle_InvalidPEMResponse(t *testing.T) {
 }
 
 func TestDANEBootstrapper_FetchCABundle_UnparseableCertSkipped(t *testing.T) {
-	bundle := newTestCertBundle(t)
-	spkiHash := sha256.Sum256(bundle.rsaRootCert.RawSubjectPublicKeyInfo)
-
-	// Build PEM with one bad cert + one valid cert.
+	// Build PEM with one bad cert + the serving CA (which matches the TLSA
+	// record).
 	badCertPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: []byte("invalid DER data"),
 	})
-	combined := make([]byte, 0, len(badCertPEM)+len(bundle.rsaRootPEM))
-	combined = append(combined, badCertPEM...)
-	combined = append(combined, bundle.rsaRootPEM...)
 
-	resolver := &mockTLSAResolver{
-		records: []*dane.TLSARecord{
-			{
-				Usage:        dane.UsageDANETA,
-				Selector:     dane.SelectorSPKI,
-				MatchingType: dane.MatchingSHA256,
-				CertData:     spkiHash[:],
-			},
-		},
-	}
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var ds *daneTestServer
+	ds = newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(combined)
+		w.Write(badCertPEM)
+		w.Write(ds.caPEM)
 	}))
-	defer server.Close()
+
+	resolver := &mockTLSAResolver{records: []*dane.TLSARecord{ds.tlsaRecord()}}
 
 	bs, err := NewDANEBootstrapper(&DANEConfig{
-		ServerURL: server.URL,
+		ServerURL: ds.server.URL,
 		Resolver:  resolver,
 	})
 	if err != nil {
@@ -576,7 +624,7 @@ func TestDANEBootstrapper_FetchCABundle_UnparseableCertSkipped(t *testing.T) {
 		t.Fatalf("FetchCABundle() error = %v", err)
 	}
 
-	// The bad cert is skipped; only the valid root should remain.
+	// The bad cert is skipped; only the valid CA should remain.
 	if len(resp.Certificates) != 1 {
 		t.Errorf("Certificates count = %d, want 1 (bad cert skipped)", len(resp.Certificates))
 	}

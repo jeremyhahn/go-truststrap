@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -155,17 +154,11 @@ func runDANEFetch(cmd *cobra.Command, args []string) error {
 		serverURL = fmt.Sprintf("https://%s:%d", hostname, port)
 	}
 
-	// Construct TLS config that verifies against DANE TLSA records.
-	tlsCfg := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, //nolint:gosec // DANE replaces CA verification
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			certs, parseErr := parseDERCerts(rawCerts)
-			if parseErr != nil {
-				return parseErr
-			}
-			return dane.VerifyTLSABundle(certs, records)
-		},
+	// Construct a TLS config whose sole verifier is DANE/TLSA validation
+	// of the presented chain (RFC 7671).
+	tlsCfg, err := dane.NewVerifiedTLSConfigFromRecords(records, hostname)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
 
 	httpClient := &http.Client{

@@ -3,7 +3,10 @@
 
 package truststrap
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrNotConnected indicates an operation was attempted before a connection
@@ -47,3 +50,85 @@ var (
 	// configuration was nil.
 	ErrMethodSkipped = errors.New("truststrap: method skipped")
 )
+
+// ErrPinNotFound is returned by PinStore.Get when no pin exists for the
+// given host and port.
+type ErrPinNotFound struct {
+	// Host is the server hostname that was looked up.
+	Host string
+	// Port is the server port that was looked up.
+	Port int
+}
+
+// Error returns a descriptive message identifying the missing pin.
+func (e ErrPinNotFound) Error() string {
+	return fmt.Sprintf("truststrap: pin not found for %s:%d", e.Host, e.Port)
+}
+
+// ErrNilPin is returned by PinStore.Put when a nil pin is supplied.
+type ErrNilPin struct{}
+
+// Error returns the nil-pin error message.
+func (e ErrNilPin) Error() string {
+	return "truststrap: pin must not be nil"
+}
+
+// ErrInvalidPin is returned when a pin fails field validation.
+type ErrInvalidPin struct {
+	// Reason describes the specific validation failure.
+	Reason string
+}
+
+// Error returns the validation failure message.
+func (e ErrInvalidPin) Error() string {
+	return fmt.Sprintf("truststrap: invalid pin: %s", e.Reason)
+}
+
+// ErrTOFURejected is returned when the ConfirmFunc rejects a newly captured
+// TOFU pin. The pin is not persisted when this error occurs.
+type ErrTOFURejected struct {
+	// Host is the server hostname whose pin was rejected.
+	Host string
+	// Port is the server port whose pin was rejected.
+	Port int
+	// Pin is the captured pin that was rejected.
+	Pin *Pin
+	// Err is the underlying error returned by ConfirmFunc.
+	Err error
+}
+
+// Error returns a message identifying the rejection site and reason.
+func (e ErrTOFURejected) Error() string {
+	return fmt.Sprintf("truststrap: tofu pin rejected for %s:%d: %v", e.Host, e.Port, e.Err)
+}
+
+// Unwrap returns the underlying ConfirmFunc error for use with errors.Is/As.
+func (e ErrTOFURejected) Unwrap() error {
+	return e.Err
+}
+
+// ErrTOFUCaptureFailed is returned when the initial TLS dial to capture
+// the server's leaf certificate fails before a pin can be computed.
+type ErrTOFUCaptureFailed struct {
+	// Err is the underlying dial or handshake error.
+	Err error
+}
+
+// Error returns a message describing the capture failure.
+func (e ErrTOFUCaptureFailed) Error() string {
+	return fmt.Sprintf("truststrap: tofu pin capture failed: %v", e.Err)
+}
+
+// Unwrap returns the underlying error for use with errors.Is/As.
+func (e ErrTOFUCaptureFailed) Unwrap() error {
+	return e.Err
+}
+
+// ErrTOFUPinStoreRequired is returned by NewTOFUBootstrapper when no PinStore
+// is provided in the configuration.
+type ErrTOFUPinStoreRequired struct{}
+
+// Error returns the missing-pin-store error message.
+func (e ErrTOFUPinStoreRequired) Error() string {
+	return "truststrap: tofu pin store is required"
+}

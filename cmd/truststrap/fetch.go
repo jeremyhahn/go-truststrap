@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -52,7 +51,7 @@ Methods are only attempted if their required flags are provided:
   dane:   --dane-hostname (and optionally --dane-dns-server, --dane-port)
   noise:  --noise-addr and --noise-server-key
   spki:   --server-url and --spki-pin
-  direct: --server-url (plain HTTPS, no verification)`,
+  direct: --server-url (plain HTTPS, system trust store)`,
 	RunE: runFetch,
 }
 
@@ -204,17 +203,11 @@ func fetchDANE(ctx context.Context, serverURL, hostname string, port uint16, dns
 		serverURL = fmt.Sprintf("https://%s:%d", hostname, port)
 	}
 
-	// Connect with custom TLS verification that checks DANE TLSA records.
-	tlsCfg := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, //nolint:gosec // DANE replaces CA verification
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			certs, parseErr := parseDERCerts(rawCerts)
-			if parseErr != nil {
-				return parseErr
-			}
-			return dane.VerifyTLSABundle(certs, records)
-		},
+	// Connect with a TLS config whose sole verifier is DANE/TLSA validation
+	// of the presented chain (RFC 7671).
+	tlsCfg, err := dane.NewVerifiedTLSConfigFromRecords(records, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}
 
 	httpClient := &http.Client{
@@ -280,16 +273,17 @@ func fetchSPKI(ctx context.Context, serverURL, pinHex string) ([]byte, error) {
 	return bundle, nil
 }
 
-// fetchDirect retrieves a CA bundle via plain HTTPS without additional verification.
-// This is the least secure method and should only be used as a last resort.
+// fetchDirect retrieves a CA bundle via plain HTTPS with standard
+// certificate verification against the system trust store, matching the
+// semantics of truststrap.DirectBootstrapper. It provides no verification
+// beyond WebPKI and should only be used as a last resort.
 func fetchDirect(ctx context.Context, serverURL string) ([]byte, error) {
-	slog.Debug("direct HTTPS fetch (no additional verification)", "url", serverURL)
+	slog.Debug("direct HTTPS fetch (system trust store)", "url", serverURL)
 
 	httpClient := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				MinVersion:         tls.VersionTLS12,
-				InsecureSkipVerify: true, //nolint:gosec // Direct mode intentionally skips verification
+				MinVersion: tls.VersionTLS12,
 			},
 		},
 	}
@@ -330,24 +324,4 @@ func fetchHTTPBundle(ctx context.Context, client *http.Client, serverURL string)
 	}
 
 	return body, nil
-}
-
-// parseDERCerts parses a slice of raw DER-encoded certificates into
-// x509.Certificate objects, skipping any that fail to parse.
-func parseDERCerts(rawCerts [][]byte) ([]*x509.Certificate, error) {
-	if len(rawCerts) == 0 {
-		return nil, fmt.Errorf("%w: no certificates presented", ErrFetchFailed)
-	}
-	certs := make([]*x509.Certificate, 0, len(rawCerts))
-	for _, raw := range rawCerts {
-		cert, err := x509.ParseCertificate(raw)
-		if err != nil {
-			continue
-		}
-		certs = append(certs, cert)
-	}
-	if len(certs) == 0 {
-		return nil, fmt.Errorf("%w: no valid certificates parsed", ErrFetchFailed)
-	}
-	return certs, nil
 }

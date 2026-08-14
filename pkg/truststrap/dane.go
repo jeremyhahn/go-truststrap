@@ -5,9 +5,9 @@ package truststrap
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,8 +75,9 @@ type DANEConfig struct {
 
 // DANEBootstrapper implements Bootstrapper using DANE/TLSA DNS verification.
 // It queries TLSA records for the server hostname, fetches the CA bundle
-// over HTTPS (with InsecureSkipVerify since we don't yet have the CA), and
-// verifies the retrieved certificates against the DANE TLSA records.
+// over a DANE-verified HTTPS connection (the serving TLS chain must match
+// the TLSA records), and additionally verifies the retrieved certificates
+// against the DANE-TA TLSA records.
 //
 // DNSSEC validation is always required. DANE without DNSSEC provides no
 // security guarantees, so this bootstrapper unconditionally requires the
@@ -171,10 +172,11 @@ func NewDANEBootstrapper(cfg *DANEConfig) (*DANEBootstrapper, error) {
 }
 
 // FetchCABundle retrieves the CA bundle via DANE-verified HTTPS. It performs
-// TLSA record lookup, fetches the CA bundle over HTTPS with InsecureSkipVerify
-// (since DANE replaces CA-based trust), and verifies the bundle against TLSA
-// records. At least one CA certificate in the bundle must match a DANE-TA
-// (Usage=2) TLSA record.
+// TLSA record lookup, fetches the CA bundle over an HTTPS connection whose
+// serving certificate chain is verified against the TLSA records (DANE
+// replaces CA-based trust for the transport), and then verifies the bundle
+// itself against the DANE-TA records. At least one CA certificate in the
+// bundle must match a DANE-TA (Usage=2) TLSA record.
 func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleRequest) (*CABundleResponse, error) {
 	if b.resolver == nil {
 		return nil, fmt.Errorf("%w: no TLSA resolver configured", ErrDNSLookupFailed)
@@ -200,15 +202,18 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 		return nil, fmt.Errorf("%w: no DANE-TA (usage=2) records found", ErrDANEVerificationFailed)
 	}
 
-	// Step 2: Fetch CA bundle over HTTPS with InsecureSkipVerify.
-	// We use InsecureSkipVerify because we don't yet have the CA certificate;
-	// DANE/TLSA verification replaces CA-based trust for this bootstrap phase.
+	// Step 2: Fetch CA bundle over DANE-verified HTTPS. The serving TLS
+	// chain must itself match the TLSA records — without this, an
+	// interceptor could serve a poisoned bundle that merely contains the
+	// genuine (public) trust-anchor certificate alongside attacker CAs.
+	tlsCfg, err := dane.NewVerifiedTLSConfigFromRecords(records, b.hostname)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDANEVerificationFailed, err)
+	}
 	httpClient := &http.Client{
 		Timeout: b.connectTO,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // DANE replaces CA trust
-			},
+			TLSClientConfig: tlsCfg,
 		},
 	}
 	defer httpClient.CloseIdleConnections()
@@ -235,6 +240,11 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is from operator-provided config, not user input
 	if err != nil {
+		// A handshake rejected by the DANE verifier is a trust failure,
+		// not a transport failure.
+		if errors.Is(err, dane.ErrTLSAVerificationFailed) {
+			return nil, fmt.Errorf("%w: %w", ErrDANEVerificationFailed, err)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}
 	defer resp.Body.Close()

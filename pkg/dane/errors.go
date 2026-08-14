@@ -26,6 +26,10 @@ var (
 	// ErrTLSAVerificationFailed indicates no certificate matched any TLSA record.
 	ErrTLSAVerificationFailed = errors.New("dane: TLSA verification failed")
 
+	// ErrNoUsableTLSARecords indicates no DANE-TA (usage=2) or DANE-EE
+	// (usage=3) records are available for bootstrap verification.
+	ErrNoUsableTLSARecords = errors.New("dane: no DANE-TA or DANE-EE TLSA records found")
+
 	// ErrUnsupportedSelector indicates the TLSA selector field value is not supported.
 	ErrUnsupportedSelector = errors.New("dane: unsupported TLSA selector")
 

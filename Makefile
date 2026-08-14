@@ -49,7 +49,7 @@ GOSEC_EXCLUDE := G104,G115,G304,G402
 	coverage coverage-report coverage-dane coverage-noiseproto coverage-spkipin coverage-truststrap \
 	bench-dane bench-noiseproto bench-spkipin bench-truststrap \
 	integration-test integration-test-bootstrap \
-	fmt fmt-check vet lint gosec vuln trivy check \
+	fmt fmt-check vet lint gosec vuln trivy check check-insecure-tls \
 	ci ci-local \
 	install-tools install-gosec install-govulncheck install-trivy \
 	docker-build docker-run \
@@ -94,7 +94,7 @@ tidy: ## Tidy go.mod and go.sum
 ## Test
 ## ============================================================================
 
-test: ## Run all unit tests
+test: check-insecure-tls ## Run all unit tests
 	@printf "$(CYAN)Running all unit tests...$(NC)\n"
 	@$(GOTEST) ./...
 	@printf "$(GREEN)All tests passed$(NC)\n"
@@ -245,6 +245,22 @@ fmt-check: ## Check formatting without modifying files
 	@printf "$(CYAN)Checking formatting...$(NC)\n"
 	@test -z "$$(gofmt -l .)" || (printf "$(RED)Files need formatting:$(NC)\n" && gofmt -l . && exit 1)
 	@printf "$(GREEN)Formatting check passed$(NC)\n"
+
+check-insecure-tls: ## Enforce InsecureSkipVerify allowlist (fails on unapproved use)
+	@printf "$(CYAN)Checking InsecureSkipVerify allowlist...$(NC)\n"
+	@violations=$$(grep -rPn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" . \
+		| grep -Pv '^[^:]+:[0-9]+:[[:space:]]*//' \
+		| grep -v 'pkg/spkipin/pin.go' \
+		| grep -v 'pkg/dane/tlsconfig.go' \
+		| grep -v 'pkg/truststrap/tofu.go' \
+		|| true); \
+	if [ -n "$$violations" ]; then \
+		printf "$(RED)FORBIDDEN InsecureSkipVerify outside allowlist:$(NC)\n"; \
+		printf '%s\n' "$$violations"; \
+		exit 1; \
+	fi
+	@printf "$(GREEN)InsecureSkipVerify allowlist check passed$(NC)\n"
+
 
 vet: ## Run go vet
 	@printf "$(CYAN)Running go vet...$(NC)\n"

@@ -9,9 +9,10 @@
 // Five implementations are provided:
 //
 //   - DANEBootstrapper: Uses DANE/TLSA DNS verification. The client resolves
-//     TLSA records for the server hostname, fetches the CA bundle over HTTPS
-//     (with InsecureSkipVerify), and verifies the bundle against DANE-TA
-//     records. This is the strongest verification method.
+//     TLSA records for the server hostname, fetches the CA bundle over a
+//     DANE-verified HTTPS connection (the serving TLS chain must match the
+//     TLSA records per RFC 7671), and additionally verifies the bundle
+//     against DANE-TA records. This is the strongest verification method.
 //
 //   - NoiseBootstrapper: Uses the Noise_NK protocol over raw TCP. The client
 //     only needs the server's 32-byte Curve25519 public key (distributed
