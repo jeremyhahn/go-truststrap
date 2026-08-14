@@ -92,7 +92,10 @@ jobs:
       #        TOFU leaf capture. This is the whole point of the library;
       #        without it there is nothing to bootstrap trust from.
       - name: Run gosec
-        run: gosec -fmt=sarif -out=gosec.sarif -exclude=G115,G304,G402 -exclude-dir=test -exclude-dir=examples -severity=medium -confidence=medium ./...
+        # -stdout -verbose=text alongside the SARIF file (ci-template v1.1): the
+        # SARIF upload below only runs on github.com, so on Gitea a failure
+        # would exit 1 with the findings buried in a file nobody can read.
+        run: gosec -fmt=sarif -out=gosec.sarif -stdout -verbose=text -exclude=G115,G304,G402 -exclude-dir=test -exclude-dir=examples -severity=medium -confidence=medium ./...
 
       - name: Upload gosec SARIF
         # Gitea has no code-scanning API; the upload 404s and fails the job.

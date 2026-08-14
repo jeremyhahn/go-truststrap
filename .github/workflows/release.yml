@@ -59,10 +59,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      # ghcr.io on GitHub, Gitea's own registry (same host and port as its web
+      # UI) on the internal network — derived, never hardcoded (devops.md §2).
+      # ghcr.io does not exist on the internal network, so a release built there
+      # had nowhere to push (lessons.md).
+      - name: Resolve registry
+        id: registry
+        run: |
+          if [ "${{ github.server_url }}" = "https://github.com" ]; then
+            echo "host=ghcr.io" >> $GITHUB_OUTPUT
+          else
+            echo "host=$(echo '${{ github.server_url }}' | sed -E 's#^https?://##')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to the container registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ steps.registry.outputs.host }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -70,7 +83,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.registry.outputs.host }}/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
@@ -104,7 +117,11 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
-        run: trivy image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 go-truststrap:scan
+        # --ignore-unfixed on the OS layer, ratified 2026-08-14 (devops.md §8):
+        # base images carry hundreds of unfixable advisories at any moment, so a
+        # raw gate would be permanently red and would train people to ignore it.
+        # This gate means "a rebuild fixes this" — actionable, so enforceable.
+        run: trivy image --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 go-truststrap:scan
 
       - name: Build and push
         uses: docker/build-push-action@v6
