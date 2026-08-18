@@ -35,10 +35,11 @@ func TestLoadOrGenerateKey_GeneratesNew(t *testing.T) {
 func TestLoadOrGenerateKey_LoadsExisting(t *testing.T) {
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
 
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "existing.key")
-	require.NoError(t, os.WriteFile(keyPath, []byte(noiseproto.EncodeStaticKey(key)+"\n"), 0600))
+	require.NoError(t, writeStaticKeyFile(keyPath, key))
 
 	loaded, err := loadOrGenerateKey(keyPath)
 	require.NoError(t, err)
@@ -138,8 +139,9 @@ func TestRunServe_ValidBundleAndKeyLoadsSuccessfully(t *testing.T) {
 	// Create a valid key file.
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
 	keyPath := filepath.Join(tmpDir, "test.key")
-	require.NoError(t, os.WriteFile(keyPath, []byte(noiseproto.EncodeStaticKey(key)+"\n"), 0600))
+	require.NoError(t, writeStaticKeyFile(keyPath, key))
 
 	// Save and restore globals.
 	oldBundle := serveBundleFile
@@ -210,8 +212,9 @@ func TestRunServe_StartError(t *testing.T) {
 	// Create a valid key file.
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
 	keyPath := filepath.Join(tmpDir, "test.key")
-	require.NoError(t, os.WriteFile(keyPath, []byte(noiseproto.EncodeStaticKey(key)+"\n"), 0600))
+	require.NoError(t, writeStaticKeyFile(keyPath, key))
 
 	oldBundle := serveBundleFile
 	oldKey := serveKeyFile
@@ -244,8 +247,9 @@ func TestRunServe_NewServerError(t *testing.T) {
 	// Create a valid key file.
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
 	keyPath := filepath.Join(tmpDir, "test.key")
-	require.NoError(t, os.WriteFile(keyPath, []byte(noiseproto.EncodeStaticKey(key)+"\n"), 0600))
+	require.NoError(t, writeStaticKeyFile(keyPath, key))
 
 	oldBundle := serveBundleFile
 	oldKey := serveKeyFile

@@ -11,11 +11,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
@@ -104,6 +102,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Destroying the key unmaps its locked pages, so it must not happen while
+	// a connection could still be using the key pair. Everything up to a
+	// graceful stop is safe; the shutdown path below decides the rest.
+	destroyKey := true
+	defer func() {
+		if destroyKey {
+			staticKey.Destroy()
+		}
+	}()
 
 	publicKeyHex := hex.EncodeToString(staticKey.Public)
 	slog.Debug("server public key", "key", publicKeyHex)
@@ -111,7 +118,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build the server configuration.
 	cfg := &bootstrap.ServerConfig{
 		ListenAddr:     serveListenAddr,
-		StaticKey:      staticKey,
+		StaticKey:      &staticKey.DHKey,
 		CABundler:      &fileBundleProvider{path: serveBundleFile},
 		MaxConnections: serveMaxConnections,
 		Logger:         slog.Default(),
@@ -144,54 +151,49 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %w", ErrServerStart, err)
 	}
 
+	// Stop returns once every connection has finished or the deadline passes.
+	// On the deadline path a handshake may still hold a copy of the key pair,
+	// so the locked pages stay mapped and process exit reclaims them.
+	if stopCtx.Err() != nil {
+		destroyKey = false
+		slog.Warn("shutdown timed out, key material released at process exit")
+	}
+
 	slog.Info("server stopped")
 	return nil
 }
 
 // loadOrGenerateKey attempts to load a Noise static key from the given file
-// path. If the file does not exist, it generates a new key, writes the
-// hex-encoded private key to the file with 0600 permissions, and prints the
-// public key to stderr.
-func loadOrGenerateKey(keyFile string) (*noise.DHKey, error) {
-	data, err := os.ReadFile(keyFile)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: reading %s: %w", ErrKeyLoad, keyFile, err)
-		}
-
-		// File does not exist -- generate a new key.
-		slog.Debug("generating new Noise static key")
-
-		key, genErr := noiseproto.GenerateStaticKey()
-		if genErr != nil {
-			return nil, fmt.Errorf("%w: %w", ErrKeyGeneration, genErr)
-		}
-
-		privateHex := noiseproto.EncodeStaticKey(key)
-		if writeErr := os.WriteFile(keyFile, []byte(privateHex+"\n"), 0600); writeErr != nil {
-			return nil, fmt.Errorf("%w: writing %s: %w", ErrKeyGeneration, keyFile, writeErr)
-		}
-
-		publicKeyHex := hex.EncodeToString(key.Public)
-		slog.Info("key written", "path", keyFile)
-		slog.Debug("generated public key", "key", publicKeyHex)
-
+// path. If the file does not exist, it generates a new key and writes the
+// hex-encoded private key to the file with 0600 permissions. The private key
+// is held in locked memory throughout; the caller owns the returned key and
+// must Destroy it.
+func loadOrGenerateKey(keyFile string) (*noiseproto.StaticKey, error) {
+	key, err := readStaticKeyFile(keyFile)
+	if err == nil {
+		slog.Info("loaded Noise static key", "path", keyFile)
 		return key, nil
 	}
 
-	// File exists -- load the key.
-	hexKey := strings.TrimSpace(string(data))
-	defer func() {
-		for i := range data {
-			data[i] = 0
-		}
-	}()
-
-	key, err := noiseproto.DecodeStaticKey(hexKey)
-	if err != nil {
-		return nil, fmt.Errorf("%w: decoding %s: %w", ErrKeyLoad, keyFile, err)
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: reading %s: %w", ErrKeyLoad, keyFile, err)
 	}
 
-	slog.Info("loaded Noise static key", "path", keyFile)
+	// File does not exist -- generate a new key.
+	slog.Debug("generating new Noise static key")
+
+	key, err = noiseproto.GenerateStaticKey()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrKeyGeneration, err)
+	}
+
+	if err := writeStaticKeyFile(keyFile, key); err != nil {
+		key.Destroy()
+		return nil, fmt.Errorf("%w: writing %s: %w", ErrKeyGeneration, keyFile, err)
+	}
+
+	slog.Info("key written", "path", keyFile)
+	slog.Debug("generated public key", "key", hex.EncodeToString(key.Public))
+
 	return key, nil
 }

@@ -496,12 +496,13 @@ func startTestNoiseServer(t *testing.T, bundlePEM []byte) (*noiseboot.Server, st
 	if err != nil {
 		t.Fatalf("GenerateStaticKey() error = %v", err)
 	}
+	t.Cleanup(serverKey.Destroy)
 
 	bundler := &testBundleProvider{bundle: bundlePEM}
 
 	srv, err := noiseboot.NewServer(&noiseboot.ServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  serverKey,
+		StaticKey:  &serverKey.DHKey,
 		CABundler:  bundler,
 		Logger:     newTestLogger(),
 	})
@@ -663,10 +664,11 @@ func TestNoiseBootstrapper_FetchCABundle_ServerNoBundler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaticKey() error = %v", err)
 	}
+	t.Cleanup(serverKey.Destroy)
 
 	srv, err := noiseboot.NewServer(&noiseboot.ServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  serverKey,
+		StaticKey:  &serverKey.DHKey,
 		CABundler:  nil, // nil bundler triggers server error
 		Logger:     newTestLogger(),
 	})
@@ -708,6 +710,7 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaticKey() error = %v", err)
 	}
+	t.Cleanup(serverKey.Destroy)
 
 	// Start a listener that performs the server side of NK handshake.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -731,7 +734,7 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 			CipherSuite:   cipherSuite,
 			Pattern:       noise.HandshakeNK,
 			Initiator:     false,
-			StaticKeypair: *serverKey,
+			StaticKeypair: serverKey.DHKey,
 		})
 		if hsErr != nil {
 			serverDone <- hsErr

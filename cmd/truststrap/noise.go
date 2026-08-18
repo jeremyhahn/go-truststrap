@@ -6,11 +6,11 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -152,11 +152,11 @@ func runNoiseGenerate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: generating keypair: %w", ErrKeyOperation, err)
 	}
+	defer key.Destroy()
 
-	privateHex := noiseproto.EncodeStaticKey(key)
 	publicHex := hex.EncodeToString(key.Public)
 
-	if err := os.WriteFile(outputPath, []byte(privateHex+"\n"), 0600); err != nil {
+	if err := writeStaticKeyFile(outputPath, key); err != nil {
 		return fmt.Errorf("%w: writing key file %s: %w", ErrFileOperation, outputPath, err)
 	}
 
@@ -173,17 +173,14 @@ func runNoiseShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: --key-file is required", ErrInvalidInput)
 	}
 
-	data, err := os.ReadFile(keyFile)
+	key, err := readStaticKeyFile(keyFile)
 	if err != nil {
+		if errors.Is(err, noiseproto.ErrInvalidKeySize) || errors.Is(err, ErrKeyFileMalformed) {
+			return fmt.Errorf("%w: decoding key: %w", ErrKeyOperation, err)
+		}
 		return fmt.Errorf("%w: reading key file %s: %w", ErrFileOperation, keyFile, err)
 	}
-
-	hexKey := strings.TrimSpace(string(data))
-
-	key, err := noiseproto.DecodeStaticKey(hexKey)
-	if err != nil {
-		return fmt.Errorf("%w: decoding key: %w", ErrKeyOperation, err)
-	}
+	defer key.Destroy()
 
 	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.Public))
 	return nil

@@ -33,4 +33,8 @@ var (
 	// ErrSessionNotReady indicates an operation was attempted before the
 	// handshake completed successfully.
 	ErrSessionNotReady = errors.New("noise: session not ready")
+
+	// ErrInvalidBufferSize indicates a destination buffer is too small to hold
+	// the requested output.
+	ErrInvalidBufferSize = errors.New("noise: invalid buffer size")
 )

@@ -33,4 +33,8 @@ var (
 
 	// ErrFileOperation is returned when a file read or write operation fails.
 	ErrFileOperation = errors.New("file operation failed")
+
+	// ErrKeyFileMalformed is returned when a key file cannot hold a valid
+	// hex-encoded Noise static key.
+	ErrKeyFileMalformed = errors.New("malformed key file")
 )

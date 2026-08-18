@@ -32,10 +32,11 @@ func TestNewSession_DefaultKey(t *testing.T) {
 func TestNewSession_ProvidedKey(t *testing.T) {
 	key, err := GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
 
 	session, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeXX,
-		LocalStaticKey: key,
+		LocalStaticKey: &key.DHKey,
 		IsInitiator:    true,
 	})
 	require.NoError(t, err)
@@ -116,6 +117,7 @@ func TestSession_XXHandshake(t *testing.T) {
 func TestSession_NKHandshake(t *testing.T) {
 	serverKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(serverKey.Destroy)
 
 	// Client (initiator) knows the server's static public key
 	client, err := NewSession(&SessionConfig{
@@ -128,7 +130,7 @@ func TestSession_NKHandshake(t *testing.T) {
 	// Server (responder) uses its known static key
 	server, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeNK,
-		LocalStaticKey: serverKey,
+		LocalStaticKey: &serverKey.DHKey,
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
@@ -183,9 +185,11 @@ func TestSession_NKHandshake_WrongServerKey(t *testing.T) {
 	// Generate the real server key and a wrong key
 	realServerKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(realServerKey.Destroy)
 
 	wrongServerKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(wrongServerKey.Destroy)
 
 	// Client thinks server has wrongServerKey
 	client, err := NewSession(&SessionConfig{
@@ -198,7 +202,7 @@ func TestSession_NKHandshake_WrongServerKey(t *testing.T) {
 	// Server actually uses realServerKey
 	server, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeNK,
-		LocalStaticKey: realServerKey,
+		LocalStaticKey: &realServerKey.DHKey,
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
@@ -508,6 +512,7 @@ func TestSession_DecryptInvalidCiphertext(t *testing.T) {
 func TestSession_XXHandshake_WithExpectedPeerKey(t *testing.T) {
 	responderKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(responderKey.Destroy)
 
 	// Initiator expects a specific responder key
 	initiator, err := NewSession(&SessionConfig{
@@ -519,7 +524,7 @@ func TestSession_XXHandshake_WithExpectedPeerKey(t *testing.T) {
 
 	responder, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeXX,
-		LocalStaticKey: responderKey,
+		LocalStaticKey: &responderKey.DHKey,
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
@@ -551,6 +556,7 @@ func TestSession_XXHandshake_WithExpectedPeerKey(t *testing.T) {
 func TestSession_XXHandshake_PeerKeyMismatch(t *testing.T) {
 	wrongKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(wrongKey.Destroy)
 
 	// Initiator expects a specific key that won't match
 	initiator, err := NewSession(&SessionConfig{
@@ -761,6 +767,7 @@ func BenchmarkXXHandshake(b *testing.B) {
 
 func BenchmarkNKHandshake(b *testing.B) {
 	serverKey, _ := GenerateStaticKey()
+	defer serverKey.Destroy()
 
 	for i := 0; i < b.N; i++ {
 		client, _ := NewSession(&SessionConfig{
@@ -770,7 +777,7 @@ func BenchmarkNKHandshake(b *testing.B) {
 		})
 		server, _ := NewSession(&SessionConfig{
 			Pattern:        noise.HandshakeNK,
-			LocalStaticKey: serverKey,
+			LocalStaticKey: &serverKey.DHKey,
 			IsInitiator:    false,
 		})
 

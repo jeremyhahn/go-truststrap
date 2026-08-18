@@ -35,7 +35,7 @@ import "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 // grpcService implements BundleProvider via its CABundle() method
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
-    StaticKey:  noiseKey,
+    StaticKey:  &noiseKey.DHKey,
     CABundler:  grpcService, // go-xkms's gRPC service
 })
 ```
@@ -71,7 +71,7 @@ func (f *FileBundler) CABundle() ([]byte, error) {
 // Use with the Noise bootstrap server
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
-    StaticKey:  key,
+    StaticKey:  &key.DHKey,
     CABundler:  &FileBundler{path: "/etc/ssl/ca-bundle.pem"},
 })
 ```
@@ -159,7 +159,7 @@ For Noise bootstrap tests, use `net.Listen("tcp", ":0")` (OS-assigned port) via 
 ```go
 server, _ := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":0", // OS assigns a free port
-    StaticKey:  key,
+    StaticKey:  &key.DHKey,
     CABundler:  bundler,
 })
 server.Start()

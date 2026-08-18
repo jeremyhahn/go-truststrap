@@ -3,6 +3,7 @@ module github.com/jeremyhahn/go-truststrap
 go 1.26.6
 
 require (
+	github.com/awnumar/memguard v0.23.0
 	github.com/flynn/noise v1.1.0
 	github.com/miekg/dns v1.1.72
 	github.com/spf13/cobra v1.10.2
@@ -12,6 +13,7 @@ require (
 )
 
 require (
+	github.com/awnumar/memcall v0.4.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

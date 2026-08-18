@@ -71,10 +71,11 @@ func TestNoiseShow_InvalidHex(t *testing.T) {
 func TestNoiseShow_ValidKeyFile(t *testing.T) {
 	key, err := noiseproto.GenerateStaticKey()
 	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
 
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "test.key")
-	require.NoError(t, os.WriteFile(keyPath, []byte(noiseproto.EncodeStaticKey(key)+"\n"), 0600))
+	require.NoError(t, writeStaticKeyFile(keyPath, key))
 
 	cmd := noiseShowCmd
 	cmd.Flags().Set("key-file", keyPath)

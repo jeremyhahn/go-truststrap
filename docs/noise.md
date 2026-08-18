@@ -79,19 +79,18 @@ import (
     "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
-// Generate a server static key (do this once, persist the key)
+// Generate a server static key (do this once, persist the key).
+// The private key is held in locked memory until Destroy is called.
 key, err := noiseproto.GenerateStaticKey()
 if err != nil {
     return err
 }
-
-// Store the hex-encoded private key for persistence
-hexPrivate := noiseproto.EncodeStaticKey(key)
+defer key.Destroy()
 
 // Start the bootstrap server
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
-    StaticKey:  key,
+    StaticKey:  &key.DHKey,
     CABundler:  myCABundler, // implements BundleProvider
 })
 if err != nil {
@@ -136,20 +135,53 @@ fmt.Printf("CA bundle:\n%s\n", resp.BundlePEM)
 ### Key Management
 
 ```go
-import "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+import (
+    "github.com/awnumar/memguard"
+
+    "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+)
 
 // Generate a new key pair
 key, err := noiseproto.GenerateStaticKey()
+defer key.Destroy()
 
-// Encode to hex for storage
-hex := noiseproto.EncodeStaticKey(key)
+// Encode to hex for storage. The destination is caller-owned and should be
+// protected memory too: the hex form is as sensitive as the key itself.
+buf := memguard.NewBuffer(noiseproto.HexKeySize)
+defer buf.Destroy()
+err = noiseproto.EncodeStaticKey(buf.Bytes(), key)
 
-// Decode from hex
-key, err = noiseproto.DecodeStaticKey(hex)
+// Decode from hex bytes
+restored, err := noiseproto.DecodeStaticKey(buf.Bytes())
+defer restored.Destroy()
 
 // Load from raw private key bytes
-key, err = noiseproto.LoadStaticKey(privateKeyBytes)
+loaded, err := noiseproto.LoadStaticKey(privateKeyBytes)
+defer loaded.Destroy()
 ```
+
+### Private Key Memory Protection
+
+`GenerateStaticKey`, `LoadStaticKey` and `DecodeStaticKey` place the private
+scalar in a [memguard](https://github.com/awnumar/memguard) `LockedBuffer` --
+the portfolio's protected-memory primitive. The allocation sits outside the Go
+heap between guard pages, is locked against swap and hibernation images, is
+canary-checked, and is wiped when released. The key never passes through an
+immutable Go string, so every copy can be wiped.
+
+Two consequences for callers:
+
+- Every `StaticKey` must be released with `Destroy`, which wipes the private
+  key and frees its protected pages. A `noise.DHKey` copied out beforehand
+  points at freed memory afterwards, so destroy only once the Noise session is
+  done with the key.
+- Protected memory is a finite per-process resource (`RLIMIT_MEMLOCK` on Unix).
+  memguard aborts the process rather than handing back ordinary heap memory, so
+  a host that cannot lock memory fails loudly instead of degrading silently.
+
+Secrets held inside `flynn/noise` -- the handshake state and derived cipher
+states -- live in that library's own heap allocations and are outside the scope
+of this protection.
 
 ## CLI Usage
 
