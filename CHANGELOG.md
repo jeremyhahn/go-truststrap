@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.0-alpha] - 2026-08-18
+
+MINOR rather than PATCH: this release adds exported API
+(`noiseproto.ErrFIPSUnsupported`, `bootstrap.ErrFIPSUnsupported`) and changes
+behaviour in `-tags fips` builds. Pre-1.0, MINOR is where added API and
+behaviour changes live (conventions/release-versioning.md §1). Default
+(untagged) builds are unaffected.
 
 ### Removed in FIPS builds
 
@@ -41,7 +47,32 @@ handshake transcript, and `flynn/noise` v1.1.0 exports exactly one `DHFunc`, so
 X25519 cannot be substituted without defining a different, non-interoperable
 protocol. SP 800-56A Rev. 3 does not approve it. See [docs/fips.md](docs/fips.md).
 
-Default (untagged) builds are unaffected and keep all six methods.
+Restoring the capability on an approved P-256 DH is tracked as issue #10.
+
+### Added
+- `noiseproto.ErrFIPSUnsupported` and `bootstrap.ErrFIPSUnsupported`, returned
+  by the X25519 paths in FIPS builds.
+- `docs/fips.md` recording the Noise_NK FIPS exemption and its citations.
+- `make test-fips`, mirroring the CI FIPS job.
+- `validate` job in the release workflow: a tag whose `VERSION` file or
+  CHANGELOG heading does not match is now rejected before anything publishes.
+
+### Changed
+- The CI FIPS gate runs `GODEBUG=fips140=only` with `-tags fips` instead of
+  `fips140=on` untagged. `on` loads the Go Cryptographic Module but still
+  permits non-approved algorithms, so the gate could report green while a
+  regulated path used prohibited cryptography. A `go vet -tags fips` step was
+  added because the lint and security jobs run untagged and would otherwise
+  never see the tagged files.
+
+### Fixed
+- `VERSION` and this file now track the tags. `VERSION` had read `0.1.2-alpha`
+  since v0.1.2-alpha while v0.1.3-alpha and v0.1.4-alpha were released, so a
+  binary built from either tag reported `0.1.2-alpha` through
+  `-X main.version`. The 0.1.1 through 0.1.4 sections below were backfilled in
+  the same pass.
+
+## [0.1.4-alpha] - 2026-08-18
 
 ### Security
 - Noise static private keys are held in a memguard `LockedBuffer`: guard-paged,
@@ -55,29 +86,68 @@ Default (untagged) builds are unaffected and keep all six methods.
   existing permissive file no longer keeps its mode.
 
 ### Changed
-- CI FIPS gate now runs `GODEBUG=fips140=only` instead of `fips140=on`, so
-  non-approved cryptography fails the gate instead of being permitted.
-- Noise_NK refuses key agreement in `-tags fips` builds: its protocol-mandated
-  X25519 is not approved under SP 800-56A Rev. 3 and the Go Cryptographic
-  Module rejects it under `fips140=only`. No exported API changes -- the
-  refusal surfaces as a typed error at the point of use.
-- `noiseproto.GenerateStaticKey`, `LoadStaticKey` and `DecodeStaticKey` return
-  `*noiseproto.StaticKey`, which embeds `noise.DHKey` and must be released with
-  `Destroy`. Pass `&key.DHKey` where a `*noise.DHKey` is required.
-- `noiseproto.DecodeStaticKey` takes hex bytes instead of a string, and
-  `EncodeStaticKey` writes hex into a caller-supplied buffer instead of
-  returning a string.
+- **BREAKING.** `noiseproto.GenerateStaticKey`, `LoadStaticKey` and
+  `DecodeStaticKey` return `*noiseproto.StaticKey`, which embeds `noise.DHKey`
+  and must be released with `Destroy`. Pass `&key.DHKey` where a
+  `*noise.DHKey` is required.
+- **BREAKING.** `noiseproto.DecodeStaticKey` takes hex bytes instead of a
+  string, and `EncodeStaticKey` writes hex into a caller-supplied buffer
+  instead of returning a string.
 
 ### Added
 - `github.com/awnumar/memguard` v0.23.0 as a direct dependency -- the
   portfolio's protected-memory primitive -- and `ErrInvalidBufferSize` for an
   undersized hex destination.
-- `docs/fips.md` recording the Noise_NK FIPS exemption and its citations.
-- `noiseproto.ErrFIPSUnsupported` and `bootstrap.ErrFIPSUnsupported`, returned
-  by the X25519 paths in FIPS builds.
-- `make test-fips` target mirroring the CI FIPS job.
 
-## [0.1.0-alpha] - 2025-XX-XX
+## [0.1.3-alpha] - 2026-08-17
+
+### Changed
+- **BREAKING.** Six exported error types were renamed to satisfy `errname`
+  (type names ending in `Error`, not beginning with `Err`):
+  `ErrPinNotFound` to `PinNotFoundError`, `ErrNilPin` to `NilPinError`,
+  `ErrInvalidPin` to `InvalidPinError`, `ErrTOFURejected` to
+  `TOFURejectedError`, `ErrTOFUCaptureFailed` to `TOFUCaptureFailedError`,
+  and `ErrTOFUPinStoreRequired` to `TOFUPinStoreRequiredError`.
+
+  **Recorded deviation:** under conventions/release-versioning.md §1 a
+  breaking change pre-1.0 belongs in a MINOR bump, so this should have been
+  v0.2.0-alpha rather than v0.1.3-alpha. The tag is immutable and is left as
+  published; it is noted here so the history is not silently wrong.
+- Adopted `ci-template` v1 with the mandatory security suite (gosec,
+  govulncheck, `go mod verify`, Trivy), and the FIPS 140-3 build-and-test gate.
+- Toolchain moved to go 1.26.6 for the stdlib fixes in GO-2026-6218 and
+  GO-2026-6090; `golang.org/x/net` to v0.57.0 for CVE-2026-46600.
+- `errorlint` and `goconst` findings resolved alongside the `errname` rename.
+
+### Added
+- Containerised integration suite wired into the CI gate.
+- `release-alpha` and `deps-latest` Makefile targets
+  (conventions/dependency-resolution.md).
+- Codex PR-review SDLC, task-worker and claude-review workflows
+  (conventions/sdlc.md §8); `.dockerignore`; `workflow_dispatch` trigger.
+- `GOWORK=off` exported in CI, so builds are immune to stray `go.work` files.
+
+## [0.1.2-alpha] - 2026-08-13
+
+### Changed
+- Cross-repo Go dependencies resolve from Gitea as tagged modules rather than
+  through filesystem paths, as part of the portfolio-wide
+  dependency-resolution cutover (conventions/dependency-resolution.md).
+
+## [0.1.1-alpha] - 2026-02-19
+
+### Added
+- `BundlePath` field on the DANE, SPKI and Direct bootstrapper configs, for
+  overriding the default `/v1/ca/bootstrap` endpoint.
+- Kotlin SDK under `sdk/kotlin`.
+
+### Changed
+- Renamed all `go-keychain` references to `go-xkms` across code, docs and
+  comments.
+- README rewritten around AutoFetch-first examples, with Docker instructions
+  and a streamlined architecture overview.
+
+## [0.1.0-alpha] - 2026-02-06
 
 ### Added
 - Initial extraction from go-xkms bootstrap subsystem

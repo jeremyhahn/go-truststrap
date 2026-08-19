@@ -13,7 +13,46 @@ permissions:
   packages: write
 
 jobs:
+  # Nothing publishes until the tag, the VERSION file and the CHANGELOG agree.
+  #
+  # This exists because they silently diverged: VERSION read 0.1.2-alpha while
+  # v0.1.3-alpha and v0.1.4-alpha were both released, so binaries built from
+  # either tag reported 0.1.2-alpha through -X main.version -- two different
+  # releases identifying themselves as the same version, with nothing in CI
+  # noticing. conventions/release-versioning.md §2 names this as the known gap
+  # ("two sources of truth, and nothing reconciles them"); this job closes it
+  # for this repo.
+  #
+  # The tag is v-prefixed and VERSION is not. That asymmetry is portfolio-wide
+  # and deliberate, so the check strips the prefix rather than demanding they
+  # be spelled identically.
+  validate:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Tag matches VERSION and CHANGELOG
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          FILE="$(tr -d '[:space:]' < VERSION)"
+
+          if [ "$TAG" != "$FILE" ]; then
+            echo "::error::tag v${TAG} does not match VERSION file (${FILE})."
+            echo "Bump VERSION in the release commit before tagging."
+            exit 1
+          fi
+
+          if ! grep -qF "## [${TAG}]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${TAG}]' heading."
+            echo "Every released tag gets its own section; do not tag from [Unreleased]."
+            exit 1
+          fi
+
+          echo "tag v${TAG} matches VERSION and has a CHANGELOG section"
+
   release:
+    needs: [validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -49,6 +88,7 @@ jobs:
           generate_release_notes: true
 
   docker:
+    needs: [validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
