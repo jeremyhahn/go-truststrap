@@ -175,7 +175,9 @@ func runNoiseShow(cmd *cobra.Command, args []string) error {
 
 	key, err := readStaticKeyFile(keyFile)
 	if err != nil {
-		if errors.Is(err, noiseproto.ErrInvalidKeySize) || errors.Is(err, ErrKeyFileMalformed) {
+		if errors.Is(err, noiseproto.ErrInvalidKeySize) ||
+			errors.Is(err, noiseproto.ErrFIPSUnsupported) ||
+			errors.Is(err, ErrKeyFileMalformed) {
 			return fmt.Errorf("%w: decoding key: %w", ErrKeyOperation, err)
 		}
 		return fmt.Errorf("%w: reading key file %s: %w", ErrFileOperation, keyFile, err)

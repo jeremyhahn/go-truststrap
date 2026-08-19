@@ -73,7 +73,14 @@ func NewSession(cfg *SessionConfig) (*Session, error) {
 	if cfg.LocalStaticKey != nil {
 		localStatic = *cfg.LocalStaticKey
 	} else {
-		localStatic, err = noise.DH25519.GenerateKeypair(rand.Reader)
+		// The cipher suite's DH function is what generates the key pair, so a
+		// FIPS build refuses here rather than producing an X25519 key.
+		suite, suiteErr := nkCipherSuite()
+		if suiteErr != nil {
+			return nil, suiteErr
+		}
+
+		localStatic, err = suite.GenerateKeypair(rand.Reader)
 		if err != nil {
 			return nil, fmt.Errorf("%w: key generation: %w", ErrHandshakeFailed, err)
 		}
@@ -130,7 +137,10 @@ func (s *Session) InitHandshake() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cipherSuite := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
+	cipherSuite, err := nkCipherSuite()
+	if err != nil {
+		return err
+	}
 
 	config := noise.Config{
 		CipherSuite: cipherSuite,

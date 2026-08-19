@@ -6,6 +6,8 @@ The Noise bootstrap method uses the [Noise Protocol Framework](https://noiseprot
 
 This is the preferred method for structurally secure bootstrapping when DANE/DNSSEC is not available.
 
+> **Refused in FIPS builds.** `Noise_NK_25519_ChaChaPoly_SHA256` mandates X25519, which the Go Cryptographic Module rejects under `GODEBUG=fips140=only`. Building with `-tags fips` makes the handshake fail with `ErrFIPSUnsupported` rather than perform key agreement; the API is otherwise unchanged. See [FIPS 140-3 Mode](fips.md).
+
 ## How It Works
 
 The NK pattern ("N" = no static key for initiator, "K" = known static key for responder) provides one-way authentication: the client authenticates the server using its pre-shared public key.

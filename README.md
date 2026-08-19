@@ -145,13 +145,22 @@ sudo systemctl enable --now truststrap
 | Method | Trust Basis | Security | When to Use |
 |--------|------------|----------|-------------|
 | **DANE/TLSA** | DNSSEC-signed TLSA records | Highest | You control DNS and have DNSSEC deployed |
-| **Noise_NK** | Pre-shared Curve25519 public key | High | Provisioning systems that can distribute a 32-byte key |
+| **Noise_NK** | Pre-shared Curve25519 public key | High | Provisioning systems that can distribute a 32-byte key (refused in FIPS builds) |
 | **SPKI Pinning** | SHA-256 hash of server's SPKI | Medium | Can distribute a hex pin via config management |
 | **Direct HTTPS** | System trust store (OS CA bundle) | Baseline | Fallback when the OS already has a usable trust store |
 | **Embedded** | In-process call (no network) | N/A | KMS runs in the same process |
 | **TOFU** | First-use pin capture, then strict SPKI | Adaptive | Environments where no out-of-band credential is available; see caveat below |
 
 AutoFetch tries them in the order above and returns the first success. Configure only what your environment supports -- unconfigured methods are skipped.
+
+### FIPS 140-3
+
+Noise_NK is `Noise_NK_25519_ChaChaPoly_SHA256`, and its protocol-mandated X25519
+key agreement is rejected by the Go Cryptographic Module under
+`GODEBUG=fips140=only`. Building with `-tags fips` makes that method refuse with
+`ErrFIPSUnsupported` instead of performing key agreement; no exported API
+changes, and DANE, SPKI, direct and TOFU are unaffected. `make test-fips` runs
+the build and the full suite in that mode. See [FIPS 140-3 Mode](docs/fips.md).
 
 ### TOFU Semantics and Security Caveat
 
@@ -210,6 +219,7 @@ pkg/spkipin/               SPKI pin computation and verification
 - [CLI Reference](docs/cli.md)
 - [Integration Guide](docs/integration.md)
 - [Deployment Guide](docs/deployment.md)
+- [FIPS 140-3 Mode](docs/fips.md)
 
 ## License
 

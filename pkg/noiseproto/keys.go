@@ -6,11 +6,11 @@ package noiseproto
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/awnumar/memguard"
 	"github.com/flynn/noise"
-	"golang.org/x/crypto/curve25519"
 )
 
 // HexKeySize is the length in bytes of a hex-encoded static private key.
@@ -67,9 +67,12 @@ func LoadStaticKey(privateKey []byte) (*StaticKey, error) {
 // newStaticKey derives the public key for a private scalar already resident in
 // protected memory and takes ownership of the buffer.
 func newStaticKey(priv *memguard.LockedBuffer) (*StaticKey, error) {
-	pub, err := curve25519.X25519(priv.Bytes(), curve25519.Basepoint)
+	pub, err := derivePublicKey(priv.Bytes())
 	if err != nil {
 		priv.Destroy()
+		if errors.Is(err, ErrFIPSUnsupported) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %w", ErrInvalidKeySize, err)
 	}
 

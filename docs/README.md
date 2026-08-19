@@ -14,6 +14,7 @@ go-truststrap is a standalone Go library for PKI trust bootstrapping. It provide
 | [CLI Reference](cli.md) | Command-line tool usage and reference |
 | [Integration Guide](integration.md) | Using go-truststrap in your project |
 | [Deployment Guide](deployment.md) | Running truststrap as a service (systemd, Docker) |
+| [FIPS 140-3 Mode](fips.md) | Running and testing under the Go Cryptographic Module |
 
 ## Core Interface
 

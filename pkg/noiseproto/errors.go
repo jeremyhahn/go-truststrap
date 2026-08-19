@@ -37,4 +37,10 @@ var (
 	// ErrInvalidBufferSize indicates a destination buffer is too small to hold
 	// the requested output.
 	ErrInvalidBufferSize = errors.New("noise: invalid buffer size")
+
+	// ErrFIPSUnsupported indicates the operation needs X25519 key agreement,
+	// which this binary was built to refuse. It is returned by every entry
+	// point of this package that performs key agreement in a "fips" build.
+	// See docs/fips.md.
+	ErrFIPSUnsupported = errors.New("noise: X25519 is unavailable in FIPS build")
 )

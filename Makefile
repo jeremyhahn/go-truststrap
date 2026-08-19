@@ -57,7 +57,7 @@ COVERAGE_THRESHOLD := 90
 GOSEC_EXCLUDE := G115,G304,G402
 
 .PHONY: all build clean deps tidy build-cli \
-	test test-dane test-noiseproto test-spkipin test-truststrap test-cli \
+	test test-dane test-noiseproto test-spkipin test-truststrap test-cli test-fips \
 	coverage coverage-report coverage-dane coverage-noiseproto coverage-spkipin coverage-truststrap \
 	bench-dane bench-noiseproto bench-spkipin bench-truststrap \
 	integration-test integration-test-host integration-test-bootstrap \
@@ -136,6 +136,19 @@ test-cli: ## Run CLI tests
 	@printf "$(CYAN)Running CLI tests...$(NC)\n"
 	@$(GOTEST) $(PKG_CLI)
 	@printf "$(GREEN)CLI tests passed$(NC)\n"
+
+# Mirrors the CI `fips` job exactly. GODEBUG=fips140=only makes the Go
+# Cryptographic Module reject non-approved algorithms instead of merely
+# permitting them, and -tags fips compiles out the Noise_NK method, whose
+# protocol-mandated X25519 the module refuses. See docs/fips.md.
+#
+# -race is deliberately omitted: this target answers "does anything on a tested
+# path use non-approved cryptography", which is what the compliance gate asks.
+test-fips: ## Run build and unit tests in FIPS 140-3 only mode
+	@printf "$(CYAN)Running FIPS 140-3 (fips140=only) build and tests...$(NC)\n"
+	@GOFIPS140=latest GODEBUG=fips140=only $(GO) build -tags fips ./...
+	@GOFIPS140=latest GODEBUG=fips140=only $(GO) test -tags fips -count=1 -timeout=900s ./...
+	@printf "$(GREEN)FIPS tests passed$(NC)\n"
 
 ## ============================================================================
 ## Coverage

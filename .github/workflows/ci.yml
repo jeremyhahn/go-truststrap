@@ -201,7 +201,11 @@ jobs:
     timeout-minutes: 30
     env:
       GOFIPS140: latest
-      GODEBUG: fips140=on
+      # fips140=on loads the Go Cryptographic Module but still permits
+      # non-approved algorithms, so this gate could report green while a
+      # regulated path used prohibited cryptography. `only` makes those
+      # operations fail (configuration.md §5).
+      GODEBUG: fips140=only
     steps:
       - uses: actions/checkout@v6
 
@@ -209,11 +213,37 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # CUSTOMIZE (with justification): -tags fips. The Noise_NK bootstrap
+      # method is Noise_NK_25519_ChaChaPoly_SHA256; the Noise Protocol
+      # Framework names the DH function in the protocol identifier and hashes
+      # it into the handshake transcript, so X25519 cannot be substituted
+      # without defining a different, non-interoperable protocol, and
+      # flynn/noise exports no other DHFunc. X25519 is not approved under
+      # SP 800-56A Rev. 3 and fips140=only rejects it.
+      #
+      # The tag swaps two files -- pkg/noiseproto/dh.go and
+      # pkg/noiseproto/bootstrap/dh.go -- for versions whose three helpers
+      # return ErrFIPSUnsupported. Every X25519 operation in the tree goes
+      # through them, so a FIPS build performs no non-approved key agreement,
+      # and no exported declaration changes (pkg/truststrap/api_surface_test.go
+      # is untagged and fails the build if one does). docs/fips.md is the
+      # exemption record.
+      #
+      # Only the individual tests that need a real X25519 key or handshake are
+      # excluded, in *_nofips_test.go files; everything else in those packages
+      # is exercised here, and the untagged `test` job covers the Noise path in
+      # full at the 90% threshold. Adding a new `!fips` file shrinks what this
+      # gate sees -- review any such addition by hand.
       - name: Build all packages (FIPS mode)
-        run: go build ./...
+        run: go build -tags fips ./...
+
+      # The lint and security jobs run untagged and so never see the
+      # fips-tagged files. Vetting them here keeps them under static analysis.
+      - name: Vet (FIPS mode)
+        run: go vet -tags fips ./...
 
       - name: Unit tests (FIPS mode)
-        run: go test -count=1 -timeout=900s ./...
+        run: go test -tags fips -count=1 -timeout=900s ./...
 
   test:
     name: Test

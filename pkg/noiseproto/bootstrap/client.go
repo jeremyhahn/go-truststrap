@@ -169,11 +169,10 @@ func (c *Client) Close() error {
 // After completion, returns the send and receive CipherStates for
 // encrypted post-handshake communication.
 func (c *Client) performHandshake(ctx context.Context) (*noise.CipherState, *noise.CipherState, error) {
-	cipherSuite := noise.NewCipherSuite(
-		noise.DH25519,
-		noise.CipherChaChaPoly,
-		noise.HashSHA256,
-	)
+	cipherSuite, err := nkCipherSuite()
+	if err != nil {
+		return nil, nil, err
+	}
 
 	hs, err := noise.NewHandshakeState(noise.Config{
 		CipherSuite: cipherSuite,

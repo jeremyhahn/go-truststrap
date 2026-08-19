@@ -39,6 +39,11 @@ var (
 	// ErrHandshakeFailed indicates the Noise_NK handshake did not complete successfully.
 	ErrHandshakeFailed = errors.New("bootstrap: handshake failed")
 
+	// ErrFIPSUnsupported indicates the Noise_NK handshake needs X25519 key
+	// agreement, which this binary was built to refuse. It is returned by the
+	// client and server handshake paths in a "fips" build. See docs/fips.md.
+	ErrFIPSUnsupported = errors.New("bootstrap: X25519 is unavailable in FIPS build")
+
 	// ErrRateLimited indicates the client was rejected due to per-IP rate limiting.
 	ErrRateLimited = errors.New("bootstrap: rate limited")
 )

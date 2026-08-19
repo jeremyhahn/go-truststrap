@@ -288,11 +288,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 // After completion, returns the send and receive CipherStates for
 // encrypted post-handshake communication.
 func (s *Server) performHandshake(conn net.Conn) (*noise.CipherState, *noise.CipherState, error) {
-	cipherSuite := noise.NewCipherSuite(
-		noise.DH25519,
-		noise.CipherChaChaPoly,
-		noise.HashSHA256,
-	)
+	cipherSuite, err := nkCipherSuite()
+	if err != nil {
+		return nil, nil, err
+	}
 
 	hs, err := noise.NewHandshakeState(noise.Config{
 		CipherSuite:   cipherSuite,
