@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Go 1.26.7 in `go.mod` and both Dockerfiles, completing the bump `2e16def`
+  made to CI alone. The integration container was building and testing on
+  1.26.6 while CI ran 1.26.7 — the piecemeal adoption devops.md §9 warns
+  against.
+
 ### Fixed
 
 - **Releases now publish on Gitea.** `release.yml` published through
