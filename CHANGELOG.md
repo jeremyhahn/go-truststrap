@@ -21,13 +21,19 @@ All notable changes to this project will be documented in this file.
   publishes through `/api/v1`, taking the release body from this file's
   section for the tag. Re-running a release replaces its assets rather than
   duplicating them.
-- **The release container image no longer fails on registry auth.** The
-  `docker` job authenticated with the ephemeral Actions token, which carries
-  repository scopes and not `write:package`, so it failed at login with
-  `unauthorized` before ever building. On Gitea it now uses the `GITEA_TOKEN`
-  repository secret. The image build and its Trivy CRITICAL/HIGH gate remain
-  hard failures; only login and push are tolerated, so an unreachable
-  registry can no longer cost the binaries and the Release object.
+- **The release `docker` job no longer fails on registry auth.** It
+  authenticated with the ephemeral Actions token, which carries repository
+  scopes and no package scope, so it failed at login with `unauthorized`
+  before ever building the image. Registry login and push are now GitHub-only:
+  measurement showed no credential available to a Gitea run can push here —
+  an agent token answers `200` on `/v2/` (so `docker login` would *succeed*)
+  while the registry's token endpoint refuses it for every scope including
+  bare pull. Attempting the push would log in cleanly and then fail, which is
+  a worse signal than skipping. Granting package scope is an owner decision
+  (automatethethings#5). The image is still built and still gated on Trivy
+  CRITICAL/HIGH **on both hosts**, so the security gate is unchanged; only
+  publication is skipped, and the run summary says so rather than leaving it
+  to be inferred from a green run.
 - The release job's Trivy CLI install no longer resolves its version through
   the unauthenticated `api.github.com` endpoint, which rate-limits and fails
   closed. It uses the upstream install script, as `ci.yml` already did.

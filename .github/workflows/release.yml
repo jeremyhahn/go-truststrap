@@ -92,12 +92,16 @@ jobs:
       # Gitea does not serve: on the v0.2.0-alpha tag it got HTTP 405 three
       # times and aborted the job, so the tag published as a Go module while
       # the Release object and its binaries never appeared (#12). Gitea serves
-      # a GitHub-shaped equivalent under /api/v1, and the job's own token
-      # authenticates against it.
+      # a GitHub-shaped equivalent under /api/v1.
+      #
+      # AGENT_TOKEN, not GITHUB_TOKEN: the only Actions secrets that exist
+      # portfolio-wide are AGENT_TOKEN and AGENT_SIGNING_KEY, and AGENT_TOKEN is
+      # this repo's own agent identity. It is also the credential the script was
+      # actually proven with — see the release job's verification note.
       - name: Create Gitea Release
         if: github.server_url != 'https://github.com'
         env:
-          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITEA_TOKEN: ${{ secrets.AGENT_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: bash .github/scripts/gitea-release.sh
 
@@ -167,36 +171,42 @@ jobs:
         # This gate means "a rebuild fixes this" — actionable, so enforceable.
         run: trivy image --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 go-truststrap:scan
 
-      # Everything above this line is a hard gate: a Dockerfile that does not
-      # build, or an image carrying a fixable CRITICAL/HIGH, still fails the
-      # job. Only publication is tolerant, and it is tolerant deliberately --
-      # see the two comments below.
+      # Everything above this line is a hard gate and runs on BOTH hosts: a
+      # Dockerfile that does not build, or an image carrying a fixable
+      # CRITICAL/HIGH, fails the job on Gitea too. Neither step needs a registry
+      # (the scan build is push: false, load: true), which is what keeps the
+      # gate meaningful on an instance we cannot publish to.
 
-      # On GitHub the job's own token authenticates to ghcr.io. On Gitea it
-      # does NOT authenticate to the package registry: the v0.2.0-alpha run
-      # failed here with `Get "http://198.51.100.91:3001/v2/": unauthorized`,
-      # because the ephemeral Actions token carries repository scopes and not
-      # write:package. A token that does needs provisioning as the GITEA_TOKEN
-      # repository secret, which is how go-sysmon reaches the same registry.
+      # Publication is GitHub-only, and that is measured rather than assumed.
+      # No token available to a Gitea run can push to this registry:
+      #
+      #   - the ephemeral Actions token failed login outright on the
+      #     v0.2.0-alpha run: `Get ".../v2/": unauthorized`;
+      #   - AGENT_TOKEN, this repo's agent identity, is worse than it looks. It
+      #     answers 200 on `/v2/` — so `docker login` would SUCCEED — but the
+      #     registry's token endpoint refuses it for every scope including bare
+      #     pull: `GET /v2/token?service=container_registry&scope=...` returns
+      #     `{"errors":[{"code":"UNAUTHORIZED"}]}`, and starting a blob upload
+      #     returns 401. Agent tokens carry write:issue,write:repository and no
+      #     package scope at all.
+      #
+      # An attempted push would therefore log in cleanly and then fail, which is
+      # a worse signal than not trying. Granting package scope to agent
+      # identities is a security-boundary decision for the owner
+      # (automatethethings#5); until it is made, skipping is the honest state.
+      # A push would also need `insecure-registries` on every participating
+      # daemon, since the registry is plain HTTP (infra/gitea/docs/lessons.md).
       - name: Log in to the container registry
-        id: login
-        continue-on-error: true
+        if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
           registry: ${{ steps.registry.outputs.host }}
           username: ${{ github.actor }}
-          password: ${{ github.server_url == 'https://github.com' && secrets.GITHUB_TOKEN || secrets.GITEA_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # infra/gitea/docs/lessons.md: the internal registry is plain HTTP, so
-      # pushing to it needs `insecure-registries` on the runner's daemon and on
-      # every daemon that pulls. Until TLS terminates in front of Gitea that is
-      # a per-host change nobody can rely on, so the push is allowed to fail --
-      # losing the image is annoying, losing the whole release over it is worse.
-      # The binaries and the Release object are published by the `release` job,
-      # which does not depend on this one.
       - name: Build and push
         id: push
-        continue-on-error: true
+        if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -209,12 +219,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # A tolerated failure is silent in the run summary, and a release that
-      # quietly ships no image is exactly the state #12 was filed about.
+      # A skipped step is easy to miss in a run summary, and a release that
+      # quietly ships no image is exactly the state #12 was filed about. Say so
+      # in the summary either way, so nobody has to infer it from a green run.
       - name: Report image publication
+        if: always()
         run: |
           if [ "${{ steps.push.outcome }}" = "success" ]; then
             echo "::notice::published ${{ steps.registry.outputs.host }}/${{ github.repository }}:${{ github.ref_name }}"
           else
-            echo "::warning::image NOT published (login=${{ steps.login.outcome }}, push=${{ steps.push.outcome }}); the binaries and Release object are unaffected"
+            echo "::warning::image NOT published (push=${{ steps.push.outcome }}): no Gitea credential carries registry package scope (automatethethings#5). The image was still built and passed the Trivy CRITICAL/HIGH gate; the binaries and the Release object are unaffected."
           fi
