@@ -81,11 +81,25 @@ jobs:
           cd dist
           sha256sum * > SHA256SUMS.txt
 
-      - name: Create Release
+      - name: Create GitHub Release
+        if: github.server_url == 'https://github.com'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+
+      # softprops/action-gh-release talks to the GitHub Releases API, which
+      # Gitea does not serve: on the v0.2.0-alpha tag it got HTTP 405 three
+      # times and aborted the job, so the tag published as a Go module while
+      # the Release object and its binaries never appeared (#12). Gitea serves
+      # a GitHub-shaped equivalent under /api/v1, and the job's own token
+      # authenticates against it.
+      - name: Create Gitea Release
+        if: github.server_url != 'https://github.com'
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: bash .github/scripts/gitea-release.sh
 
   docker:
     needs: [validate]
@@ -111,13 +125,6 @@ jobs:
           else
             echo "host=$(echo '${{ github.server_url }}' | sed -E 's#^https?://##')" >> $GITHUB_OUTPUT
           fi
-
-      - name: Log in to the container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ steps.registry.outputs.host }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
         id: meta
@@ -146,15 +153,12 @@ jobs:
           cache-from: type=gha
 
       # The trivy CLI works identically on both hosts; trivy-action's setup
-      # cannot authenticate to github.com from a Gitea runner.
+      # cannot authenticate to github.com from a Gitea runner. Installed the
+      # same way ci.yml does it rather than resolving the version through the
+      # unauthenticated api.github.com JSON endpoint, which rate-limits and
+      # then fails closed on a release that has nothing wrong with it.
       - name: Install trivy CLI
-        run: |
-          TRIVY_VERSION=$(curl -fsSL https://api.github.com/repos/aquasecurity/trivy/releases/latest \
-            | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-            | tar -xz -C "$HOME/.local/bin" trivy
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         # --ignore-unfixed on the OS layer, ratified 2026-08-14 (devops.md §8):
@@ -163,7 +167,36 @@ jobs:
         # This gate means "a rebuild fixes this" — actionable, so enforceable.
         run: trivy image --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 go-truststrap:scan
 
+      # Everything above this line is a hard gate: a Dockerfile that does not
+      # build, or an image carrying a fixable CRITICAL/HIGH, still fails the
+      # job. Only publication is tolerant, and it is tolerant deliberately --
+      # see the two comments below.
+
+      # On GitHub the job's own token authenticates to ghcr.io. On Gitea it
+      # does NOT authenticate to the package registry: the v0.2.0-alpha run
+      # failed here with `Get "http://198.51.100.91:3001/v2/": unauthorized`,
+      # because the ephemeral Actions token carries repository scopes and not
+      # write:package. A token that does needs provisioning as the GITEA_TOKEN
+      # repository secret, which is how go-sysmon reaches the same registry.
+      - name: Log in to the container registry
+        id: login
+        continue-on-error: true
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.registry.outputs.host }}
+          username: ${{ github.actor }}
+          password: ${{ github.server_url == 'https://github.com' && secrets.GITHUB_TOKEN || secrets.GITEA_TOKEN }}
+
+      # infra/gitea/docs/lessons.md: the internal registry is plain HTTP, so
+      # pushing to it needs `insecure-registries` on the runner's daemon and on
+      # every daemon that pulls. Until TLS terminates in front of Gitea that is
+      # a per-host change nobody can rely on, so the push is allowed to fail --
+      # losing the image is annoying, losing the whole release over it is worse.
+      # The binaries and the Release object are published by the `release` job,
+      # which does not depend on this one.
       - name: Build and push
+        id: push
+        continue-on-error: true
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -175,3 +208,13 @@ jobs:
             VERSION=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # A tolerated failure is silent in the run summary, and a release that
+      # quietly ships no image is exactly the state #12 was filed about.
+      - name: Report image publication
+        run: |
+          if [ "${{ steps.push.outcome }}" = "success" ]; then
+            echo "::notice::published ${{ steps.registry.outputs.host }}/${{ github.repository }}:${{ github.ref_name }}"
+          else
+            echo "::warning::image NOT published (login=${{ steps.login.outcome }}, push=${{ steps.push.outcome }}); the binaries and Release object are unaffected"
+          fi

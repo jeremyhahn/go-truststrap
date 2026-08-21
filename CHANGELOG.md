@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Releases now publish on Gitea.** `release.yml` published through
+  `softprops/action-gh-release`, which talks to the GitHub Releases API;
+  Gitea answers HTTP 405, so every tag in this repository's history produced
+  a resolvable Go module and no Release object, binaries or checksums. The
+  GitHub path is unchanged and a Gitea path (`.github/scripts/gitea-release.sh`)
+  publishes through `/api/v1`, taking the release body from this file's
+  section for the tag. Re-running a release replaces its assets rather than
+  duplicating them.
+- **The release container image no longer fails on registry auth.** The
+  `docker` job authenticated with the ephemeral Actions token, which carries
+  repository scopes and not `write:package`, so it failed at login with
+  `unauthorized` before ever building. On Gitea it now uses the `GITEA_TOKEN`
+  repository secret. The image build and its Trivy CRITICAL/HIGH gate remain
+  hard failures; only login and push are tolerated, so an unreachable
+  registry can no longer cost the binaries and the Release object.
+- The release job's Trivy CLI install no longer resolves its version through
+  the unauthenticated `api.github.com` endpoint, which rate-limits and fails
+  closed. It uses the upstream install script, as `ci.yml` already did.
+
 ## [0.2.0-alpha] - 2026-08-18
 
 MINOR rather than PATCH: this release adds exported API
