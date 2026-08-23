@@ -61,7 +61,11 @@ func TestNewServer_MaxConnectionsUpperBound(t *testing.T) {
 				if srv == nil {
 					t.Fatal("expected non-nil server")
 				}
-				srv.rateLimiter.Stop()
+				// No limiter to stop: Start builds it, so an unstarted
+				// server has no cleanup goroutine to leak.
+				if srv.rateLimiter != nil {
+					t.Error("expected no rate limiter before Start")
+				}
 			}
 		})
 	}

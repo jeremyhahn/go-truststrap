@@ -15,6 +15,12 @@ var (
 	// ErrServerAlreadyStarted indicates Start was called on an already-running server.
 	ErrServerAlreadyStarted = errors.New("bootstrap: server already started")
 
+	// ErrShutdownIncomplete indicates Stop's drain deadline expired while
+	// handshake workers were still running. The server is no longer accepting
+	// connections, but material the workers read -- notably the static key's
+	// protected pages -- must be retained rather than destroyed.
+	ErrShutdownIncomplete = errors.New("bootstrap: shutdown incomplete, connections still draining")
+
 	// ErrMaxConnections indicates the server has reached its maximum concurrent connection limit.
 	ErrMaxConnections = errors.New("bootstrap: max connections reached")
 

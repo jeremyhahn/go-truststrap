@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -95,10 +96,11 @@ func TestRunServe_ValidBundleAndKeyLoadsSuccessfully(t *testing.T) {
 	syscall.Kill(syscall.Getpid(), syscall.SIGINT)
 
 	err = <-errCh
-	// The server should shut down gracefully (nil error) or we get a
-	// startup error -- both are acceptable for coverage purposes.
+	// The server should shut down gracefully (nil error); a start or stop
+	// failure is the only other outcome this path can produce.
 	if err != nil {
-		assert.ErrorIs(t, err, ErrServerStart)
+		assert.True(t, errors.Is(err, ErrServerStart) || errors.Is(err, ErrServerStop),
+			"unexpected error from runServe: %v", err)
 	}
 }
 

@@ -36,6 +36,12 @@ var (
 
 	// ErrServerStart is returned when the bootstrap server fails to start.
 	ErrServerStart = errors.New("serve: server start failed")
+
+	// ErrServerStop is returned when the bootstrap server fails to shut down.
+	// It is distinct from ErrServerStart because the two say different things
+	// about the static key: a start failure means no worker ever read it, a
+	// stop failure means one may still be reading it.
+	ErrServerStop = errors.New("serve: server stop failed")
 )
 
 // Flag variables for the serve command.
@@ -147,16 +153,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
 
+	// Stop reports the drain directly, so the deadline no longer has to be
+	// inferred from stopCtx: a nil error is the only proof that every handshake
+	// worker exited. On anything else a worker may still hold a copy of the key
+	// pair, so the locked pages stay mapped and process exit reclaims them.
 	if err := server.Stop(stopCtx); err != nil {
-		return fmt.Errorf("%w: %w", ErrServerStart, err)
-	}
-
-	// Stop returns once every connection has finished or the deadline passes.
-	// On the deadline path a handshake may still hold a copy of the key pair,
-	// so the locked pages stay mapped and process exit reclaims them.
-	if stopCtx.Err() != nil {
+		// Conservative on every non-nil outcome, not just the expected one: a
+		// nil return is the ONLY proof that no worker still holds the key pair,
+		// so an unrecognised error retains the pages exactly like a known
+		// incomplete drain.
 		destroyKey = false
-		slog.Warn("shutdown timed out, key material released at process exit")
+		if !errors.Is(err, bootstrap.ErrShutdownIncomplete) {
+			return fmt.Errorf("%w: %w", ErrServerStop, err)
+		}
+		slog.Warn("shutdown incomplete, key material released at process exit")
 	}
 
 	slog.Info("server stopped")

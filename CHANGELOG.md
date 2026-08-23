@@ -6,10 +6,47 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`bootstrap.Server` is now SINGLE-USE, and restart is removed** (#13,
+  owner ruling 2026-08-23). `Start` succeeds at most once; every later call
+  returns `ErrServerAlreadyStarted`, including after a `Stop` that drained
+  cleanly. A caller that needs to listen again builds a new `Server` — which
+  is what the only non-test caller (`truststrap serve`) already did, and what
+  go-xkms's re-export does. Restart was the source of three of the six
+  defects found reviewing this lifecycle: a reused rate limiter whose cleanup
+  goroutine had already exited, a second run installed alongside the surviving
+  workers of an incomplete shutdown, and a `Stop` racing the second `Start`
+  being handed the first run's `nil`. A `Start` that fails to bind installs
+  nothing and does not consume the Server, so a caller may still retry on
+  another address.
+- **`Server.Stop`'s error is now a safety certificate.** It returns
+  `ErrShutdownIncomplete` when the drain deadline expires with handshake
+  workers still running, where it previously returned `nil` on both paths. A
+  `nil` return is now the only proof that every worker exited, and therefore
+  the only condition under which material those workers read — notably the
+  static key's protected pages — may be released. This is a behaviour change
+  for anyone treating `nil` as success, which is why it rides a MINOR.
+- `Server.Stop` is safe to call concurrently and repeatedly. The teardown runs
+  once, but each caller waits under its **own** deadline rather than behind
+  another caller's, so two concurrent callers may see different outcomes —
+  each the honest answer to "did it drain within MY deadline?". What no caller
+  can receive is a `nil` unbacked by a real drain. Once the drain completes,
+  every later `Stop` reports it.
+- The rate limiter is now built by `Start` rather than `NewServer`, so a
+  `Server` that is never started no longer leaks a cleanup goroutine.
+- `truststrap serve` wraps a shutdown failure in a new `ErrServerStop` rather
+  than `ErrServerStart`; the two say different things about the static key.
 - Go 1.26.7 in `go.mod` and both Dockerfiles, completing the bump `2e16def`
   made to CI alone. The integration container was building and testing on
   1.26.6 while CI ran 1.26.7 — the piecemeal adoption devops.md §9 warns
   against.
+
+### Added
+
+- `bootstrap.ErrShutdownIncomplete` — the typed signal that `Stop`'s drain
+  deadline expired while workers were still running. go-xkms re-exports this
+  server through `pkg/trust/bootstrap`, and callers key their retain-or-release
+  decision on it, so it is part of the SDK contract.
+- `main.ErrServerStop` in the `truststrap` CLI.
 
 ### Fixed
 

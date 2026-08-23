@@ -35,6 +35,7 @@ func TestErrors_Defined(t *testing.T) {
 	assert.NotNil(t, ErrKeyGeneration)
 	assert.NotNil(t, ErrKeyLoad)
 	assert.NotNil(t, ErrServerStart)
+	assert.NotNil(t, ErrServerStop)
 }
 
 func TestExitCodes_Defined(t *testing.T) {

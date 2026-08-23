@@ -776,22 +776,21 @@ func TestServer_StopTimeout(t *testing.T) {
 	// Open a connection that performs the handshake but never sends a request.
 	// This will block the server's handleConnection goroutine at ReadFrame.
 	conn, _, _ := rawConnect(t, srv.Addr().String(), serverKey)
+	defer conn.Close()
 
-	// Stop with an already-expired context to trigger the timeout path.
-	expiredCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-	defer cancel()
-	time.Sleep(5 * time.Millisecond) // Ensure context expires.
+	// An already-cancelled context expires the drain deadline without waiting
+	// on the clock.
+	expiredCtx, cancel := context.WithCancel(context.Background())
+	cancel()
 
+	// The handler goroutine is still blocked in ReadFrame, so the drain cannot
+	// have completed and Stop must not report that it did -- a caller reading
+	// nil as "drained" would destroy the static key's protected pages while
+	// that goroutine is still using them.
 	err := srv.Stop(expiredCtx)
-	if err != nil {
-		t.Fatalf("Stop returned unexpected error: %v", err)
+	if !errors.Is(err, ErrShutdownIncomplete) {
+		t.Fatalf("Stop with a blocked handler and an expired deadline: got %v, want ErrShutdownIncomplete", err)
 	}
-
-	// Clean up the blocking connection.
-	conn.Close()
-
-	// Give goroutines time to finish.
-	time.Sleep(100 * time.Millisecond)
 }
 
 func TestServer_ReadRequestFailure(t *testing.T) {

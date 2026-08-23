@@ -163,9 +163,17 @@ server, _ := bootstrap.NewServer(&bootstrap.ServerConfig{
     CABundler:  bundler,
 })
 server.Start()
-defer server.Stop(ctx)
 
 addr := server.Addr().String() // Use this in the client config
+
+// A Server is single-use, and Stop's error decides whether the static key's
+// protected pages may be released -- see docs/noise.md, "Server lifecycle
+// contract". Do not discard it.
+defer func() {
+    if err := server.Stop(ctx); err != nil {
+        slog.Warn("bootstrap server did not drain", "error", err)
+    }
+}()
 ```
 
 ## Typical Bootstrap Flow

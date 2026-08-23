@@ -64,6 +64,12 @@ var (
 	_ func(*nbootstrap.Server) net.Addr                          = (*nbootstrap.Server).Addr
 
 	_ error = nbootstrap.ErrFIPSUnsupported
+
+	// Server.Stop's incomplete-drain signal. go-xkms re-exports this server
+	// through pkg/trust/bootstrap, and callers key their decision to retain or
+	// release protected key material on it, so removing or renaming it is a
+	// breaking change to that contract.
+	_ error = nbootstrap.ErrShutdownIncomplete
 )
 
 // pkg/truststrap: the Noise_NK bootstrapper behind the Bootstrapper interface.

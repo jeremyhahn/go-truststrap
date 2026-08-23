@@ -87,26 +87,65 @@ key, err := noiseproto.GenerateStaticKey()
 if err != nil {
     return err
 }
-defer key.Destroy()
 
-// Start the bootstrap server
+// Start the bootstrap server. A Server is SINGLE-USE: it runs one
+// Start-to-Stop lifetime, and a caller that needs to listen again builds a
+// new Server.
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
     StaticKey:  &key.DHKey,
     CABundler:  myCABundler, // implements BundleProvider
 })
 if err != nil {
+    key.Destroy()
     return err
 }
 
 if err := server.Start(); err != nil {
+    key.Destroy()
     return err
 }
-defer server.Stop(ctx)
 
 // Distribute the public key to clients:
 fmt.Printf("Server public key: %x\n", key.Public)
+
+// ... serve until shutdown ...
+
+// Stop reports the drain. Only a nil return proves every handshake worker
+// exited, and only then is it safe to unmap the key's locked pages: on
+// ErrShutdownIncomplete a worker may still be reading them, so the key is
+// retained and process exit reclaims it.
+stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
+switch err := server.Stop(stopCtx); {
+case err == nil:
+    key.Destroy()
+case errors.Is(err, bootstrap.ErrShutdownIncomplete):
+    slog.Warn("shutdown incomplete, key material released at process exit")
+default:
+    key.Destroy()
+    return err
+}
 ```
+
+### Server lifecycle contract
+
+- **`Start` succeeds at most once.** Every later call returns
+  `ErrServerAlreadyStarted`, whether the server is running or already stopped.
+  A `Start` that fails to bind installs nothing and does not consume the
+  Server, so a caller may retry on another address.
+- **`Stop`'s error is a safety certificate, not a status line.** `nil` means
+  every handshake worker exited; `ErrShutdownIncomplete` means the drain
+  deadline expired first and material those workers read — notably the static
+  key's protected pages — must be retained rather than destroyed.
+  `ErrServerNotStarted` is returned before `Start`, and is non-nil, so it is
+  never mistaken for a drain.
+- **`Stop` is safe to call concurrently and repeatedly.** The teardown runs
+  once, but each caller waits under its own deadline, so a caller with a short
+  deadline is never blocked behind a longer one. Two concurrent callers may
+  see different outcomes because they asked different questions. Once the
+  drain completes every later `Stop` reports `nil`.
 
 ### Client
 

@@ -24,6 +24,7 @@ type rateLimiter struct {
 	rate     rate.Limit
 	burst    int
 	stopCh   chan struct{}
+	stopOnce sync.Once
 	staleAge time.Duration
 	interval time.Duration
 }
@@ -61,9 +62,11 @@ func (rl *rateLimiter) Allow(ip string) bool {
 	return e.limiter.Allow()
 }
 
-// Stop halts the background cleanup goroutine.
+// Stop halts the background cleanup goroutine. It is safe to call concurrently
+// and more than once; without the guard a second call panics on close of a
+// closed channel, which is reachable whenever two callers stop the server.
 func (rl *rateLimiter) Stop() {
-	close(rl.stopCh)
+	rl.stopOnce.Do(func() { close(rl.stopCh) })
 }
 
 // cleanup periodically evicts entries that have been idle longer than staleAge.
