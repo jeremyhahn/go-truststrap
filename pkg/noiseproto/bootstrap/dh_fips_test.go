@@ -46,7 +46,18 @@ func TestFIPS_ServerStartsButHandshakeRefused(t *testing.T) {
 		t.Fatal("Addr() = nil after Start()")
 	}
 
-	if _, _, err = srv.performHandshake(&net.TCPConn{}); !errors.Is(err, ErrFIPSUnsupported) {
+	// A client offering the Noise suite (0x01) is refused before any key
+	// agreement in a FIPS build. Feed a suite-0x01 first frame and assert the
+	// refusal is ErrFIPSUnsupported, not a downstream cipher error.
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go func() {
+		_ = WriteFrame(clientConn, []byte{protocolVersion, SuiteNoiseNK, 0x00}, time.Now().Add(5*time.Second))
+	}()
+
+	if _, err = srv.performHandshake(serverConn); !errors.Is(err, ErrFIPSUnsupported) {
 		t.Errorf("performHandshake() error = %v, want ErrFIPSUnsupported", err)
 	}
 }

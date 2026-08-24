@@ -182,10 +182,18 @@ func (b *NoiseBootstrapper) connect(ctx context.Context) error {
 
 // handshake performs the Noise_NK handshake with the connected server.
 func (b *NoiseBootstrapper) handshake() error {
+	// The bootstrap wire negotiates a suite per connection: every first frame
+	// carries a version||suite header, and for the Noise suite those two bytes
+	// are also the Noise prologue so a tampered header breaks the transcript.
+	// See docs/bootstrap-negotiation.md. This bootstrapper speaks the Noise
+	// suite only.
+	header := noiseboot.NoiseSuiteHeader()
+
 	session, err := noiseproto.NewSession(&noiseproto.SessionConfig{
 		Pattern:       noise.HandshakeNK,
 		PeerStaticKey: b.serverKey,
 		IsInitiator:   true,
+		Prologue:      header,
 	})
 	if err != nil {
 		return err
@@ -197,11 +205,12 @@ func (b *NoiseBootstrapper) handshake() error {
 
 	deadline := time.Now().Add(b.operationTO)
 
-	// NK initiator: write message 1 (e, es)
-	msg1, _, err := session.HandshakeMessage(nil)
+	// NK initiator: write message 1 (e, es), prefixed with the suite header.
+	body, _, err := session.HandshakeMessage(nil)
 	if err != nil {
 		return fmt.Errorf("write handshake msg1: %w", err)
 	}
+	msg1 := append(append(make([]byte, 0, len(header)+len(body)), header...), body...)
 	if err := noiseboot.WriteFrame(b.conn, msg1, deadline); err != nil {
 		return fmt.Errorf("send handshake msg1: %w", err)
 	}

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+
+	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
 // Server is a TCP server that accepts Noise_NK handshakes for secure
@@ -66,11 +68,12 @@ type Server struct {
 // NewServer creates a new bootstrap server with the given configuration.
 // The ServerConfig must include a non-nil StaticKey for the NK handshake.
 func NewServer(cfg *ServerConfig) (*Server, error) {
-	if cfg.StaticKey == nil {
-		return nil, fmt.Errorf("%w: static key is required", ErrHandshakeFailed)
+	if cfg.StaticKey == nil && cfg.P256StaticKey == nil {
+		return nil, fmt.Errorf("%w: a Noise (StaticKey) or P-256 (P256StaticKey) static key is required",
+			ErrHandshakeFailed)
 	}
-	if len(cfg.StaticKey.Private) != 32 || len(cfg.StaticKey.Public) != 32 {
-		return nil, fmt.Errorf("%w: static key must be 32 bytes", ErrHandshakeFailed)
+	if cfg.StaticKey != nil && (len(cfg.StaticKey.Private) != 32 || len(cfg.StaticKey.Public) != 32) {
+		return nil, fmt.Errorf("%w: Noise static key must be 32 bytes", ErrHandshakeFailed)
 	}
 
 	if cfg.ListenAddr == "" {
@@ -309,8 +312,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	remoteAddr := conn.RemoteAddr().String()
 	s.logger.Debug("new connection", "remote", remoteAddr)
 
-	// Perform the NK handshake as the responder.
-	sendCipher, recvCipher, err := s.performHandshake(conn)
+	// Perform the negotiated handshake as the responder. The session abstracts
+	// whichever suite the client selected.
+	session, err := s.performHandshake(conn)
 	if err != nil {
 		s.logger.Error("handshake failed", "remote", remoteAddr, "error", err)
 		return
@@ -327,7 +331,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	// Decrypt the request.
-	plaintext, err := recvCipher.Decrypt(nil, nil, ciphertext)
+	plaintext, err := session.Decrypt(ciphertext)
 	if err != nil {
 		s.logger.Error("decrypt request failed", "remote", remoteAddr, "error", err)
 		return
@@ -337,7 +341,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	var req Request
 	if err := json.Unmarshal(plaintext, &req); err != nil {
 		s.logger.Error("parse request failed", "remote", remoteAddr, "error", err)
-		s.sendErrorResponse(conn, sendCipher, "invalid request JSON")
+		s.sendErrorResponse(conn, session, "invalid request JSON")
 		return
 	}
 
@@ -346,7 +350,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	if err != nil {
 		s.logger.Error("handler failed", "remote", remoteAddr,
 			"method", req.Method, "error", err)
-		s.sendErrorResponse(conn, sendCipher, err.Error())
+		s.sendErrorResponse(conn, session, err.Error())
 		return
 	}
 
@@ -357,7 +361,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	respCiphertext, err := sendCipher.Encrypt(nil, nil, respData)
+	respCiphertext, err := session.Encrypt(respData)
 	if err != nil {
 		s.logger.Error("encrypt response failed", "remote", remoteAddr, "error", err)
 		return
@@ -372,18 +376,90 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Debug("request served", "remote", remoteAddr, "method", req.Method)
 }
 
-// performHandshake executes the 2-message Noise_NK handshake as responder.
+// performHandshake reads the client's first frame, dispatches on the negotiated
+// suite, runs that suite's 2-message handshake as responder, and returns the
+// established session. The first frame is version||suite||body; the version is
+// validated and the suite selects the core (see docs/bootstrap-negotiation.md).
+func (s *Server) performHandshake(conn net.Conn) (secureSession, error) {
+	readDeadline := time.Now().Add(s.config.ReadTimeout)
+	frame1, err := ReadFrame(conn, readDeadline)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read msg1: %w", ErrHandshakeFailed, err)
+	}
+
+	if len(frame1) < suiteHeaderSize {
+		return nil, fmt.Errorf("%w: first frame is shorter than the suite header", ErrHandshakeFailed)
+	}
+	if frame1[0] != protocolVersion {
+		return nil, fmt.Errorf("%w: 0x%02x", ErrUnsupportedVersion, frame1[0])
+	}
+
+	switch frame1[1] {
+	case SuiteP256AESGCM:
+		return s.handshakeP256(conn, frame1)
+	case SuiteNoiseNK:
+		// Refuse the Noise suite before any key agreement when FIPS is
+		// enforced. This is the server half of the downgrade defence: a MITM
+		// that rewrites a client's suite byte to 0x01 cannot make a FIPS server
+		// run X25519.
+		if fipsEnforced() {
+			return nil, fmt.Errorf("%w: suite 0x01 refused", ErrFIPSUnsupported)
+		}
+		return s.handshakeNoise(conn, frame1)
+	default:
+		return nil, fmt.Errorf("%w: 0x%02x", ErrUnsupportedSuite, frame1[1])
+	}
+}
+
+// handshakeP256 runs the approved TSBOOT1_P256_AESGCM_SHA256 handshake as
+// responder. msg1 is the full first frame, whose leading version||suite bytes
+// p256proto re-validates and binds into its transcript.
+func (s *Server) handshakeP256(conn net.Conn, msg1 []byte) (secureSession, error) {
+	if s.config.P256StaticKey == nil {
+		return nil, fmt.Errorf("%w: 0x02 not configured on this server", ErrUnsupportedSuite)
+	}
+
+	responder, err := p256proto.NewResponder(s.config.P256StaticKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: init responder: %w", ErrHandshakeFailed, err)
+	}
+	// Releases the responder's admission slot and any locked schedule; harmless
+	// on the completed path (WriteMessage2 already released them) and the remedy
+	// for a peer that sends a valid msg1 and then abandons the connection.
+	defer responder.Destroy()
+
+	if err := responder.ReadMessage1(msg1); err != nil {
+		return nil, fmt.Errorf("%w: process msg1: %w", ErrHandshakeFailed, err)
+	}
+
+	msg2, transport, err := responder.WriteMessage2()
+	if err != nil {
+		return nil, fmt.Errorf("%w: generate msg2: %w", ErrHandshakeFailed, err)
+	}
+
+	writeDeadline := time.Now().Add(s.config.WriteTimeout)
+	if err := WriteFrame(conn, msg2, writeDeadline); err != nil {
+		return nil, fmt.Errorf("%w: send msg2: %w", ErrHandshakeFailed, err)
+	}
+
+	return &p256Session{t: transport}, nil
+}
+
+// handshakeNoise runs the Noise_NK handshake as responder. frame1 is
+// version||suite||noise_msg1; the two header bytes are stripped from the body
+// and set as the Noise prologue, so a tampered header breaks the transcript.
 //
 // NK pattern:
 //   - Message 1 (client -> server): [e, es]
 //   - Message 2 (server -> client): [e, ee]
-//
-// After completion, returns the send and receive CipherStates for
-// encrypted post-handshake communication.
-func (s *Server) performHandshake(conn net.Conn) (*noise.CipherState, *noise.CipherState, error) {
+func (s *Server) handshakeNoise(conn net.Conn, frame1 []byte) (secureSession, error) {
+	if s.config.StaticKey == nil {
+		return nil, fmt.Errorf("%w: 0x01 not configured on this server", ErrUnsupportedSuite)
+	}
+
 	cipherSuite, err := nkCipherSuite()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	hs, err := noise.NewHandshakeState(noise.Config{
@@ -391,48 +467,42 @@ func (s *Server) performHandshake(conn net.Conn) (*noise.CipherState, *noise.Cip
 		Pattern:       noise.HandshakeNK,
 		Initiator:     false,
 		StaticKeypair: *s.config.StaticKey,
+		Prologue:      frame1[:suiteHeaderSize],
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: init handshake state: %w", ErrHandshakeFailed, err)
+		return nil, fmt.Errorf("%w: init handshake state: %w", ErrHandshakeFailed, err)
 	}
 
-	// Read msg1 from the client: [e, es]
-	readDeadline := time.Now().Add(s.config.ReadTimeout)
-	msg1, err := ReadFrame(conn, readDeadline)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: read msg1: %w", ErrHandshakeFailed, err)
-	}
-
-	// Process msg1 (ReadMessage) - responder reads first.
-	_, _, _, err = hs.ReadMessage(nil, msg1)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: process msg1: %w", ErrHandshakeFailed, err)
+	// Process msg1 (ReadMessage) - responder reads first. The suite header is
+	// consumed by the prologue, so only the body is fed to Noise.
+	if _, _, _, err = hs.ReadMessage(nil, frame1[suiteHeaderSize:]); err != nil {
+		return nil, fmt.Errorf("%w: process msg1: %w", ErrHandshakeFailed, err)
 	}
 
 	// Write msg2 to the client: [e, ee] - this is the final message.
 	msg2, cs1, cs2, err := hs.WriteMessage(nil, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: generate msg2: %w", ErrHandshakeFailed, err)
+		return nil, fmt.Errorf("%w: generate msg2: %w", ErrHandshakeFailed, err)
 	}
 
 	writeDeadline := time.Now().Add(s.config.WriteTimeout)
 	if err := WriteFrame(conn, msg2, writeDeadline); err != nil {
-		return nil, nil, fmt.Errorf("%w: send msg2: %w", ErrHandshakeFailed, err)
+		return nil, fmt.Errorf("%w: send msg2: %w", ErrHandshakeFailed, err)
 	}
 
 	if cs1 == nil || cs2 == nil {
-		return nil, nil, fmt.Errorf("%w: handshake did not complete", ErrHandshakeFailed)
+		return nil, fmt.Errorf("%w: handshake did not complete", ErrHandshakeFailed)
 	}
 
 	// For the responder: cs1 is the initiator's send cipher (our receive),
 	// cs2 is the responder's send cipher (our send).
-	return cs2, cs1, nil
+	return &noiseSession{send: cs2, recv: cs1}, nil
 }
 
 // sendErrorResponse encodes and sends an error response over the encrypted
 // channel. Errors during sending are logged but not returned.
-func (s *Server) sendErrorResponse(conn net.Conn, sendCipher *noise.CipherState, errMsg string) {
-	if sendCipher == nil {
+func (s *Server) sendErrorResponse(conn net.Conn, session secureSession, errMsg string) {
+	if session == nil {
 		conn.Close()
 		return
 	}
@@ -443,7 +513,7 @@ func (s *Server) sendErrorResponse(conn net.Conn, sendCipher *noise.CipherState,
 		return
 	}
 
-	ciphertext, err := sendCipher.Encrypt(nil, nil, respData)
+	ciphertext, err := session.Encrypt(respData)
 	if err != nil {
 		s.logger.Error("encrypt error response failed", "error", err)
 		return

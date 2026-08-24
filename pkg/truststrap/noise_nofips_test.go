@@ -229,29 +229,36 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// Perform NK handshake as responder.
+		// Perform NK handshake as responder. The negotiated wire binds the
+		// version||suite header as the Noise prologue.
+		header := noiseboot.NoiseSuiteHeader()
 		cipherSuite := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
 		hs, hsErr := noise.NewHandshakeState(noise.Config{
 			CipherSuite:   cipherSuite,
 			Pattern:       noise.HandshakeNK,
 			Initiator:     false,
 			StaticKeypair: serverKey.DHKey,
+			Prologue:      header,
 		})
 		if hsErr != nil {
 			serverDone <- hsErr
 			return
 		}
 
-		// Read msg1 from client.
+		// Read msg1 from client (header || body) and strip the suite header.
 		deadline := time.Now().Add(5 * time.Second)
 		msg1, readErr := noiseboot.ReadFrame(conn, deadline)
 		if readErr != nil {
 			serverDone <- readErr
 			return
 		}
+		if len(msg1) < len(header) {
+			serverDone <- errors.New("msg1 shorter than the suite header")
+			return
+		}
 
 		// Process msg1.
-		_, _, _, processErr := hs.ReadMessage(nil, msg1)
+		_, _, _, processErr := hs.ReadMessage(nil, msg1[len(header):])
 		if processErr != nil {
 			serverDone <- processErr
 			return

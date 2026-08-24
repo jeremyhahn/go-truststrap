@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-connection suite negotiation in `pkg/noiseproto/bootstrap`** (#20, owner
+  ruling 2026-08-24, OPTION B). The bootstrap Server/Client now speak either
+  suite on one listener, selected per connection using p256proto's reserved wire
+  bytes (`SuiteNoiseNK = 0x01`, `SuiteP256AESGCM = 0x02`): a client commits to one
+  suite and drives that suite's handshake, and the server accepts or refuses. This
+  wires the FIPS-approved `TSBOOT1_P256_AESGCM_SHA256` handshake (shipped as the
+  protocol core in v0.3.0-alpha) into the bootstrap path go-qrdb `clusterenroll`
+  (#18/#20) and go-xkms (#23) actually consume, so a consumer gets a FIPS-clean
+  bootstrap end to end. Design, wire format, downgrade analysis and key
+  persistence: [docs/bootstrap-negotiation.md](docs/bootstrap-negotiation.md).
+
+  - **Selection policy** mirrors the B2/#15 ruling: non-FIPS defaults to Noise
+    with P-256 selectable; under a `-tags fips` build or `GODEBUG=fips140=only`
+    the peer REQUIRES P-256 (0x02) and REFUSES Noise (0x01) with a typed
+    `ErrFIPSUnsupported` **before any key agreement**.
+  - **Downgrade resistance**: the suite byte is authenticated on both sides --
+    folded into the p256 transcript, and set as the Noise prologue -- and a FIPS
+    peer has a single reachable suite, so a MITM cannot force Noise onto a FIPS
+    peer or silently downgrade a session.
+  - **New API**: `ServerConfig.P256StaticKey`, `ClientConfig.ServerP256StaticKey`
+    and `ClientConfig.Suite`; `bootstrap.SuiteNoiseNK`, `bootstrap.SuiteP256AESGCM`,
+    `bootstrap.NoiseSuiteHeader`, `bootstrap.ErrUnsupportedSuite`,
+    `bootstrap.ErrUnsupportedVersion`. `NewServer`/`NewClient` now accept a Noise
+    key, a P-256 key, or both (at least one).
+  - **`pkg/p256proto` static-key persistence**: `HexKeySize`, `EncodeStaticKey`,
+    `DecodeStaticKey` (and `ErrBufferSize`), so a consumer persists and reloads the
+    P-256 responder key the same way it does the Noise key. `StaticKey` now owns
+    its scalar in a `memguard.LockedBuffer` (with a `Destroy` lifecycle), mirroring
+    `noiseproto.StaticKey`; `GenerateStaticKey` draws straight into locked memory by
+    rejection sampling, and `EncodeStaticKey`/`DecodeStaticKey` read/write only
+    `*memguard.LockedBuffer` — the plaintext scalar never touches the Go heap in
+    this package (the residual `crypto/ecdh` internal copy is tracked as #7/#19).
+
+### Changed
+
+- **BREAKING (wire)**: every bootstrap connection's first frame now carries a
+  two-byte `version || suite` header (and the Noise suite binds it as the Noise
+  prologue). This is incompatible with the v0.3.0-alpha bootstrap, which sent a
+  bare Noise message 1. Both ends ship from this one module and bump together;
+  the only in-repo caller is `truststrap serve`, and downstream consumers adopt
+  the new tag on both ends. Released as a MINOR (new capability).
+
 ## [0.3.0-alpha] - 2026-08-24
 
 MINOR rather than PATCH: this release adds a new exported package

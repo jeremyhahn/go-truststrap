@@ -70,6 +70,11 @@ var (
 	// serving. It exists so that unauthenticated input cannot drive
 	// RLIMIT_MEMLOCK to memguard's process-wide Purge.
 	ErrResourceExhausted = errors.New("p256proto: too many concurrent responder handshakes")
+
+	// ErrBufferSize indicates a caller-supplied destination buffer was too
+	// small for the encoded output. It is a caller mistake, not a runtime or
+	// protocol condition; see EncodeStaticKey.
+	ErrBufferSize = errors.New("p256proto: destination buffer too small")
 )
 
 // ProtocolError is this package's error type. It carries the operation that

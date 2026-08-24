@@ -1019,11 +1019,16 @@ func rawConnect(t *testing.T, addr string, serverKey *noise.DHKey) (net.Conn, *n
 		noise.HashSHA256,
 	)
 
+	// The negotiated wire prefixes the first frame with version||suite and binds
+	// those two bytes as the Noise prologue; a raw client must do the same.
+	header := []byte{protocolVersion, SuiteNoiseNK}
+
 	hs, err := noise.NewHandshakeState(noise.Config{
 		CipherSuite: cipherSuite,
 		Pattern:     noise.HandshakeNK,
 		Initiator:   true,
 		PeerStatic:  serverKey.Public,
+		Prologue:    header,
 	})
 	if err != nil {
 		conn.Close()
@@ -1032,12 +1037,13 @@ func rawConnect(t *testing.T, addr string, serverKey *noise.DHKey) (net.Conn, *n
 
 	deadline := time.Now().Add(5 * time.Second)
 
-	msg1, _, _, err := hs.WriteMessage(nil, nil)
+	body, _, _, err := hs.WriteMessage(nil, nil)
 	if err != nil {
 		conn.Close()
 		t.Fatalf("rawConnect write msg1 failed: %v", err)
 	}
 
+	msg1 := append(append([]byte{}, header...), body...)
 	if err := WriteFrame(conn, msg1, deadline); err != nil {
 		conn.Close()
 		t.Fatalf("rawConnect send msg1 failed: %v", err)

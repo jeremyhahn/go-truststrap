@@ -45,10 +45,21 @@ var (
 	// ErrHandshakeFailed indicates the Noise_NK handshake did not complete successfully.
 	ErrHandshakeFailed = errors.New("bootstrap: handshake failed")
 
-	// ErrFIPSUnsupported indicates the Noise_NK handshake needs X25519 key
-	// agreement, which this binary was built to refuse. It is returned by the
-	// client and server handshake paths in a "fips" build. See docs/fips.md.
-	ErrFIPSUnsupported = errors.New("bootstrap: X25519 is unavailable in FIPS build")
+	// ErrFIPSUnsupported indicates the Noise_NK suite (0x01) needs X25519 key
+	// agreement, which is refused whenever FIPS is enforced: a "fips" build (see
+	// docs/fips.md) or a process running under GODEBUG=fips140=only. The
+	// negotiation returns it before any key agreement -- the client refuses to
+	// offer Noise, and the server refuses to accept it -- so a downgrade to
+	// Noise is unreachable against a FIPS peer. See docs/bootstrap-negotiation.md.
+	ErrFIPSUnsupported = errors.New("bootstrap: X25519 is unavailable under FIPS; the P-256 suite is required")
+
+	// ErrUnsupportedSuite indicates the client's first frame declared a suite
+	// byte this server does not speak or is not configured to serve.
+	ErrUnsupportedSuite = errors.New("bootstrap: unsupported cipher suite")
+
+	// ErrUnsupportedVersion indicates the client's first frame declared a
+	// protocol version this build does not speak.
+	ErrUnsupportedVersion = errors.New("bootstrap: unsupported protocol version")
 
 	// ErrRateLimited indicates the client was rejected due to per-IP rate limiting.
 	ErrRateLimited = errors.New("bootstrap: rate limited")

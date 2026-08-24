@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
 func TestServer_NilStaticKey(t *testing.T) {
@@ -49,12 +51,16 @@ func TestClient_InvalidServerKeySize(t *testing.T) {
 }
 
 func TestClient_ConnectToInvalidAddr(t *testing.T) {
+	// Both suite keys are configured so the dial is reached in either build:
+	// non-FIPS selects Noise, FIPS selects P-256; the connection failure is the
+	// behaviour under test, not suite selection.
 	client, err := NewClient(&ClientConfig{
-		ServerAddr:       "127.0.0.1:1",
-		ServerStaticKey:  make([]byte, 32),
-		ConnectTimeout:   1 * time.Second,
-		OperationTimeout: 1 * time.Second,
-		Logger:           slog.Default(),
+		ServerAddr:          "127.0.0.1:1",
+		ServerStaticKey:     make([]byte, 32),
+		ServerP256StaticKey: make([]byte, p256proto.PublicKeySize),
+		ConnectTimeout:      1 * time.Second,
+		OperationTimeout:    1 * time.Second,
+		Logger:              slog.Default(),
 	})
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)

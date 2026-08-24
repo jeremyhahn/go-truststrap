@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+
+	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
 // Default configuration values for the bootstrap server and client.
@@ -52,9 +54,20 @@ type ServerConfig struct {
 	// ListenAddr is the TCP address to bind the listener to (e.g., ":8445").
 	ListenAddr string
 
-	// StaticKey is the server's Curve25519 static key pair. Clients must know
-	// the public component to complete the NK handshake.
+	// StaticKey is the server's Curve25519 static key pair for the Noise suite
+	// (0x01). Clients must know the public component to complete the NK
+	// handshake. May be nil in a P-256-only deployment; a connection that then
+	// selects the Noise suite is refused with ErrUnsupportedSuite (or
+	// ErrFIPSUnsupported under FIPS).
 	StaticKey *noise.DHKey
+
+	// P256StaticKey is the server's long-term P-256 responder key for the
+	// approved suite (0x02). Clients must be provisioned with its public
+	// component (PublicBytes). May be nil in a Noise-only deployment; a
+	// connection that then selects the P-256 suite is refused with
+	// ErrUnsupportedSuite. At least one of StaticKey or P256StaticKey must be
+	// set. See docs/bootstrap-negotiation.md for persistence.
+	P256StaticKey *p256proto.StaticKey
 
 	// CABundler provides the CA certificate bundle for distribution.
 	CABundler BundleProvider
@@ -90,10 +103,22 @@ type ClientConfig struct {
 	// ServerAddr is the TCP address of the bootstrap server (e.g., "localhost:8445").
 	ServerAddr string
 
-	// ServerStaticKey is the server's 32-byte Curve25519 static public key.
-	// This is required for the NK handshake pattern where the client must
-	// know the server's identity beforehand.
+	// ServerStaticKey is the server's 32-byte Curve25519 static public key for
+	// the Noise suite (0x01). Required to offer the Noise suite; may be empty in
+	// a P-256-only client.
 	ServerStaticKey []byte
+
+	// ServerP256StaticKey is the server's uncompressed P-256 responder public
+	// key (p256proto.PublicKeySize bytes) for the approved suite (0x02).
+	// Required to offer the P-256 suite; may be empty in a Noise-only client. At
+	// least one of ServerStaticKey or ServerP256StaticKey must be set.
+	ServerP256StaticKey []byte
+
+	// Suite optionally pins the suite this client offers: SuiteNoiseNK (0x01) or
+	// SuiteP256AESGCM (0x02). The zero value selects per policy -- FIPS requires
+	// P-256; otherwise Noise is preferred when its key is configured, else
+	// P-256. Selecting Noise under FIPS fails fast with ErrFIPSUnsupported.
+	Suite byte
 
 	// ConnectTimeout is the deadline for establishing the TCP connection.
 	// Zero value is replaced with DefaultWriteTimeout.

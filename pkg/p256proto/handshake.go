@@ -277,8 +277,11 @@ func (r *Responder) fail(err error) error {
 // checks on the peer's message and been admitted (see admission.go). A bare or
 // abandoned connection therefore pins no locked pages.
 func NewResponder(static *StaticKey) (*Responder, error) {
-	if static == nil || static.priv == nil {
-		return nil, failure("NewResponder", ErrInvalidPrivateKey, "nil static key")
+	// Refuse a nil OR destroyed key: after Destroy the private half is gone, and
+	// a destroyed key must not authenticate. Checking alive (not just a non-nil
+	// pointer) is what prevents a use-after-Destroy handshake.
+	if !static.alive() {
+		return nil, failure("NewResponder", ErrInvalidPrivateKey, "nil or destroyed static key")
 	}
 
 	sym := newSymmetricStateDeferred()

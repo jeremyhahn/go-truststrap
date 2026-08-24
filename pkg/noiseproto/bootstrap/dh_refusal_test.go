@@ -26,17 +26,19 @@ func withRefusingCipherSuite(t *testing.T) {
 	t.Cleanup(func() { nkCipherSuite = original })
 }
 
-func TestClient_PerformHandshake_CipherSuiteRefused(t *testing.T) {
+func TestClient_HandshakeNoise_CipherSuiteRefused(t *testing.T) {
 	withRefusingCipherSuite(t)
 
 	c := &Client{config: &ClientConfig{ServerStaticKey: make([]byte, noiseproto.KeySize)}}
 
-	if _, _, err := c.performHandshake(t.Context()); !errors.Is(err, errInjected) {
-		t.Fatalf("performHandshake() error = %v, want the injected refusal", err)
+	// handshakeNoise builds the cipher suite before touching the connection, so
+	// the injected refusal surfaces without any I/O.
+	if _, err := c.handshakeNoise(t.Context()); !errors.Is(err, errInjected) {
+		t.Fatalf("handshakeNoise() error = %v, want the injected refusal", err)
 	}
 }
 
-func TestServer_PerformHandshake_CipherSuiteRefused(t *testing.T) {
+func TestServer_HandshakeNoise_CipherSuiteRefused(t *testing.T) {
 	withRefusingCipherSuite(t)
 
 	s := &Server{config: &ServerConfig{
@@ -46,7 +48,8 @@ func TestServer_PerformHandshake_CipherSuiteRefused(t *testing.T) {
 		},
 	}}
 
-	if _, _, err := s.performHandshake(&net.TCPConn{}); !errors.Is(err, errInjected) {
-		t.Fatalf("performHandshake() error = %v, want the injected refusal", err)
+	frame1 := []byte{protocolVersion, SuiteNoiseNK}
+	if _, err := s.handshakeNoise(&net.TCPConn{}, frame1); !errors.Is(err, errInjected) {
+		t.Fatalf("handshakeNoise() error = %v, want the injected refusal", err)
 	}
 }
