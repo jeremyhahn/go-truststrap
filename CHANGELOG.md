@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0-alpha] - 2026-08-24
+
+MINOR: adds a new capability — per-connection bootstrap suite negotiation
+wiring the FIPS-approved P-256 handshake into the bootstrap Server/Client —
+and makes a breaking change to the bootstrap wire (a two-byte suite header on
+every connection). Pre-1.0, MINOR is where added API and behaviour changes
+live (conventions/release-versioning.md §1). Closes #20; unblocks the
+downstream FIPS gates go-qrdb #18/#20 and go-xkms #23.
+
 ### Added
 
 - **Per-connection suite negotiation in `pkg/noiseproto/bootstrap`** (#20, owner
