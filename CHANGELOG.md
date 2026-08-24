@@ -4,6 +4,59 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`pkg/p256proto` — `TSBOOT1_P256_AESGCM_SHA256`, the FIPS-approved
+  trust-bootstrap handshake** (#15, owner ruling 2026-08-23). It gives the same
+  properties as Noise_NK — anonymous initiator, responder authenticated by a
+  static key the initiator already holds, forward secrecy from an
+  ephemeral-ephemeral exchange — built entirely from primitives inside the Go
+  Cryptographic Module boundary: P-256 ECDH, AES-GCM, SHA-256 and HKDF. Design,
+  wire format, key schedule and downgrade analysis:
+  [docs/approved-handshake.md](docs/approved-handshake.md).
+
+  It is deliberately **not** a Noise variant. Noise requires the AEAD nonce to
+  be the message counter and to never travel on the wire (spec rev. 34 §5.1),
+  and under `GODEBUG=fips140=only` the only approved AES-GCM construction Go
+  exposes to third-party code is `cipher.NewGCMWithRandomNonce`, which refuses a
+  caller-supplied nonce and prepends its own. No approved AEAD can drive a Noise
+  cipher state, so the approved path had to be a separate protocol — which is
+  what #15's title said and what #10, now closed as superseded, could not have
+  delivered.
+
+  The same code runs in both build modes and produces byte-identical wire
+  output: every primitive is ordinary `crypto/*`, not a FIPS-only entry point.
+  There is no second implementation to keep in step.
+
+  Key material is held per the Layer 0 protected-memory mandate: chaining
+  keys, AEAD keys and both transport keys live in `memguard` LockedBuffers,
+  every ECDH and HKDF intermediate is wiped as it is consumed, `NewStaticKey`
+  accepts a `*memguard.LockedBuffer` and nothing else, and the handshake's key
+  schedule is destroyed on completion. Two residuals are documented rather than
+  glossed: `crypto/ecdh`'s `PrivateKey` and `crypto/aes`'s round-key schedule
+  keep their own heap copies and expose no API to lock or wipe them; avoiding
+  them would mean leaving the Go Cryptographic Module and forfeiting the FIPS
+  validation this suite exists to obtain.
+
+  `Initiator` and `Responder` own locked pages from construction and expose an
+  idempotent, nil-safe `Destroy` that callers must defer and that latches the
+  handshake unusable, so every later call is refused with `ErrHandshakeState`
+  rather than doing cryptographic work against released buffers; the schedule is also
+  released on success and on every terminal failure. A server builds one
+  responder per accepted connection before authenticating any of its input, so
+  without that an unauthenticated peer could exhaust `RLIMIT_MEMLOCK` by
+  connecting and sending forged tags.
+
+  Errors are a typed `ProtocolError` carrying the operation, the classifying
+  sentinel and the cause, with a multi-error `Unwrap` so `errors.Is` matches
+  both. The package contains no `fmt.Errorf` (conventions/errors.md §2); the
+  go-qrdb error framework is not reachable from Layer 0, so this is the
+  minimal local equivalent rather than a fork of it.
+
+  This package is the protocol core only. Wiring it into the bootstrap
+  server/client, and the static-key persistence that needs, follow separately
+  so that this change does not overlap the `Server` lifecycle rework in #13.
+
 ### Changed
 
 - **`bootstrap.Server` is now SINGLE-USE, and restart is removed** (#13,

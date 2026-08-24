@@ -30,6 +30,17 @@ crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode
 There is no second finding. DANE/TLSA, SPKI pinning, direct HTTPS and TOFU are
 clean. Every failure is the **Noise_NK** bootstrap method.
 
+## The approved alternative
+
+The exemption below covers the **Noise_NK** method specifically. A FIPS-approved
+handshake with the same properties now exists alongside it in `pkg/p256proto`
+(`TSBOOT1_P256_AESGCM_SHA256`): P-256 ECDH, AES-GCM, SHA-256 and HKDF, all
+inside the module boundary, verified by running the real handshake under
+`GODEBUG=fips140=only`. See
+[approved-handshake.md](approved-handshake.md) for the design, the wire format
+and the measurements that shaped it — in particular why it is a separate
+protocol rather than Noise with the curve swapped.
+
 ## Why this is an exemption and not a defect to fix
 
 The method implements **`Noise_NK_25519_ChaChaPoly_SHA256`**.

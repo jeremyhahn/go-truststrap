@@ -36,6 +36,7 @@ INTEGRATION_IMAGE := $(PROJECT)-integration:latest
 # Packages
 PKG_DANE       := ./pkg/dane/...
 PKG_NOISEPROTO := ./pkg/noiseproto/...
+PKG_P256PROTO  := ./pkg/p256proto/...
 PKG_SPKIPIN    := ./pkg/spkipin/...
 PKG_TRUSTSTRAP := ./pkg/truststrap/...
 PKG_CLI        := ./cmd/truststrap/...
@@ -57,9 +58,9 @@ COVERAGE_THRESHOLD := 90
 GOSEC_EXCLUDE := G115,G304,G402
 
 .PHONY: all build clean deps tidy build-cli \
-	test test-dane test-noiseproto test-spkipin test-truststrap test-cli test-fips \
-	coverage coverage-report coverage-dane coverage-noiseproto coverage-spkipin coverage-truststrap \
-	bench-dane bench-noiseproto bench-spkipin bench-truststrap \
+	test test-dane test-noiseproto test-p256proto test-spkipin test-truststrap test-cli test-fips \
+	coverage coverage-report coverage-dane coverage-noiseproto coverage-p256proto coverage-spkipin coverage-truststrap \
+	bench-dane bench-noiseproto bench-p256proto bench-spkipin bench-truststrap \
 	integration-test integration-test-host integration-test-bootstrap \
 	fmt fmt-check vet lint gosec vuln mod-verify trivy trivy-image security \
 	check check-insecure-tls \
@@ -122,6 +123,11 @@ test-noiseproto: ## Run noiseproto package tests
 	@$(GOTEST) $(PKG_NOISEPROTO)
 	@printf "$(GREEN)noiseproto tests passed$(NC)\n"
 
+test-p256proto: ## Run p256proto package tests
+	@printf "$(CYAN)Running p256proto tests...$(NC)\n"
+	@$(GOTEST) $(PKG_P256PROTO)
+	@printf "$(GREEN)p256proto tests passed$(NC)\n"
+
 test-spkipin: ## Run spkipin package tests
 	@printf "$(CYAN)Running spkipin tests...$(NC)\n"
 	@$(GOTEST) $(PKG_SPKIPIN)
@@ -160,7 +166,7 @@ coverage: ## Enforce per-package coverage thresholds (pkg/* >= 90%)
 	@FAIL=0; \
 	printf "%-40s %10s %8s\n" "Package" "Coverage" "Status"; \
 	printf "%-40s %10s %8s\n" "-------" "--------" "------"; \
-	for pkg in dane noiseproto spkipin truststrap; do \
+	for pkg in dane noiseproto p256proto spkipin truststrap; do \
 		$(GO) test -count=1 -race -coverprofile=$(COVERAGE_DIR)/$$pkg.out -covermode=atomic ./pkg/$$pkg/... 2>/dev/null; \
 		COV=$$($(GO) tool cover -func=$(COVERAGE_DIR)/$$pkg.out 2>/dev/null | grep total | awk '{print $$3}' | tr -d '%'); \
 		if [ -z "$$COV" ]; then COV="0.0"; fi; \
@@ -206,6 +212,13 @@ coverage-noiseproto: ## Run coverage for noiseproto package
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/noiseproto.out
 	@printf "$(GREEN)noiseproto coverage complete$(NC)\n"
 
+coverage-p256proto: ## Run coverage for p256proto package
+	@printf "$(CYAN)Running p256proto coverage...$(NC)\n"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test -count=1 -race -coverprofile=$(COVERAGE_DIR)/p256proto.out -covermode=atomic $(PKG_P256PROTO)
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/p256proto.out
+	@printf "$(GREEN)p256proto coverage complete$(NC)\n"
+
 coverage-spkipin: ## Run coverage for spkipin package
 	@printf "$(CYAN)Running spkipin coverage...$(NC)\n"
 	@mkdir -p $(COVERAGE_DIR)
@@ -233,6 +246,11 @@ bench-noiseproto: ## Run noiseproto benchmarks
 	@printf "$(CYAN)Running noiseproto benchmarks...$(NC)\n"
 	@$(GOBENCH) $(PKG_NOISEPROTO)
 	@printf "$(GREEN)noiseproto benchmarks complete$(NC)\n"
+
+bench-p256proto: ## Run p256proto benchmarks
+	@printf "$(CYAN)Running p256proto benchmarks...$(NC)\n"
+	@$(GOBENCH) $(PKG_P256PROTO)
+	@printf "$(GREEN)p256proto benchmarks complete$(NC)\n"
 
 bench-spkipin: ## Run spkipin benchmarks
 	@printf "$(CYAN)Running spkipin benchmarks...$(NC)\n"
