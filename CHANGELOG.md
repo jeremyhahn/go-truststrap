@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0-alpha] - 2026-08-24
+
+MINOR rather than PATCH: this release adds a new exported package
+(`pkg/p256proto`) and new exported API (`bootstrap.ErrShutdownIncomplete`,
+`main.ErrServerStop`), and changes `bootstrap.Server` behaviour — the server
+is now single-use and `Stop`'s `nil` return is a drain certificate. Pre-1.0,
+MINOR is where added API and behaviour changes live
+(conventions/release-versioning.md §1).
+
 ### Added
 
 - **`pkg/p256proto` — `TSBOOT1_P256_AESGCM_SHA256`, the FIPS-approved
@@ -56,6 +65,26 @@ All notable changes to this project will be documented in this file.
   This package is the protocol core only. Wiring it into the bootstrap
   server/client, and the static-key persistence that needs, follow separately
   so that this change does not overlap the `Server` lifecycle rework in #13.
+
+- **The `p256proto` `Transport` is one-shot per direction** (#17, owner
+  ruling `#18 = A`). A completed handshake yields a `Transport` that seals or
+  opens exactly one record in each direction; a second use of a direction is
+  refused with the typed `ErrTransportConsumed`. This matches the
+  trust-bootstrap exchange, which carries a single request and a single
+  response, and keeps the AEAD nonce discipline trivially sound without a
+  message counter on the wire.
+
+- **The responder admission cap is derived from `RLIMIT_MEMLOCK`** (#17, Codex
+  review 945). A responder locks a key schedule for unauthenticated message 1
+  input before its tag is checked, and `memguard` exhaustion purges every
+  protected buffer in the process and panics. The pre-authentication schedule
+  count is bounded by admission control whose ceiling is derived at init from
+  the process's actual `RLIMIT_MEMLOCK` — a conservative fraction of the limit
+  over a schedule's locked footprint, clamped to `[1, 256]` — so the bound
+  holds on a low-memlock deployment where a fixed count would not.
+  `SetMaxConcurrentResponders` overrides it. The residual (a limit below one
+  schedule's own footprint; locked memory allocated elsewhere in the process)
+  is closed by the pending go-enclave adoption (#7, #19).
 
 ### Changed
 
