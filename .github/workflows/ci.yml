@@ -100,7 +100,7 @@ jobs:
         # -stdout -verbose=text alongside the SARIF file (ci-template v1.1): the
         # SARIF upload below only runs on github.com, so on Gitea a failure
         # would exit 1 with the findings buried in a file nobody can read.
-        run: gosec -fmt=sarif -out=gosec.sarif -stdout -verbose=text -exclude=G115,G304,G402 -exclude-dir=test -exclude-dir=examples -severity=medium -confidence=medium ./...
+        run: gosec -concurrency 4 -fmt=sarif -out=gosec.sarif -stdout -verbose=text -exclude=G115,G304,G402 -exclude-dir=test -exclude-dir=examples -severity=medium -confidence=medium ./...
 
       - name: Upload gosec SARIF
         # Gitea has no code-scanning API; the upload 404s and fails the job.
