@@ -100,6 +100,21 @@ jobs:
         # -stdout -verbose=text alongside the SARIF file (ci-template v1.1): the
         # SARIF upload below only runs on github.com, so on Gitea a failure
         # would exit 1 with the findings buried in a file nobody can read.
+        #
+        # -concurrency 4 is a deliberate bound, not a tuning knob. gosec sizes
+        # its worker pool from runtime.NumCPU(), which ignores GOMAXPROCS and
+        # the cgroup limits alike, so inside a job container it reports the
+        # host's thread count instead of the quota. Unbounded, that many
+        # concurrent analyzers hold live SSA past the container memory cap —
+        # GOMEMLIMIT cannot reclaim a live heap — and the job is OOM-killed.
+        #
+        # Why that matters more than the wasted run: an OOM exits 137, which
+        # surfaces here as a failed gosec step. It reads like a real security
+        # finding rather than the resource failure it is, so the next person
+        # goes hunting through the code for a vulnerability that does not
+        # exist. Removing this bound has been attempted twice elsewhere in the
+        # portfolio; it looks like cleanup every time. The 4 is sized for the
+        # container, not for the host.
         run: gosec -concurrency 4 -fmt=sarif -out=gosec.sarif -stdout -verbose=text -exclude=G115,G304,G402 -exclude-dir=test -exclude-dir=examples -severity=medium -confidence=medium ./...
 
       - name: Upload gosec SARIF
