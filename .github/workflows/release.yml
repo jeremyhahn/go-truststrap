@@ -79,7 +79,11 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum * > SHA256SUMS.txt
+          # `--` ends option parsing, so an artifact whose name begins with a
+          # dash is hashed rather than read as a flag (SC2035). `./*` would do
+          # the same, but it would also write "./truststrap-…" into the
+          # published SHA256SUMS.txt — this keeps the file's existing format.
+          sha256sum -- * > SHA256SUMS.txt
 
       - name: Create GitHub Release
         if: github.server_url == 'https://github.com'
@@ -125,9 +129,9 @@ jobs:
         id: registry
         run: |
           if [ "${{ github.server_url }}" = "https://github.com" ]; then
-            echo "host=ghcr.io" >> $GITHUB_OUTPUT
+            echo "host=ghcr.io" >> "$GITHUB_OUTPUT"
           else
-            echo "host=$(echo '${{ github.server_url }}' | sed -E 's#^https?://##')" >> $GITHUB_OUTPUT
+            echo "host=$(echo '${{ github.server_url }}' | sed -E 's#^https?://##')" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Extract metadata

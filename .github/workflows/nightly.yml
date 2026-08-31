@@ -1,0 +1,260 @@
+# nightly-template: v1.4 — the known-red and long-horizon jobs, off the push path.
+# v1.4: pin aquasecurity/trivy-action to a commit SHA (it was `@master`, twice —
+# a mutable third-party ref executing on a runner that holds security-events:
+# write) and wire its `version:` input from .trivy-version.
+# v1.4: replace `curl .../contrib/install.sh | sh` on the Gitea path with
+# scripts/install-trivy.sh — a pinned, checksum-verified installer that ships
+# with this template and is the SAME script `make install-tools` runs.
+# v1.4: run the misconfiguration scan on BOTH hosts. v1.3 conditioned it on
+# Gitea only while the two trivy-action steps scan vuln,secret, so on the GitHub
+# mirror the "portfolio-wide" misconfig scan (devops.md §8) ran nowhere.
+# All three found 2026-08-27, go-blockstore #7 Codex review.
+# v1.3: declare `permissions: security-events: write` (plus contents: read).
+# v1.2 uploaded SARIF via codeql-action/upload-sarif with no permissions
+# block, so under read-only default token permissions on the GitHub mirror
+# the upload fails with an authorization error — only on the side nobody
+# watches (found 2026-08-27, go-blockstore #6 Codex review).
+# v1.2: declare the workflow-level env block. v1.1 referenced
+# ${{ env.GO_VERSION }} in the fips job's setup-go step without ever declaring
+# it, so setup-go received an empty version (found 2026-08-27 wiring
+# go-blockstore #6). Repos that copied v1.1 have the same latent defect.
+# v1.1: .trivyignore now SHIPS WITH this template (same directory) and MUST be
+# copied to the repo root with it — trivy treats a missing ignore file as a
+# FATAL flag error and never scans (measured go-enclave 2026-08-26, 10 HIGH
+# CVEs hidden behind the FATAL; go-enclave PR #5).
+#
+# Owner ruling 2026-08-20 (fail-fast pipeline for iteration speed): jobs that
+# are known-red with tracked issues, or that verify a slow-moving property,
+# do NOT run per push — a known-red job burning 60-90 runner-minutes per push
+# produces information we already have. They run here nightly, plus on demand
+# via workflow_dispatch, and are NOT in any merge gate. When their tracked
+# issues land (FIPS: the repo's fips140=only issues; Trivy: the install/log
+# diagnosis), a job may move back to ci.yml — that move is deliberate, not
+# automatic.
+#
+# THREE FILES SHIP WITH THIS ONE and must be copied with it (v1.4):
+#   .trivyignore     → repo root   — a missing ignore file is a FATAL trivy flag
+#                                    error, not a warning (see v1.1 above)
+#   .trivy-version   → repo root   — the ONE declaration of the pinned trivy
+#                                    version, read by the workflow, the
+#                                    installer and the Makefile
+#   install-trivy.sh → scripts/    — chmod +x; also what `make install-tools`
+#                                    runs, so CI's trivy and a developer's
+#                                    cannot drift
+# A repo that copies this workflow without them has a Trivy job that either
+# never scans or installs an unverified scanner.
+#
+# CUSTOMIZE per repo: the fips job needs the repo's build deps; trivy needs
+# the repo's .trivyignore and skip-dirs. Both jobs are copied verbatim from
+# ci-template v1.8 (they are unchanged by the move).
+
+name: Nightly
+
+permissions:
+  contents: read
+  # upload-sarif needs this; without it the upload fails under read-only
+  # default token permissions on the GitHub mirror (nightly-template v1.3).
+  security-events: write
+
+env:
+  # Keep in lockstep with ci-template's GO_VERSION — the fips job's setup-go
+  # reads ${{ env.GO_VERSION }} and an undeclared value resolves to EMPTY,
+  # handing setup-go no version at all (nightly-template v1.2).
+  GO_VERSION: '1.26.7'
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  fips:
+    name: FIPS
+    runs-on: ubuntu-latest
+    # needs: none — nightly runs standalone; build health is ci.yml's job.
+    timeout-minutes: 30
+    env:
+      GOFIPS140: latest
+      # STRICT mode, not `on` (ratified 2026-08-17).
+      #
+      # `fips140=on` loads the Go Cryptographic Module but still PERMITS
+      # non-approved algorithms: code or a test exercising MD5 or SHA-1
+      # succeeds, so this job — and the required CI gate above it — reports
+      # green while a regulated path uses prohibited cryptography. A gate that
+      # cannot fail on the thing it exists to catch is decoration.
+      #
+      # `fips140=only` makes non-approved operations error or panic, which is
+      # what a compliance gate for FedRAMP / PCI DSS / HIPAA has to do.
+      #
+      # Measured before adopting, not assumed: go-frost (ristretto255,
+      # secp256k1, edwards25519) and go-netmon both pass under `only`, and
+      # go-recountly's build is unaffected — GODEBUG is a RUNTIME setting and
+      # cannot cause compile errors.
+      #
+      # If this job now fails in a repo, that failure IS the finding: something
+      # on a tested path is using non-approved cryptography. Do not weaken this
+      # back to `on` to make it pass — fix the call site, or document a
+      # deliberate exemption with the owner's approval.
+      GODEBUG: fips140=only
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # CUSTOMIZE (with justification): -tags fips, on every step below. The
+      # Noise_NK bootstrap method is Noise_NK_25519_ChaChaPoly_SHA256; the
+      # Noise Protocol Framework names the DH function in the protocol
+      # identifier and hashes it into the handshake transcript, so X25519
+      # cannot be substituted without defining a different, non-interoperable
+      # protocol, and flynn/noise exports no other DHFunc. X25519 is not
+      # approved under SP 800-56A Rev. 3 and fips140=only rejects it.
+      #
+      # The tag swaps two files — pkg/noiseproto/dh.go and
+      # pkg/noiseproto/bootstrap/dh.go — for versions whose three helpers
+      # return ErrFIPSUnsupported. Every X25519 operation in the tree goes
+      # through them, so a FIPS build performs no non-approved key agreement,
+      # and no exported declaration changes (pkg/truststrap/api_surface_test.go
+      # is untagged and fails the build if one does). docs/fips.md is the
+      # exemption record, and pkg/p256proto is the approved alternative this
+      # job does exercise.
+      - name: Build all packages (FIPS mode)
+        run: go build -tags fips ./...
+
+      # The lint and security jobs in ci.yml run untagged and so never see the
+      # fips-tagged files. Vetting them here keeps them under static analysis.
+      - name: Vet (FIPS mode)
+        run: go vet -tags fips ./...
+
+      # CUSTOMIZE (v1.4.1): this MUST mirror the repo's own unit-test
+      # invocation — same build tags, same package scope, same dark-suite
+      # exclusions — with ONLY the FIPS env changed. A bare `go test ./...`
+      # drags in tag-gated helpers, environment-dependent integration
+      # suites, and deliberately-dark timing tests that the Test job
+      # excludes, and fails for reasons that have nothing to do with FIPS
+      # (seen 2026-08-17 on go-frost/go-objstore/go-signal).
+      #
+      # Here that means -tags fips and no -race: this is `make test-fips`
+      # verbatim, so the gate and the local target cannot disagree. Only the
+      # individual tests that need a real X25519 key or handshake are excluded,
+      # in *_nofips_test.go files; adding a new `!fips` file shrinks what this
+      # gate sees — review any such addition by hand.
+      - name: Unit tests (FIPS mode)
+        run: go test -tags fips -count=1 -timeout=900s ./...
+
+
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # ONE declaration of the trivy version, shared by both paths below and by
+      # the Makefile, so the scanner in CI and the scanner on a developer's
+      # machine are the same build. Bump .trivy-version, nothing else.
+      - name: Resolve pinned trivy version
+        id: trivy_version
+        run: echo "version=$(tr -d ' \t\n\r' < .trivy-version)" >> "$GITHUB_OUTPUT"
+
+      # CUSTOMIZE: skip-dirs — the integration harness under test/ only. This
+      # repo has no examples or vendored trees, and everything that ships in a
+      # release is scanned.
+      #
+      # trivy-action is PINNED TO A FULL COMMIT SHA (v1.4). Through v1.3 this
+      # template shipped `@master`: a mutable ref on a third-party action means
+      # whoever can move that ref executes arbitrary code on the runner — and
+      # this job holds a token with security-events: write. The trailing comment
+      # names the tag the SHA came from; it is a note for humans, and moving the
+      # tag cannot change what runs.
+      #
+      # BUMPING THE PIN — the trap that eats the unwary:
+      #   git ls-remote --tags --refs https://github.com/aquasecurity/trivy-action
+      # returns, for an ANNOTATED tag, the TAG OBJECT's sha, not the commit's.
+      # v0.36.0 is annotated: the bare ref is a9c7b0f0…, the commit is
+      # ed142fd0…. Take the `^{}` (peeled) line — run `git ls-remote --tags`
+      # WITHOUT `--refs` and read the `<tag>^{}` entry. A tag-object sha pinned
+      # here does not resolve and the step fails at checkout.
+      - name: Trivy scan (SARIF for code scanning)
+        # trivy-action's setup checks out aquasecurity/trivy from github.com
+        # with the runner token, which a Gitea token cannot authenticate.
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: v${{ steps.trivy_version.outputs.version }}
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 0
+          skip-dirs: test
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy SARIF
+        if: always() && github.server_url == 'https://github.com'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+      - name: Trivy gate (fail on CRITICAL/HIGH)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: v${{ steps.trivy_version.outputs.version }}
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
+          skip-dirs: test
+          trivyignores: .trivyignore
+
+      # Same gate on Gitea, via the trivy CLI installed from the release
+      # tarball (anonymous download — no github.com auth involved).
+      #
+      # Through v1.3 this piped contrib/install.sh from a MUTABLE ref straight
+      # into sh, which is arbitrary code execution on this runner for anyone who
+      # can change that file — pulling the security scanner itself through an
+      # unverified channel. scripts/install-trivy.sh (ships with this template)
+      # downloads the pinned release artifact and verifies its published SHA-256
+      # before anything executes, and it is the SAME script `make install-tools`
+      # runs, so a developer's trivy and this one cannot drift. See the script's
+      # header for what the checksum does and does NOT prove.
+      - name: Install Trivy (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: ./scripts/install-trivy.sh /usr/local/bin
+
+      - name: Trivy gate (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table --skip-dirs test --ignorefile .trivyignore .
+
+      # Misconfiguration scanning (owner ruling 2026-08-20, task #27): devops.md
+      # §8 promises it portfolio-wide. It runs HERE in nightly — advisory exit
+      # code — so findings surface daily without a new finding class blocking
+      # merges. Promote to the PR gate per-repo once its baseline is clean.
+      #
+      # BOTH servers run it (v1.4). Through v1.3 this step was conditioned on
+      # Gitea alone while the two trivy-action steps above scan vuln,secret
+      # only, so on the GitHub mirror the "portfolio-wide" misconfig scan ran
+      # nowhere at all — a promise kept on one host and silently dropped on the
+      # other. Same scanner, same advisory exit code, same pin, on both paths.
+      - name: Trivy misconfiguration scan (advisory, GitHub)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: v${{ steps.trivy_version.outputs.version }}
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          exit-code: 0
+          format: table
+          skip-dirs: test
+          trivyignores: .trivyignore
+
+      - name: Trivy misconfiguration scan (advisory, Gitea)
+        if: github.server_url != 'https://github.com'
+        run: trivy fs --scanners misconfig --exit-code 0 --format table --skip-dirs test --ignorefile .trivyignore .
+

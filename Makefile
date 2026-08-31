@@ -437,14 +437,16 @@ install-govulncheck: ## Install govulncheck vulnerability scanner
 		printf "$(GREEN)govulncheck already installed$(NC)\n"; \
 	fi
 
-install-trivy: ## Install Trivy vulnerability scanner
+# scripts/install-trivy.sh is the ONE trivy installer (nightly-template v1.4):
+# the Gitea path of .github/workflows/nightly.yml runs the same script against
+# the same .trivy-version, so CI's scanner and a developer's cannot drift. It
+# replaces `curl .../contrib/install.sh | sh`, which fetched a script from a
+# MUTABLE ref and executed it unread — pulling the security scanner itself
+# through an unverified channel. The script is idempotent: it compares against
+# the pinned version, so a box carrying a different trivy is reinstalled.
+install-trivy: ## Install Trivy vulnerability scanner (pinned, checksum-verified)
 	@printf "$(CYAN)Installing trivy...$(NC)\n"
-	@if ! command -v trivy >/dev/null 2>&1; then \
-		curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $$($(GO) env GOPATH)/bin; \
-		printf "$(GREEN)trivy installed$(NC)\n"; \
-	else \
-		printf "$(GREEN)trivy already installed$(NC)\n"; \
-	fi
+	@./scripts/install-trivy.sh $$($(GO) env GOPATH)/bin
 
 install-tools: install-gosec install-govulncheck install-trivy ## Install all development/security tools
 	@printf "$(CYAN)Installing golangci-lint...$(NC)\n"

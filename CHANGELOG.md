@@ -19,6 +19,55 @@ All notable changes to this project will be documented in this file.
   in `.`, `$HOME/.truststrap` and `/etc/truststrap`, and its absence is not an
   error. Sample: `configs/truststrap.yaml.example`.
 
+### Changed
+
+- **CI synced from `ci-template` v1 to v1.11, and `nightly.yml` adopted at
+  `nightly-template` v1.4** (#39, operator rulings on the same issue; drift
+  outside the marked `CUSTOMIZE` blocks is a defect under devops.md §8). What
+  this changes for a pull request:
+
+  - **Staged fail-fast (v1.9)**: `security`, `test` and `integration` now wait
+    on `lint` + `build`, so a broken push reports in minutes. The gate
+    distinguishes SKIP (an upstream stage failed) from FAIL and fails closed on
+    both, so a blocked run can no longer read as a test failure.
+  - **Tool installs are retried three times (v1.8/v1.9)**, which is the fix for
+    the intermittent `sum.golang.org` install failures tracked in #29/#35.
+    `gosec` and `govulncheck` now triage their own exit codes: a signal death
+    (128+N, e.g. an OOM kill) is reported as such instead of masquerading as a
+    security or vulnerability finding.
+  - **`actionlint` runs in the lint job (v1.10/v1.11)** with a pinned,
+    checksum-verified `shellcheck` (`scripts/install-shellcheck.sh`), so the
+    workflow files are no longer the one thing in the repo no CI check reads
+    and actionlint's `SC*` rules actually run. Ships with
+    `.github/actionlint.yaml`.
+  - **`fips` and `trivy` moved off the push path** into the new
+    `.github/workflows/nightly.yml` (schedule + `workflow_dispatch`), per the
+    owner ruling of 2026-08-20. The FIPS mandate is unchanged and the job still
+    runs `-tags fips` under `GOFIPS140=latest GODEBUG=fips140=only`, exactly as
+    `make test-fips` does; trivy is now installed from a pinned,
+    checksum-verified release artifact (`scripts/install-trivy.sh`,
+    `.trivy-version`) instead of `curl … | sh`, and `trivy-action` is pinned to
+    a commit SHA rather than `@master`. `make install-trivy` runs the same
+    script, so CI's scanner and a developer's cannot drift.
+  - **Kept as marked repo customizations**: the containerised `integration`
+    job (still in the required gate), the CLI build + binary verification in
+    `build`, the `GOSEC_EXCLUDE` justifications, the coverage threshold and the
+    test timeout.
+  - **Triggers narrowed to `[main]`**: `develop` is not a sanctioned trunk
+    (owner ruling 2026-08-19, GitHub Flow), and nothing else in the repo
+    referenced it.
+
+### Fixed
+
+- **Shell quoting in the workflows, newly caught by the armed `shellcheck`**
+  (#39 review round 2). `release.yml` now runs `sha256sum -- *` so an artifact
+  named with a leading dash is hashed rather than parsed as an option (SC2035;
+  `--` rather than `./*` keeps the published `SHA256SUMS.txt` format), and
+  quotes `"$GITHUB_OUTPUT"` in the registry-resolution step (SC2086 ×2). The
+  coverage gate in `ci.yml` quotes its command substitution (SC2046). All three
+  are behaviour-preserving; the SC2046 line is verbatim `ci-template` v1.11
+  text, so the same fix is owed upstream — see the note above that step.
+
 ## [0.4.0-alpha] - 2026-08-24
 
 MINOR: adds a new capability — per-connection bootstrap suite negotiation

@@ -10,8 +10,12 @@ GOFIPS140=latest GODEBUG=fips140=only go build -tags fips ./...
 GOFIPS140=latest GODEBUG=fips140=only go test  -tags fips -count=1 ./...
 ```
 
-`make test-fips` runs exactly that, and the CI `fips` job runs it on every push
-and pull request as part of the required gate.
+`make test-fips` runs exactly that, and the `fips` job in
+`.github/workflows/nightly.yml` runs it nightly and on demand
+(`workflow_dispatch`). It moved off the push path with ci-template v1.9 (owner
+ruling 2026-08-20: jobs that verify a slow-moving property do not run per push),
+so it is no longer part of the required merge gate — the mandate itself is
+unchanged, and a failure here is still the finding described below.
 
 `GODEBUG=fips140=on` is deliberately **not** used. It loads the module but still
 permits non-approved algorithms, so a regulated path could use prohibited
