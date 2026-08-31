@@ -44,9 +44,14 @@ var (
 	ErrServerStop = errors.New("serve: server stop failed")
 )
 
+// flagListen is the name of the serve listen address flag. It is referenced
+// by name when asking whether the operator actually set it.
+const flagListen = "listen"
+
 // Flag variables for the serve command.
 var (
 	serveBundleFile     string
+	serveConfigFile     string
 	serveKeyFile        string
 	serveListenAddr     string
 	serveMaxConnections int
@@ -75,7 +80,11 @@ CA bundle for PKI trust bootstrapping.
 
 The server generates or loads a Noise static key pair and listens for incoming
 TCP connections. Each client performs an NK handshake, then requests the CA
-bundle over the encrypted session.`,
+bundle over the encrypted session.
+
+The listen address is configurable through the YAML configuration file
+(serve.listen), the environment (TRUSTSTRAP_SERVE_LISTEN) and the --listen
+flag, in that order of increasing precedence.`,
 	RunE: runServe,
 }
 
@@ -84,14 +93,17 @@ func init() {
 		"path to PEM CA bundle file (required)")
 	serveCmd.Flags().StringVar(&serveKeyFile, "key-file", "truststrap-noise.key",
 		"path to Noise static key file (hex-encoded)")
-	serveCmd.Flags().StringVar(&serveListenAddr, "listen", ":8445",
-		"TCP listen address")
+	serveCmd.Flags().StringVar(&serveListenAddr, flagListen, bootstrap.DefaultListenAddr,
+		"TCP listen address (config serve.listen, env "+envPrefix+"_SERVE_LISTEN)")
 	serveCmd.Flags().IntVar(&serveMaxConnections, "max-connections", 100,
 		"maximum concurrent connections")
+	serveCmd.Flags().StringVar(&serveConfigFile, "config", "",
+		"path to YAML configuration file (default: truststrap.yaml in ., $HOME/.truststrap, /etc/truststrap)")
 }
 
-// runServe validates inputs, loads or generates the Noise static key, starts
-// the bootstrap server, and waits for a termination signal.
+// runServe validates inputs, resolves the configuration, loads or generates
+// the Noise static key, starts the bootstrap server, and waits for a
+// termination signal.
 func runServe(cmd *cobra.Command, args []string) error {
 	// Validate --bundle-file is provided.
 	if serveBundleFile == "" {
@@ -102,6 +114,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(serveBundleFile); os.IsNotExist(err) {
 		return fmt.Errorf("%w: %s", ErrBundleFileNotFound, serveBundleFile)
 	}
+
+	// Resolve the configuration: defaults, then file, then environment, with
+	// the flag layer applied on top.
+	v, err := loadConfig(serveConfigFile)
+	if err != nil {
+		return err
+	}
+	listenAddr := resolveListenAddr(serveListenAddr, cmd.Flags().Changed(flagListen), v)
 
 	// Load or generate the Noise static key.
 	staticKey, err := loadOrGenerateKey(serveKeyFile)
@@ -123,7 +143,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Build the server configuration.
 	cfg := &bootstrap.ServerConfig{
-		ListenAddr:     serveListenAddr,
+		ListenAddr:     listenAddr,
 		StaticKey:      &staticKey.DHKey,
 		CABundler:      &fileBundleProvider{path: serveBundleFile},
 		MaxConnections: serveMaxConnections,
@@ -140,7 +160,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %w", ErrServerStart, err)
 	}
 
-	slog.Info("listening", "addr", serveListenAddr)
+	slog.Info("listening", "addr", listenAddr)
 
 	// Wait for SIGINT or SIGTERM.
 	sigCtx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -84,6 +84,36 @@ truststrap serve --bundle-file /etc/truststrap/ca-bundle.pem
 | `--key-file` | No | `truststrap-noise.key` | Path to Noise static key file (hex-encoded) |
 | `--listen` | No | `:8445` | TCP listen address |
 | `--max-connections` | No | `100` | Maximum concurrent connections |
+| `--config` | No | search path | Path to YAML configuration file |
+
+#### Configuration sources
+
+The listen address is settable from three places. Precedence is
+**flag > environment > file > default**, and a flag counts only when it is
+actually given -- a flag left at its default never displaces a configured
+value.
+
+| Source | Form | Example |
+|--------|------|---------|
+| Flag | `--listen` | `truststrap serve --listen 127.0.0.1:8445` |
+| Environment | `TRUSTSTRAP_SERVE_LISTEN` | `TRUSTSTRAP_SERVE_LISTEN=127.0.0.1:8445` |
+| File | `serve.listen` | see [`configs/truststrap.yaml.example`](../configs/truststrap.yaml.example) |
+| Default | `:8445` | the library's `bootstrap.DefaultListenAddr` |
+
+Without `--config`, `truststrap.yaml` is searched for in the working
+directory, `$HOME/.truststrap` and `/etc/truststrap`, in that order. The file
+is optional; a file named explicitly with `--config` that is missing or
+unparseable is an error rather than a silent fall back to defaults.
+
+```yaml
+# truststrap.yaml
+serve:
+  listen: "127.0.0.1:8445"
+```
+
+Note that `TRUSTSTRAP_LISTEN` in [`init/truststrap.env`](../init/truststrap.env)
+is a different thing: the systemd unit expands it into `--listen` on the
+command line. `TRUSTSTRAP_SERVE_LISTEN` is read by the process itself.
 
 ### `truststrap dane`
 

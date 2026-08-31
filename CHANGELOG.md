@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`truststrap serve` listen address is configurable by file, environment and
+  flag** (#30, supersedes #26; conventions/configuration.md §3). The command
+  now carries a viper surface -- `SetEnvPrefix("TRUSTSTRAP")`,
+  `SetEnvKeyReplacer(".", "_")`, `AutomaticEnv`, and an optional YAML file --
+  so the address comes from `serve.listen` in `truststrap.yaml`,
+  `TRUSTSTRAP_SERVE_LISTEN`, or `--listen`, in that ascending precedence over
+  the defaults layer. The defaults layer is `bootstrap.DefaultListenAddr`
+  rather than a literal, and the flag applies only when
+  `Flags().Changed("listen")` reports it was actually given. New `--config`
+  flag names a file explicitly; without it, `truststrap.yaml` is searched for
+  in `.`, `$HOME/.truststrap` and `/etc/truststrap`, and its absence is not an
+  error. Sample: `configs/truststrap.yaml.example`.
+
 ## [0.4.0-alpha] - 2026-08-24
 
 MINOR: adds a new capability — per-connection bootstrap suite negotiation

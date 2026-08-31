@@ -38,6 +38,14 @@ TRUSTSTRAP_MAX_CONNECTIONS=100
 TRUSTSTRAP_LOG_FORMAT=text
 ```
 
+These are shell variables the unit expands into flags on the `ExecStart` line;
+they are not read by the process. The listen address is also configurable
+directly, without the unit file, through `/etc/truststrap/truststrap.yaml`
+(`serve.listen`) or the `TRUSTSTRAP_SERVE_LISTEN` environment variable --
+see [cli.md](cli.md#configuration-sources) for the precedence. Note that
+`--listen=${TRUSTSTRAP_LISTEN}` on the `ExecStart` line is an explicitly given
+flag and therefore outranks both.
+
 ### Management
 
 ```bash

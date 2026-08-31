@@ -44,3 +44,6 @@ test/integration/testdata/K*
 
 go.work
 go.work.sum
+
+# Real configuration; the .example sibling is committed
+configs/truststrap.yaml

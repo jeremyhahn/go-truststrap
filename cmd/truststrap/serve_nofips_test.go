@@ -68,18 +68,16 @@ func TestRunServe_ValidBundleAndKeyLoadsSuccessfully(t *testing.T) {
 	// Save and restore globals.
 	oldBundle := serveBundleFile
 	oldKey := serveKeyFile
-	oldListen := serveListenAddr
 	oldMax := serveMaxConnections
 	defer func() {
 		serveBundleFile = oldBundle
 		serveKeyFile = oldKey
-		serveListenAddr = oldListen
 		serveMaxConnections = oldMax
 	}()
 
 	serveBundleFile = bundlePath
 	serveKeyFile = keyPath
-	serveListenAddr = "127.0.0.1:0" // OS assigns a free port
+	setListenFlag(t, "127.0.0.1:0") // OS assigns a free port
 	serveMaxConnections = 10
 
 	// runServe blocks on a signal after starting the server. Run it in a
@@ -120,23 +118,92 @@ func TestRunServe_StartError(t *testing.T) {
 
 	oldBundle := serveBundleFile
 	oldKey := serveKeyFile
-	oldListen := serveListenAddr
 	oldMax := serveMaxConnections
 	defer func() {
 		serveBundleFile = oldBundle
 		serveKeyFile = oldKey
-		serveListenAddr = oldListen
 		serveMaxConnections = oldMax
 	}()
 
 	serveBundleFile = bundlePath
 	serveKeyFile = keyPath
-	serveListenAddr = "999.999.999.999:99999" // invalid address
+	setListenFlag(t, "999.999.999.999:99999") // invalid address
 	serveMaxConnections = 10
 
 	err = runServe(serveCmd, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrServerStart)
+}
+
+// serveFixture writes a valid bundle and Noise static key file and points the
+// serve globals at them, restoring the previous values when the test ends. It
+// leaves the listen address alone: the tests below are about where that value
+// comes from.
+func serveFixture(t *testing.T) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	bundlePath := filepath.Join(tmpDir, "ca-bundle.pem")
+	require.NoError(t, os.WriteFile(bundlePath, []byte("test bundle"), 0600))
+
+	key, err := noiseproto.GenerateStaticKey()
+	require.NoError(t, err)
+	t.Cleanup(key.Destroy)
+	keyPath := filepath.Join(tmpDir, "test.key")
+	require.NoError(t, writeStaticKeyFile(keyPath, key))
+
+	oldBundle := serveBundleFile
+	oldKey := serveKeyFile
+	oldMax := serveMaxConnections
+	oldConfig := serveConfigFile
+	t.Cleanup(func() {
+		serveBundleFile = oldBundle
+		serveKeyFile = oldKey
+		serveMaxConnections = oldMax
+		serveConfigFile = oldConfig
+	})
+
+	serveBundleFile = bundlePath
+	serveKeyFile = keyPath
+	serveMaxConnections = 10
+}
+
+// The environment layer has to reach the listener itself, not just the
+// resolver. An address that cannot bind, supplied only through
+// TRUSTSTRAP_SERVE_LISTEN, must surface as a start failure -- a serve path that
+// went back to a literal, or that resolved the configuration and then ignored
+// it, would bind the default port and block on the signal wait instead.
+func TestRunServe_EnvListenReachesListener(t *testing.T) {
+	serveFixture(t)
+	t.Setenv(envServeListen, "999.999.999.999:99999")
+
+	require.False(t, serveCmd.Flags().Changed(flagListen))
+
+	err := runServe(serveCmd, nil)
+	assert.ErrorIs(t, err, ErrServerStart)
+}
+
+// The same for the file layer, through --config.
+func TestRunServe_ConfigFileListenReachesListener(t *testing.T) {
+	serveFixture(t)
+	unsetEnv(t, envServeListen)
+	serveConfigFile = writeConfig(t, "999.999.999.999:99999")
+
+	require.False(t, serveCmd.Flags().Changed(flagListen))
+
+	err := runServe(serveCmd, nil)
+	assert.ErrorIs(t, err, ErrServerStart)
+}
+
+// A --config naming a file that is not there stops the command before any key
+// or listener work happens.
+func TestRunServe_MissingConfigFile(t *testing.T) {
+	serveFixture(t)
+	serveConfigFile = filepath.Join(t.TempDir(), "absent.yaml")
+
+	err := runServe(serveCmd, nil)
+	assert.ErrorIs(t, err, ErrConfigRead)
 }
 
 func TestRunServe_NewServerError(t *testing.T) {

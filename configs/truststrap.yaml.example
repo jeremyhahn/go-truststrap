@@ -1,0 +1,15 @@
+# Copyright 2026 Jeremy Hahn
+# SPDX-License-Identifier: MIT
+#
+# Sample truststrap configuration. Copy to truststrap.yaml in the working
+# directory, $HOME/.truststrap or /etc/truststrap, or name it explicitly with
+# `truststrap serve --config <path>`.
+#
+# Precedence, lowest to highest: built-in defaults, this file, TRUSTSTRAP_
+# environment variables, command-line flags.
+
+serve:
+  # TCP listen address for the Noise_NK bootstrap server.
+  # Environment: TRUSTSTRAP_SERVE_LISTEN
+  # Flag:        --listen
+  listen: ":8445"
