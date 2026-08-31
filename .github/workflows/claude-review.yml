@@ -1,33 +1,56 @@
-# claude-review: v1.0 — Claude peer review on demand (conventions/sdlc.md §8).
-# Runs when a PR carries `review:claude` (Claude instead of Codex) or
-# `review:dual` (both reviewers must APPROVE the current head before merge —
-# the merging agent enforces the dual requirement). Default PRs keep the
-# Codex-only pipeline (codex-review.yml), which is unchanged.
+# claude-review: v1.2 — DISABLED at the trigger (owner ruling 2026-08-24:
+# Codex is the sole designated peer reviewer; codex-review.yml reviews every
+# PR). This workflow is kept, not deleted, so it can be re-enabled by restoring
+# the `pull_request` trigger if Claude peer review is ever wanted again.
 #
-# `runs-on: claude` is restricted: only this workflow and task-worker.yml
-# may use it — the label mounts the live Claude session credential.
-# Gitea-only. Source of truth: software/templates/github-actions/ in the
-# company repo.
+# THE TRIGGER-LEVEL DISABLE IS LOAD-BEARING FOR THE MERGE GATE, not just for
+# lint. A job disabled with a false condition still REGISTERS its commit-status
+# context, and Gitea writes a terminal `skipped` status and a `pending` status
+# for it in the same second — which one a consumer resolves as latest is a
+# race (measured on go-truststrap PRs #31/#34/#37, 2026-08-30/31: the two
+# status API endpoints disagreed about the same commit). The QuicBaaS SDLC
+# merge gate ingests one PipelineRun per context, fail-closed, so a `pending`
+# winner strands every autonomous merge until an operator republishes the
+# context by hand. Only a trigger with no `pull_request` event never registers
+# the context at all. DO NOT move the disable back onto the job as a condition
+# — even a non-constant expression that satisfies actionlint reintroduces the
+# stranding (v1.2, go-truststrap#32 / automatethethings#13).
+#
+# Secondary reason, same conclusion: actionlint rejects a constant expression
+# in a job condition ("constant expression in condition [if-cond]") and fails
+# the workflow-lint step in any repo that lints workflows (measured: go-netmon
+# run 6512, go-sysmon run 6520, 2026-08-25).
+#
+# `runs-on: claude` is restricted: only this workflow may use it — the label
+# mounts the live Claude session credential. Gitea-only. Source of truth:
+# software/templates/github-actions/ in the company repo.
 name: Claude Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+  # Manual dispatch only — the pull_request trigger is intentionally absent so
+  # this review does not run automatically. Restore it here to re-enable.
+  # pr_number is REQUIRED: a dispatched run has no pull_request event payload,
+  # so without it PR_NUM resolves empty and claude-review.sh has no target
+  # (v1.2, Codex finding on go-truststrap#38).
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to review"
+        required: true
+        type: string
 
 jobs:
   review:
     name: Claude Review
-    # DISABLED 2026-08-24 (owner ruling): Codex is the sole designated peer
-    # reviewer. The review:claude and review:dual labels were deleted from
-    # every repo the same day, so this job has no reachable trigger left --
-    # this gate states that outright rather than leaving it incidental to
-    # label state. codex-review.yml reviews every pull request.
-    if: false
+    # Guard the credential-mounting job off github.com regardless of trigger.
+    if: github.server_url != 'https://github.com'
     runs-on: claude
     timeout-minutes: 40
     env:
       REPO: ${{ github.event.repository.name }}
-      PR_NUM: ${{ github.event.pull_request.number }}
+      # Dispatch-only trigger: the PR number comes from the required input, not
+      # a pull_request event payload (absent under workflow_dispatch).
+      PR_NUM: ${{ inputs.pr_number }}
       GITEA_CLAUDE_TOKEN: ${{ secrets.CLAUDE_BOT_TOKEN }}
     steps:
       - name: Run Claude review
