@@ -180,33 +180,66 @@ Downstream projects should back the `PinStore` interface with replicated, durabl
 ## Architecture
 
 ```
-pkg/truststrap/            Bootstrapper interface, AutoBootstrapper, AutoFetch
-  auto.go                  Tries methods in priority order, returns first success
-  dane.go                  DANE/TLSA bootstrapper
-  noise.go                 Noise_NK bootstrapper
-  spki.go                  SPKI-pinned TLS bootstrapper
-  direct.go                Direct HTTPS bootstrapper
-  embedded.go              In-process bootstrapper
-  tofu.go                  Trust-on-first-use SPKI-pinning bootstrapper
-  pinstore.go              Pin struct, PinStore interface, MemoryPinStore
+pkg/truststrap/              Bootstrapper interface, AutoBootstrapper, AutoFetch
+  truststrap.go              Package doc, Bootstrapper/BundleProvider/TLSAResolver interfaces, request and response types
+  method.go                  Method identifiers, DefaultMethodOrder, AttemptError, AggregateError
+  auto.go                    Tries methods in priority order, returns first success
+  dane.go                    DANE/TLSA bootstrapper
+  noise.go                   Noise_NK bootstrapper
+  spki.go                    SPKI-pinned TLS bootstrapper
+  direct.go                  Direct HTTPS bootstrapper
+  embedded.go                In-process bootstrapper
+  tofu.go                    Trust-on-first-use SPKI-pinning bootstrapper
+  pinstore.go                Pin struct, PinStore interface, MemoryPinStore
+  errors.go                  Sentinel errors for the package
 
-pkg/dane/                  RFC 6698 DANE/TLSA primitives
-  resolver.go              DNS TLSA lookup with DNSSEC validation
-  tlsa.go                  TLSA computation and verification
-  generate.go              TLSA record generation for DNS zones
+pkg/dane/                    RFC 6698 DANE/TLSA primitives
+  types.go                   Usage/selector/matching constants, TLSARecord, ResolverConfig
+  resolver.go                DNS TLSA lookup with DNSSEC validation
+  tlsa.go                    TLSA computation and verification
+  tlsconfig.go               DANE-verified tls.Config and peer chain verification
+  generate.go                TLSA record generation for DNS zones
+  errors.go                  Package doc and sentinel errors
 
-pkg/noiseproto/            Noise Protocol Framework primitives
-  session.go               Session management (NK and XX patterns)
-  keys.go                  Curve25519 key generation and encoding
+pkg/noiseproto/              Noise Protocol Framework primitives
+  session.go                 Session management (NK and XX patterns)
+  keys.go                    Curve25519 key generation and encoding
+  dh.go                      Noise cipher suite construction (non-FIPS builds)
+  dh_fips.go                 Replaces dh.go under -tags fips; X25519 refused
+  wipe.go                    Best-effort zeroing of key material
+  errors.go                  Package doc and sentinel errors
 
-pkg/noiseproto/bootstrap/  Noise_NK bootstrap server and client
-  server.go                TCP server with NK handshake + rate limiting
-  client.go                TCP client with NK handshake
-  handler.go               Request dispatch and CA bundle serving
+pkg/noiseproto/bootstrap/    Noise_NK bootstrap server and client
+  server.go                  TCP server with NK handshake + rate limiting
+  client.go                  TCP client with NK handshake
+  handler.go                 Request dispatch and CA bundle serving
+  config.go                  ServerConfig, ClientConfig, BundleProvider interface
+  negotiation.go             Per-connection suite selection (Noise_NK or P-256)
+  framing.go                 Length-prefixed frame read/write
+  ratelimit.go               Per-IP rate limiting
+  dh.go                      Noise cipher suite construction (non-FIPS builds)
+  dh_fips.go                 Replaces dh.go under -tags fips; X25519 refused
+  fips_policy.go             Build-level suite policy (non-FIPS builds)
+  fips_policy_fips.go        Build-level suite policy under -tags fips
+  errors.go                  Package doc and sentinel errors
 
-pkg/spkipin/               SPKI pin computation and verification
-  pin.go                   SHA-256 SPKI pin, pinned TLS config
-  client.go                HTTPS client with SPKI verification
+pkg/p256proto/               TSBOOT1_P256_AESGCM_SHA256, the FIPS-approved handshake
+  doc.go                     Package doc: protocol rationale, protected-memory rules
+  suite.go                   Protocol identity, suite bytes and exact wire sizes
+  handshake.go               Initiator and Responder, message 1 and message 2
+  keys.go                    P-256 static key generation and public encoding
+  persist.go                 Static key encode/decode via locked buffers
+  symmetric.go               Transcript hash and HKDF key schedule
+  transport.go               Post-handshake Transport (Seal/Open)
+  admission.go               Bounds pre-authentication locked-page allocation
+  admission_rlimit_linux.go  Locked-memory limit query (Linux)
+  admission_rlimit_other.go  Locked-memory limit query (non-Linux)
+  errors.go                  Sentinel errors for the package
+
+pkg/spkipin/                 SPKI pin computation and verification
+  pin.go                     SHA-256 SPKI pin, pinned TLS config
+  client.go                  HTTPS client with SPKI verification
+  errors.go                  Package doc and sentinel errors
 ```
 
 ## Documentation
@@ -220,6 +253,8 @@ pkg/spkipin/               SPKI pin computation and verification
 - [Integration Guide](docs/integration.md)
 - [Deployment Guide](docs/deployment.md)
 - [FIPS 140-3 Mode](docs/fips.md)
+- [Approved-Curve Bootstrap Handshake](docs/approved-handshake.md)
+- [Bootstrap Suite Negotiation](docs/bootstrap-negotiation.md)
 
 ## License
 
