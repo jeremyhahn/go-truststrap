@@ -9,6 +9,12 @@
 # one label. Adding `review:codex` routes the same PR to the codex runner
 # instead — the two jobs are mutually exclusive by construction, so a PR can
 # never be reviewed twice or, worse, get two conflicting verdicts on one head.
+# GITEA IS NOT GITHUB HERE. GitHub sends action=labeled with a top-level
+# `label` object, so `github.event.label.name` names the label just added.
+# Gitea 1.27 sends action=label_updated and NO `label` object at all, so that
+# expression is always empty and every job silently SKIPS — a green run with no
+# review, which is the worst shape of failure for a gate. Measured on run 11877.
+# The label set is available on the pull_request instead, so match on that.
 name: Code Review
 on:
   pull_request:
@@ -19,7 +25,7 @@ jobs:
     name: Code Review (qwen)
     if: >-
       github.server_url != 'https://github.com' &&
-      github.event.label.name == 'code-review' &&
+      contains(github.event.pull_request.labels.*.name, 'code-review') &&
       !contains(github.event.pull_request.labels.*.name, 'review:codex')
     runs-on: code-review-qwen
     timeout-minutes: 45
@@ -42,7 +48,7 @@ jobs:
     name: Code Review (codex)
     if: >-
       github.server_url != 'https://github.com' &&
-      github.event.label.name == 'code-review' &&
+      contains(github.event.pull_request.labels.*.name, 'code-review') &&
       contains(github.event.pull_request.labels.*.name, 'review:codex')
     runs-on: codex
     timeout-minutes: 45
