@@ -38,7 +38,11 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           PR_NUM: ${{ github.event.pull_request.number }}
           GITEA_URL: ${{ github.server_url }}
-          GITEA_CODEX_TOKEN: ${{ secrets.CODEX_BOT_TOKEN }}
+          # Posts as the `opencode` bot, not `codex`: the thread should name the
+          # agent that actually did the work, and once a second engine existed a
+          # `codex` byline on a qwen review was simply wrong.
+          GITEA_CODEX_TOKEN: ${{ secrets.OPENCODE_BOT_TOKEN }}
+          REVIEW_BOT_USER: opencode
           REVIEW_ENGINE: qwen
           OLLAMA_URL: http://198.51.100.91:11434
           OLLAMA_MODEL: qwen3.6:27b-coding-64k
