@@ -1,0 +1,59 @@
+# Label-triggered peer review (pilot: go-truststrap only, 2026-09-05).
+#
+# WHY A LABEL AND NOT ON-PUSH: codex-review.yml ran on every push, so a branch
+# in mid-work burned a review (and a GPU/API slot) on code its author already
+# knew was unfinished. `code-review` is applied when the author says it is ready.
+#
+# MODEL SELECTION: the trigger label says "review this"; an optional second
+# label says "with what". No `review:*` label means qwen, so the common case is
+# one label. Adding `review:codex` routes the same PR to the codex runner
+# instead — the two jobs are mutually exclusive by construction, so a PR can
+# never be reviewed twice or, worse, get two conflicting verdicts on one head.
+name: Code Review
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  qwen:
+    name: Code Review (qwen)
+    if: >-
+      github.server_url != 'https://github.com' &&
+      github.event.label.name == 'code-review' &&
+      !contains(github.event.pull_request.labels.*.name, 'review:codex')
+    runs-on: code-review-qwen
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Run qwen peer review
+        env:
+          REPO: ${{ github.event.repository.name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          GITEA_URL: ${{ github.server_url }}
+          GITEA_CODEX_TOKEN: ${{ secrets.CODEX_BOT_TOKEN }}
+          REVIEW_ENGINE: qwen
+          OLLAMA_URL: http://198.51.100.91:11434
+          OLLAMA_MODEL: qwen3.6:27b-coding-64k
+        run: /opt/qwen-review/pr-review.sh
+
+  codex:
+    name: Code Review (codex)
+    if: >-
+      github.server_url != 'https://github.com' &&
+      github.event.label.name == 'code-review' &&
+      contains(github.event.pull_request.labels.*.name, 'review:codex')
+    runs-on: codex
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Run codex peer review
+        env:
+          REPO: ${{ github.event.repository.name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          GITEA_URL: ${{ github.server_url }}
+          GITEA_CODEX_TOKEN: ${{ secrets.CODEX_BOT_TOKEN }}
+        run: /opt/codex-review/pr-review.sh
