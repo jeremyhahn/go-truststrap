@@ -1,4 +1,4 @@
-# actionlint-template: v1 — fleet self-hosted runner labels for actionlint.
+# actionlint-template: v2 — fleet self-hosted runner labels for actionlint.
 # Source of truth: software/templates/github-actions/actionlint.yaml in the
 # automatethethings repo. Copy to <repo>/.github/actionlint.yaml.
 #
@@ -6,9 +6,18 @@
 # runner (runner-label), which trains readers to ignore its output — the
 # signal-integrity failure mode. With it, a MISSPELLED label is still caught.
 #
-# Labels must match the live Gitea runner fleet. `codex` and `claude` are
-# restricted labels (review workflows only — they carry credential mounts,
-# conventions/sdlc.md); listing them here affects linting only, not policy.
+# Labels must match the live Gitea runner fleet. `codex`, `claude` and
+# `code-review-qwen` are restricted labels (review workflows only — they carry
+# credential mounts, conventions/sdlc.md); listing them here affects linting
+# only, not policy.
+#
+# v2 (2026-09-05, go-truststrap #46): add `code-review-qwen`, the label of
+# Gitea runner `gpu-host-code-review` (id 48), introduced with the label-driven
+# qwen review pilot. The runner was live and completing jobs while this
+# allowlist still omitted it, so actionlint correctly reported an unknown
+# runner and took `Lint` — and with it the whole staged gate — red on main.
+# Adding a self-hosted label to a workflow means adding it here in the same
+# change.
 self-hosted-runner:
   labels:
     - ubuntu-latest
@@ -17,3 +26,4 @@ self-hosted-runner:
     - codex
     - codex-task
     - claude
+    - code-review-qwen
