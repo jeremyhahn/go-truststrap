@@ -244,6 +244,7 @@ pkg/spkipin/                 SPKI pin computation and verification
 
 ## Documentation
 
+- [Documentation Index](docs/README.md)
 - [AutoBootstrapper](docs/auto.md)
 - [DANE/TLSA Bootstrap](docs/dane.md)
 - [Noise_NK Bootstrap](docs/noise.md)
