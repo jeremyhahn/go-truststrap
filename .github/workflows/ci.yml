@@ -20,11 +20,20 @@
 #     for something an external contributor could not fix.
 #
 # v1.9 (2026-08-20, owner ruling — FAIL-FAST STAGED PIPELINE): iterate fast.
-# Gitea cannot cancel in-flight jobs (no cancel route — task #90), so
-# fail-fast comes from ORDERING: a fast tier (lint + build, ~minutes) gates
+# Fail-fast comes from ORDERING: a fast tier (lint + build, ~minutes) gates
 # the expensive tier (security, test, integration where present). A broken
 # push reports in minutes and burns nothing downstream; a green push pays
-# one fast-tier of extra latency. trivy and fips move to nightly.yml
+# one fast-tier of extra latency.
+#
+#   CORRECTION (2026-09-05, #48): this entry originally justified ordering
+#   with "Gitea cannot cancel in-flight jobs (no cancel route — task #90)".
+#   #90 is true of the REST API and false as a claim about `concurrency:`,
+#   which does cancel — see the concurrency block below. Ordering and
+#   cancellation are COMPLEMENTARY, not alternatives: ordering bounds what a
+#   BROKEN head burns (nothing supersedes it), cancellation sheds a
+#   SUPERSEDED head. Keep both — do not drop `needs: [lint, build]`.
+#
+# trivy and fips move to nightly.yml
 # (schedule + workflow_dispatch): both were known-red on every push (fips:
 # tracked per-repo fips140=only issues; trivy: undiagnosed install failure),
 # and a known-red job burning 60-90 runner-minutes per push verifies
@@ -67,8 +76,11 @@
 # is copied. Inert today, because no event can fire for a branch that is
 # absent; the cost is latent, not current. Recreate `develop` in any of those
 # repos and its every commit runs CI twice — one push run and one
-# pull_request run for the same sha — with nothing to cancel the second
-# (concurrency: is UNUSABLE here, see below and task #88).
+# pull_request run for the same sha. The `concurrency:` block added in #48
+# does not dedupe those two: a push run and a pull_request run carry
+# DIFFERENT refs, so they key into different groups. (This entry originally
+# read "concurrency: is UNUSABLE here … task #88" — that claim was wrong;
+# see the concurrency block below.)
 # Do NOT re-add a branch list "for safety": a repo that needs a second trunk
 # is a decision for the owner, not a default.
 #
@@ -101,7 +113,9 @@
 #   executed here, so do not upgrade this to "rerun works" until someone has
 #   actually run one. What IS measured: there is no `cancel` route at any
 #   path, and DELETE returns 400 "this workflow run is not done" on anything
-#   unfinished, so no REST call can shed a queued run (task #90).
+#   unfinished, so no REST call can shed a queued run (task #90). A
+#   workflow-level `concurrency:` block sheds one from INSIDE the workflow —
+#   a different mechanism, and it works (#48, see below).
 #
 #   `workflow_dispatch` KEEPS its place regardless, on an independent
 #   justification: re-run acts on an existing run, so it cannot help when a
@@ -143,6 +157,34 @@ on:
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
                                         # created (see v1.3 correction above)
+
+# Supersession control (#48). DEVIATION from ci-template v1.11, and NOT a
+# customization — recorded here so the next template sync does not silently
+# revert it. A newer head on the same ref cancels the older run instead of both
+# occupying the shared runner's `capacity: 3`.
+#
+# MEASURED on Gitea 1.27.1 (2026-09-05); this corrects the v1.5 and v1.9
+# entries above, which asserted concurrency was unusable here:
+#   - Workflow level, keyed on the REF, `cancel-in-progress: true` → Gitea
+#     cancels the OLDER run and the NEWEST completes. Verified on both
+#     pull_request and push refs.
+#   - Task #88's evidence was a DIFFERENT config: JOB level, group
+#     `task-worker-${{ github.repository }}` with no ref component (so every
+#     task worker in the repo shared one group), and `cancel-in-progress:
+#     false`. Gitea cannot QUEUE, so the false path cancels. That says nothing
+#     about the true path.
+#   - Task #90 still holds, and is WHY this is the only available mechanism:
+#     1.27.1 publishes no `cancel` route at any path.
+#   - `cancel-in-progress` does NOT evaluate expressions on 1.27.1 — any
+#     non-empty value is truthy, so a `${{ }}` rendering "false" still cancels.
+#     Write the literal. (Group-key expressions DO evaluate.)
+#   - The group is per-REF, so a PR's runs and main's push runs never cancel
+#     each other, and two PRs never cancel each other.
+#   - release.yml deliberately does NOT get this: cancelling a release
+#     mid-publish is destructive.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -441,8 +483,9 @@ jobs:
     runs-on: ubuntu-latest
     # STAGED FAIL-FAST (owner ruling 2026-08-20, v1.9): the expensive tier
     # starts only when the fast tier (lint+build, ~minutes) is green, so a
-    # broken push reports in minutes and burns nothing downstream — Gitea has
-    # no cancel API (task #90), so fail-fast can only come from ordering.
+    # broken push reports in minutes and burns nothing downstream. Ordering is
+    # what bounds a BROKEN head, which nothing supersedes; the workflow-level
+    # `concurrency:` block (#48) sheds a SUPERSEDED one. Both, not either.
     # This deliberately supersedes the v1.8.1 lint-decoupling (go-qrdb#42):
     # that fix targeted a SILENT skip masquerading as test failure; the
     # outage class is now closed at the source (linter pinned) and the gate
