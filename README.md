@@ -179,7 +179,24 @@ Downstream projects should back the `PinStore` interface with replicated, durabl
 
 ## Architecture
 
+The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`.
+
 ```
+cmd/truststrap/              CLI built on cobra: fetch, dane, noise, spki, serve, version
+  main.go                    Entry point; runs rootCmd and exits non-zero on failure
+  root.go                    Root command, global flags, logger configuration
+  config.go                  Config file and TRUSTSTRAP_* environment binding (viper)
+  fetch.go                   fetch command: tries methods in priority order
+  dane.go                    dane command: fetch, generate, verify, show
+  noise.go                   noise command: fetch, generate, show
+  spki.go                    spki command: fetch, show
+  serve.go                   serve command: Noise_NK bootstrap server
+  keyfile.go                 Static key file read/write through locked buffers
+  keyfile_sync_unix.go       Directory fsync after the key rename (non-Windows)
+  keyfile_sync_windows.go    No-op directory sync on Windows
+  version.go                 version command: ldflags value or the VERSION file
+  errors.go                  Exit codes and sentinel errors for the CLI
+
 pkg/truststrap/              Bootstrapper interface, AutoBootstrapper, AutoFetch
   truststrap.go              Package doc, Bootstrapper/BundleProvider/TLSAResolver interfaces, request and response types
   method.go                  Method identifiers, DefaultMethodOrder, AttemptError, AggregateError
@@ -240,6 +257,20 @@ pkg/spkipin/                 SPKI pin computation and verification
   pin.go                     SHA-256 SPKI pin, pinned TLS config
   client.go                  HTTPS client with SPKI verification
   errors.go                  Package doc and sentinel errors
+
+sdk/kotlin/                  Kotlin/JVM client SDK, Gradle build
+  src/main/kotlin/com/automatethethings/truststrap/
+    TrustStrapClient.kt      Method dispatch: DANE, Noise, SPKI, direct HTTPS
+    NoiseNKSession.kt        Noise_NK handshake and transport encryption
+    config/                  TrustStrapConfig, BootstrapMethod, per-method configs
+    error/                   TrustStrapException hierarchy, MethodAttemptError
+    result/                  CABundleResult, the parsed bundle type
+  src/test/kotlin/           JUnit tests mirroring the main source tree
+
+test/integration/            Integration suite, guarded by the integration build tag
+  integration_test.go        End-to-end CLI flows over Noise, DANE and SPKI
+  Dockerfile                 Test image with coredns and openssl baked in
+  testdata/gen.sh            Generates the test PKI, Noise key and CoreDNS zone
 ```
 
 ## Documentation
