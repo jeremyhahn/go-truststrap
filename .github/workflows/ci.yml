@@ -1,5 +1,15 @@
 # ci-template: v1.11 — canonical CI for all first-party Go repos.
 #
+# LOCAL DEVIATION (2026-09-11, #35, supersedes #29): the security job no longer
+# runs `go install` for gosec or govulncheck. The company runner image behind
+# the `ubuntu-latest` label bakes both at pinned versions, so the installs
+# fetched tools the container already had over a network path that
+# intermittently fails (IPv6 ENETUNREACH to sum.golang.org, measured on both
+# runner hosts). NOT a customization — do not let a template sync re-add them;
+# the full rationale and the version-bump procedure are on the security job.
+# golangci-lint and actionlint in the lint job KEEP their installs; see the
+# note on the golangci-lint step.
+#
 # v1.11 (2026-08-28, go-blockstore #22): the lint job installs a PINNED,
 # checksum-verified shellcheck (install-shellcheck.sh, ships beside this file)
 # so actionlint's SC* rules actually run — without shellcheck on PATH actionlint
@@ -229,6 +239,17 @@ jobs:
         # do NOT "fix" this with GOSUMDB=off, which trades a flake for a
         # supply-chain hole. Durable fix: bake the pinned linter into the
         # runner image (infra).
+        #
+        # DELIBERATELY KEPT by #35, which removed the gosec and govulncheck
+        # installs because the runner image bakes those two at pinned versions.
+        # golangci-lint and actionlint below are NOT covered by that change:
+        # #35 names gosec and govulncheck as the verified-baked pair, and this
+        # step's pin exists for a specific reason — v2.13.0 panics under Go
+        # 1.26 — so dropping the install without first confirming WHICH
+        # golangci-lint the image carries would trade a network flake for the
+        # exact outage the pin was added to prevent. Removing it needs the
+        # image's pin list (infra/gitea/ci-runner/Dockerfile) read first; that
+        # is a follow-up, not a guess to make here.
         run: |
           for i in 1 2 3; do
             go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 && exit 0
@@ -319,16 +340,61 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install gosec
-        # RETRIED (2026-08-20): same sum.golang.org flake class as the lint
-        # install — a tool-install network failure must not fail a job that
-        # never ran its analysis. Full sumdb verification kept.
+      # NO TOOL INSTALL STEP HERE — deliberate, and NOT an omission (#35,
+      # supersedes #29). DEVIATION from ci-template v1.11; recorded so the next
+      # template sync does not silently re-add what this change removed.
+      #
+      # The `ubuntu-latest` label resolves to the company runner image
+      # (198.51.100.91:3001/jeremyhahn/ci-runner:latest — vstation-guests.md),
+      # which BAKES gosec and govulncheck at pinned versions. Installing them
+      # again at job time fetched tools the container already had, and did it
+      # over a network path that intermittently fails: IPv6 ENETUNREACH to
+      # sum.golang.org, measured on both runner hosts (#29). That flake is what
+      # the three-attempt retry loop removed here was compensating for — it
+      # could still exhaust its attempts and fail a job whose analysis had not
+      # run, which under staged fail-fast (v1.9) is a whole red pipeline for a
+      # tool download.
+      #
+      # The baked binaries carry their version in build ldflags, so `gosec
+      # -version` in the job log reports the pinned release rather than the
+      # `dev` an unstamped `go install ...@latest` build prints. That is the
+      # check to run when confirming the image's tool is the one in use.
+      #
+      # FAILS CLOSED: with no install step, an image that lacks the tool makes
+      # the next step exit 127 immediately. It cannot silently skip the scan.
+      #
+      # TO BUMP A VERSION: do NOT reinstate `go install` — ask agent-company to
+      # rebuild the image. The pins live in infra/gitea/ci-runner/Dockerfile.
+      #
+      # STILL INSTALLED, deliberately, in the lint job above: golangci-lint and
+      # actionlint. See the note on the golangci-lint step for why those two are
+      # out of this change's scope.
+
+      # This step IS the verification for the change above (#35): it puts the
+      # resolved path and version of each baked tool in the job log, so "the
+      # image's pinned tool is the one that ran" is something a reviewer can
+      # read rather than assume. gosec stamps its version from build ldflags,
+      # so the image's build prints a real release here while an unstamped
+      # `go install ...@latest` build would print a dev/unknown version — which
+      # makes this line the tell if an install ever creeps back in.
+      #
+      # It also moves the failure earlier and makes it legible: if the image
+      # ever ships without one of these, this step dies with `command not
+      # found` before any analysis is attempted, instead of the scan step
+      # exiting 127 amid its own output.
+      #
+      # Both probes are STRICTLY LOCAL — no network, or this step would
+      # reintroduce the very dependency the change removes. `gosec -version`
+      # only prints its ldflags-stamped variables. `go version -m` reads the
+      # module version out of the binary's own build info; govulncheck's
+      # `-version` is NOT used here because it also reports vulnerability-DB
+      # state, which is a fetch.
+      - name: Report baked tool versions
         run: |
-          for i in 1 2 3; do
-            go install github.com/securego/gosec/v2/cmd/gosec@latest && exit 0
-            echo "install attempt $i failed; retrying"; sleep 10
-          done
-          echo "tool install failed after 3 attempts"; exit 1
+          echo "gosec:       $(command -v gosec)"
+          gosec -version
+          echo "govulncheck: $(command -v govulncheck)"
+          go version -m "$(command -v govulncheck)"
 
       # CUSTOMIZE (with justification): every -exclude rule must carry a
       # written reason HERE, checked against the code, and the list must stay
@@ -404,16 +470,9 @@ jobs:
           sarif_file: gosec.sarif
           category: gosec
 
-      - name: Install govulncheck
-        # RETRIED (2026-08-20): same sum.golang.org flake class as the lint
-        # install — a tool-install network failure must not fail a job that
-        # never ran its analysis. Full sumdb verification kept.
-        run: |
-          for i in 1 2 3; do
-            go install golang.org/x/vuln/cmd/govulncheck@latest && exit 0
-            echo "install attempt $i failed; retrying"; sleep 10
-          done
-          echo "tool install failed after 3 attempts"; exit 1
+      # NO `go install golang.org/x/vuln/cmd/govulncheck` HERE, for the same
+      # reason as gosec above — the runner image bakes it at a pinned version
+      # (#35). Read that block; it is not repeated.
 
       # Also the toolchain-currency forcing function: fails on stdlib vulns
       # in an outdated Go (devops.md §9).
