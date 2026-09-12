@@ -1,14 +1,17 @@
 # ci-template: v1.11 — canonical CI for all first-party Go repos.
 #
-# LOCAL DEVIATION (2026-09-11, #35, supersedes #29): the security job no longer
-# runs `go install` for gosec or govulncheck. The company runner image behind
-# the `ubuntu-latest` label bakes both at pinned versions, so the installs
-# fetched tools the container already had over a network path that
-# intermittently fails (IPv6 ENETUNREACH to sum.golang.org, measured on both
-# runner hosts). NOT a customization — do not let a template sync re-add them;
-# the full rationale and the version-bump procedure are on the security job.
-# golangci-lint and actionlint in the lint job KEEP their installs; see the
-# note on the golangci-lint step.
+# LOCAL DEVIATION (2026-09-12, #29, completing #35): NO job installs an
+# analysis tool the company runner image already bakes. #35 removed the gosec
+# and govulncheck installs from the security job and deferred the lint job's
+# two — golangci-lint and actionlint — until the image's pin list had been
+# read rather than guessed; #29 carries that list, so those are now gone too.
+# The image behind the `ubuntu-latest` label bakes all four at pinned versions,
+# so the installs fetched tools the container already had over a network path
+# that intermittently fails (IPv6 ENETUNREACH to sum.golang.org, measured on
+# both runner hosts). NOT a customization — do not let a template sync re-add
+# them; the full rationale and the version-bump procedure are on the security
+# job, and the lint job's copy is in the comment block immediately above its
+# "Report baked tool versions" step.
 #
 # v1.11 (2026-08-28, go-blockstore #22): the lint job installs a PINNED,
 # checksum-verified shellcheck (install-shellcheck.sh, ships beside this file)
@@ -225,37 +228,65 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Install golangci-lint
-        # PINNED (devops.md §9 documented-pin clause; go-qrdb#42, 2026-08-19):
-        # @latest moved to v2.13.0, which panics under Go 1.26 ("nilness:
-        # internal error: unhandled builtin recover" in honnef.co/go/tools
-        # v0.8.0-rc.1) and took the whole gate down — and with it every job
-        # that needed lint. Unpin when an upstream release passes on the
-        # portfolio (tracked on go-qrdb#42).
-        # RETRIED (2026-08-20): sum.golang.org tile fetches during this
-        # install flake with HTTP/2 INTERNAL_ERROR (2/2 runs observed on
-        # go-qrdb), and under staged fail-fast a linter-INSTALL flake blocks
-        # the whole pipeline. Bounded retry, full sumdb verification kept —
-        # do NOT "fix" this with GOSUMDB=off, which trades a flake for a
-        # supply-chain hole. Durable fix: bake the pinned linter into the
-        # runner image (infra).
-        #
-        # DELIBERATELY KEPT by #35, which removed the gosec and govulncheck
-        # installs because the runner image bakes those two at pinned versions.
-        # golangci-lint and actionlint below are NOT covered by that change:
-        # #35 names gosec and govulncheck as the verified-baked pair, and this
-        # step's pin exists for a specific reason — v2.13.0 panics under Go
-        # 1.26 — so dropping the install without first confirming WHICH
-        # golangci-lint the image carries would trade a network flake for the
-        # exact outage the pin was added to prevent. Removing it needs the
-        # image's pin list (infra/gitea/ci-runner/Dockerfile) read first; that
-        # is a follow-up, not a guess to make here.
+      # NO `go install` FOR golangci-lint HERE — deliberate, and NOT an
+      # omission (#29, completing what #35 deferred). DEVIATION from
+      # ci-template v1.11; recorded so the next template sync does not
+      # silently re-add it.
+      #
+      # WHAT WAS HERE: a three-attempt retry loop around
+      # `go install .../golangci-lint@v2.12.2`. The pin was not a default — it
+      # exists for a specific reason (go-qrdb#42, 2026-08-19): @latest moved to
+      # v2.13.0, which panics under Go 1.26 ("nilness: internal error:
+      # unhandled builtin recover" in honnef.co/go/tools v0.8.0-rc.1) and took
+      # the whole gate down, and with it every job that needed lint. The retry
+      # loop was there because sum.golang.org fetches during this install flake
+      # (HTTP/2 INTERNAL_ERROR, 2/2 runs on go-qrdb; IPv6 ENETUNREACH on both
+      # runner hosts, #29). That loop is a local workaround for a platform
+      # flake, and it could still exhaust its attempts and fail the job — which
+      # under staged fail-fast (v1.9) is a whole red pipeline for a download.
+      #
+      # WHY IT CAN GO NOW: #35 declined to drop it without first reading the
+      # image's pin list, because guessing WHICH golangci-lint the image
+      # carries would trade a network flake for the exact outage the pin
+      # prevents. That list is now on the record (#29): the image bakes
+      # golangci-lint at v2.12.2 — THE SAME VERSION this step pinned — and the
+      # image build FAILS CLOSED if any tool's self-report disagrees with its
+      # pin, so the manifest cannot drift from the binaries. Removing the
+      # install keeps the pin's effect and drops only the network fetch.
+      #
+      # It also closes the reverse hazard the install created: actions/setup-go
+      # prepends GOPATH/bin to PATH, so a SUCCESSFUL install SHADOWED the
+      # image's pinned binary with the freshly fetched one — a repo could
+      # believe the image pinned its tooling while CI ran something else. With
+      # the install gone, `golangci-lint` resolves to the image's copy, and the
+      # version report below is what makes that legible rather than assumed.
+      #
+      # FAILS CLOSED: with no install step, an image that lacks the tool makes
+      # the version report below exit 127 immediately. It cannot silently skip
+      # the lint.
+      #
+      # TO BUMP A VERSION: do NOT reinstate `go install` — ask agent-company to
+      # rebuild the image. The pins live in infra/gitea/ci-runner/Dockerfile
+      # and bumping one is a reviewed change, deliberately not drift. That is
+      # also which devops.md §9 clause applies here: with no install command
+      # there is no pin in an install command to argue over, and the version in
+      # force is the reviewed one the image ships.
+
+      # This step IS the verification for both removals in this job (#29): it
+      # puts the resolved PATH and version of each baked tool in the job log,
+      # so "the image's pinned tool is the one that ran" is something a
+      # reviewer can read rather than assume. A GOPATH/bin path on either line
+      # is the tell that an install crept back in and shadowed the image.
+      #
+      # Both probes are STRICTLY LOCAL — no network, or this step would
+      # reintroduce the very dependency the change removes: each only prints
+      # values stamped into its own binary at build time.
+      - name: Report baked tool versions
         run: |
-          for i in 1 2 3; do
-            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 && exit 0
-            echo "install attempt $i failed; retrying"; sleep 10
-          done
-          echo "golangci-lint install failed after 3 attempts"; exit 1
+          echo "golangci-lint: $(command -v golangci-lint)"
+          golangci-lint version
+          echo "actionlint:    $(command -v actionlint)"
+          actionlint -version
 
       # .golangci.yml must enable staticcheck, errcheck, unused, ineffassign,
       # misspell, gocritic (devops.md §8) — the umbrella with the security
@@ -275,17 +306,17 @@ jobs:
       # self-hosted labels from reading as unknown runners, which is what
       # trains people to ignore linter output.
       #
-      # Unpinned, like gosec and govulncheck below: the documented-pin clause
-      # (devops.md §9) is for tools with a specific reason to freeze, which is
-      # golangci-lint's panic under Go 1.26, not a default. Bounded retry for
-      # the same sum.golang.org flake class as the installs above.
-      - name: Install actionlint
-        run: |
-          for i in 1 2 3; do
-            go install github.com/rhysd/actionlint/cmd/actionlint@latest && exit 0
-            echo "install attempt $i failed; retrying"; sleep 10
-          done
-          echo "actionlint install failed after 3 attempts"; exit 1
+      # NO `go install` FOR actionlint HERE either, for the same reason as
+      # golangci-lint above (#29) — the runner image bakes it, so see that
+      # step's note for the full rationale and the version-bump procedure.
+      #
+      # One difference worth stating: this step fetched `@latest`, so the image
+      # does not merely spare it a network call, it PINS it — the image carries
+      # actionlint v1.7.7. `@latest` is what makes a tool's output
+      # unattributable to a version (the reproducibility complaint in
+      # go-luks2#21), and the version report above now names the actionlint
+      # that actually ran. Bumping it is agent-company's reviewed image change,
+      # not a re-added install.
 
       # actionlint DELEGATES every SC* rule to shellcheck and, when shellcheck is
       # absent from PATH, DISABLES those rules and EXITS 0 at default verbosity —
@@ -341,7 +372,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       # NO TOOL INSTALL STEP HERE — deliberate, and NOT an omission (#35,
-      # supersedes #29). DEVIATION from ci-template v1.11; recorded so the next
+      # completed by #29). DEVIATION from ci-template v1.11; recorded so the next
       # template sync does not silently re-add what this change removed.
       #
       # The `ubuntu-latest` label resolves to the company runner image
@@ -366,9 +397,11 @@ jobs:
       # TO BUMP A VERSION: do NOT reinstate `go install` — ask agent-company to
       # rebuild the image. The pins live in infra/gitea/ci-runner/Dockerfile.
       #
-      # STILL INSTALLED, deliberately, in the lint job above: golangci-lint and
-      # actionlint. See the note on the golangci-lint step for why those two are
-      # out of this change's scope.
+      # NO TOOL IS INSTALLED IN THE LINT JOB EITHER any more: golangci-lint and
+      # actionlint, which #35 left standing pending the image's pin list, went
+      # the same way in #29 once that list confirmed the image carries
+      # golangci-lint at the very version this repo pinned. See the notes in
+      # that job; the procedure above applies to all four tools.
 
       # This step IS the verification for the change above (#35): it puts the
       # resolved path and version of each baked tool in the job log, so "the
