@@ -4,6 +4,7 @@
 package noiseproto
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -59,6 +60,7 @@ type Session struct {
 	handshakeState *noise.HandshakeState
 	sendCipher     *noise.CipherState
 	recvCipher     *noise.CipherState
+	channelBinding []byte
 	isInitiator    bool
 	pattern        noise.HandshakePattern
 	handshakeDone  atomic.Bool
@@ -118,6 +120,38 @@ func (s *Session) PeerStaticPublicKey() []byte {
 // and the session is ready for encrypted communication.
 func (s *Session) IsHandshakeComplete() bool {
 	return s.handshakeDone.Load()
+}
+
+// ChannelBinding returns the Noise handshake hash for this session: a value
+// both peers compute identically and neither can influence independently. It
+// commits to the ephemeral keys as well as the static ones, so it is unique
+// per session rather than per key pair -- two sessions between the same two
+// identities have different bindings.
+//
+// A caller binds an application-layer artefact to the connection it was
+// produced on by including this value in what it signs or authenticates.
+//
+// It is available only once the handshake has completed; before that it
+// returns ErrSessionNotReady rather than a partial hash, which would commit to
+// a peer that has not yet been authenticated. The returned slice is a fresh
+// copy, so mutating it cannot desynchronize the caller's binding from the
+// session's.
+//
+// The handshake hash is a digest over public handshake transcript data, not
+// key material: retaining it past the handshake discloses nothing and does not
+// weaken the forward secrecy that clearing the handshake state provides.
+func (s *Session) ChannelBinding() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// The captured hash is checked as well as the flag: an empty binding is
+	// never a usable answer, so it is refused rather than returned as a
+	// zero-length value a caller could bind to.
+	if !s.handshakeDone.Load() || len(s.channelBinding) == 0 {
+		return nil, ErrSessionNotReady
+	}
+
+	return bytes.Clone(s.channelBinding), nil
 }
 
 // SetPrologue updates the prologue for the session. The prologue must
@@ -264,6 +298,10 @@ func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
 
 	// Check if handshake is complete
 	if s.sendCipher != nil && s.recvCipher != nil {
+		// Capture the handshake hash before the state that holds it is
+		// released; it is the session's channel binding and lives nowhere
+		// else. Copied because flynn/noise hands back its own slice.
+		s.channelBinding = bytes.Clone(s.handshakeState.ChannelBinding())
 		s.handshakeDone.Store(true)
 		s.handshakeState = nil // Clear handshake state for forward secrecy
 		return outgoing, true, nil

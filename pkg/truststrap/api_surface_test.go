@@ -39,6 +39,7 @@ var (
 	_ func(*noiseproto.Session) []byte                             = (*noiseproto.Session).LocalStaticPrivateKey
 	_ func(*noiseproto.Session) []byte                             = (*noiseproto.Session).PeerStaticPublicKey
 	_ func(*noiseproto.Session) bool                               = (*noiseproto.Session).IsHandshakeComplete
+	_ func(*noiseproto.Session) ([]byte, error)                    = (*noiseproto.Session).ChannelBinding
 	_ func(*noiseproto.Session, []byte)                            = (*noiseproto.Session).SetPrologue
 	_ func(*noiseproto.Session) error                              = (*noiseproto.Session).InitHandshake
 	_ func(*noiseproto.Session, []byte) ([]byte, bool, error)      = (*noiseproto.Session).HandshakeMessage

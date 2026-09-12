@@ -224,6 +224,40 @@ Secrets held inside `flynn/noise` -- the handshake state and derived cipher
 states -- live in that library's own heap allocations and are outside the scope
 of this protection.
 
+### Channel Binding
+
+A completed `noiseproto.Session` exposes its Noise handshake hash, the value
+the Noise specification designates for channel binding:
+
+```go
+binding, err := session.ChannelBinding()
+if err != nil {
+    return err // ErrSessionNotReady until the handshake completes
+}
+```
+
+Both ends of a handshake compute the same value and neither can choose it
+alone. Because the hash commits to the ephemeral keys as well as the static
+ones, it identifies the **session**, not the pair of identities: two handshakes
+between the same two keys produce different bindings.
+
+That is what makes it useful for binding an application-layer artefact -- a
+signature, an attestation, a challenge response -- to the connection it was
+produced on. A peer that relays a challenge onto a second session cannot pass
+the answer off as its own, because the answer commits to the other session's
+binding. A derivation over the static keys alone closes relaying to a different
+identity but cannot separate two concurrent sessions between the same keys.
+
+Three properties of the accessor:
+
+- It refuses with `ErrSessionNotReady` until the handshake completes. A hash
+  taken mid-handshake commits to a peer that has not been authenticated yet.
+- It returns a fresh copy each call, so a caller cannot mutate the session's
+  own binding.
+- The value is a digest over public handshake transcript data, not key
+  material. It is safe to sign over or transmit, and holding onto it does not
+  weaken the forward secrecy that clearing the handshake state provides.
+
 ## CLI Usage
 
 ```bash

@@ -7,6 +7,7 @@ package noiseproto
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"testing"
@@ -708,10 +709,81 @@ func TestSession_DecryptNilRecvCipher(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
 
-// setupXXHandshake creates and completes an XX handshake between two sessions.
-func setupXXHandshake(t *testing.T) (*Session, *Session) {
-	t.Helper()
+func TestSession_ChannelBinding_XXAgreesAcrossPeers(t *testing.T) {
+	initiator, responder := setupXXHandshake(t)
 
+	initiatorBinding, err := initiator.ChannelBinding()
+	require.NoError(t, err)
+	responderBinding, err := responder.ChannelBinding()
+	require.NoError(t, err)
+
+	// The suite is 25519_ChaChaPoly_SHA256, so the binding is the whole
+	// SHA-256 handshake hash -- not a truncation of it.
+	assert.Len(t, initiatorBinding, sha256.Size, "binding must be the full handshake hash")
+	assert.False(t, bytes.Equal(initiatorBinding, make([]byte, len(initiatorBinding))),
+		"binding must not be all zeros")
+	assert.Equal(t, initiatorBinding, responderBinding,
+		"both ends of a completed XX handshake must derive the same binding")
+}
+
+func TestSession_ChannelBinding_NKAgreesAcrossPeers(t *testing.T) {
+	serverKey, err := GenerateStaticKey()
+	require.NoError(t, err)
+	t.Cleanup(serverKey.Destroy)
+
+	client, server := setupNKHandshake(t, &serverKey.DHKey)
+
+	clientBinding, err := client.ChannelBinding()
+	require.NoError(t, err)
+	serverBinding, err := server.ChannelBinding()
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, clientBinding, "binding must carry the handshake hash")
+	assert.Equal(t, clientBinding, serverBinding,
+		"both ends of a completed NK handshake must derive the same binding")
+}
+
+func TestSession_ChannelBinding_DiffersPerSession(t *testing.T) {
+	// The point of binding to the handshake hash rather than to the static
+	// keys: two sessions between the SAME pair of identities must not share a
+	// binding, otherwise an answer produced on one session is replayable on
+	// the other.
+	initiatorKey, err := GenerateStaticKey()
+	require.NoError(t, err)
+	t.Cleanup(initiatorKey.Destroy)
+
+	responderKey, err := GenerateStaticKey()
+	require.NoError(t, err)
+	t.Cleanup(responderKey.Destroy)
+
+	t.Run("XX", func(t *testing.T) {
+		first, _ := setupXXHandshakeWithKeys(t, &initiatorKey.DHKey, &responderKey.DHKey)
+		second, _ := setupXXHandshakeWithKeys(t, &initiatorKey.DHKey, &responderKey.DHKey)
+
+		firstBinding, err := first.ChannelBinding()
+		require.NoError(t, err)
+		secondBinding, err := second.ChannelBinding()
+		require.NoError(t, err)
+
+		assert.NotEqual(t, firstBinding, secondBinding,
+			"two XX handshakes between the same static keys must differ")
+	})
+
+	t.Run("NK", func(t *testing.T) {
+		first, _ := setupNKHandshake(t, &responderKey.DHKey)
+		second, _ := setupNKHandshake(t, &responderKey.DHKey)
+
+		firstBinding, err := first.ChannelBinding()
+		require.NoError(t, err)
+		secondBinding, err := second.ChannelBinding()
+		require.NoError(t, err)
+
+		assert.NotEqual(t, firstBinding, secondBinding,
+			"two NK handshakes to the same server key must differ")
+	})
+}
+
+func TestSession_ChannelBinding_BeforeHandshake(t *testing.T) {
 	initiator, err := NewSession(&SessionConfig{
 		Pattern:     noise.HandshakeXX,
 		IsInitiator: true,
@@ -721,6 +793,108 @@ func setupXXHandshake(t *testing.T) (*Session, *Session) {
 	responder, err := NewSession(&SessionConfig{
 		Pattern:     noise.HandshakeXX,
 		IsInitiator: false,
+	})
+	require.NoError(t, err)
+
+	// Before InitHandshake there is no handshake hash at all.
+	binding, err := initiator.ChannelBinding()
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+	assert.Nil(t, binding, "no bytes may be returned before the handshake completes")
+
+	require.NoError(t, initiator.InitHandshake())
+	require.NoError(t, responder.InitHandshake())
+
+	// Mid-handshake the hash exists but commits to a peer neither side has
+	// authenticated yet, so it must not be handed out.
+	msg1, complete, err := initiator.HandshakeMessage(nil)
+	require.NoError(t, err)
+	require.False(t, complete)
+
+	binding, err = initiator.ChannelBinding()
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+	assert.Nil(t, binding, "initiator must refuse after msg1")
+
+	msg2, complete, err := responder.HandshakeMessage(msg1)
+	require.NoError(t, err)
+	require.False(t, complete)
+
+	binding, err = responder.ChannelBinding()
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+	assert.Nil(t, binding, "responder must refuse after msg2")
+
+	// The same session answers once the handshake completes.
+	msg3, complete, err := initiator.HandshakeMessage(msg2)
+	require.NoError(t, err)
+	require.True(t, complete)
+
+	binding, err = initiator.ChannelBinding()
+	require.NoError(t, err)
+	assert.NotEmpty(t, binding)
+
+	_, complete, err = responder.HandshakeMessage(msg3)
+	require.NoError(t, err)
+	require.True(t, complete)
+}
+
+func TestSession_ChannelBinding_NoBindingCaptured(t *testing.T) {
+	session, err := NewSession(&SessionConfig{
+		Pattern:     noise.HandshakeXX,
+		IsInitiator: true,
+	})
+	require.NoError(t, err)
+
+	// Force handshakeDone=true without actually completing a handshake
+	// (channelBinding remains unset).
+	session.handshakeDone.Store(true)
+
+	binding, err := session.ChannelBinding()
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+	assert.Nil(t, binding, "an empty binding must never be handed out")
+}
+
+func TestSession_ChannelBinding_ReturnsCopy(t *testing.T) {
+	initiator, _ := setupXXHandshake(t)
+
+	first, err := initiator.ChannelBinding()
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+
+	original := bytes.Clone(first)
+	for i := range first {
+		first[i] ^= 0xFF
+	}
+
+	second, err := initiator.ChannelBinding()
+	require.NoError(t, err)
+	assert.Equal(t, original, second,
+		"mutating a returned binding must not change the session's own")
+}
+
+// setupXXHandshake creates and completes an XX handshake between two sessions,
+// each with a freshly generated static key pair.
+func setupXXHandshake(t *testing.T) (*Session, *Session) {
+	t.Helper()
+
+	return setupXXHandshakeWithKeys(t, nil, nil)
+}
+
+// setupXXHandshakeWithKeys creates and completes an XX handshake between two
+// sessions. A nil static key means the session generates its own; passing the
+// same keys to two calls runs two handshakes between one pair of identities.
+func setupXXHandshakeWithKeys(t *testing.T, initiatorKey, responderKey *noise.DHKey) (*Session, *Session) {
+	t.Helper()
+
+	initiator, err := NewSession(&SessionConfig{
+		Pattern:        noise.HandshakeXX,
+		LocalStaticKey: initiatorKey,
+		IsInitiator:    true,
+	})
+	require.NoError(t, err)
+
+	responder, err := NewSession(&SessionConfig{
+		Pattern:        noise.HandshakeXX,
+		LocalStaticKey: responderKey,
+		IsInitiator:    false,
 	})
 	require.NoError(t, err)
 
@@ -739,4 +913,38 @@ func setupXXHandshake(t *testing.T) (*Session, *Session) {
 	require.NoError(t, err)
 
 	return initiator, responder
+}
+
+// setupNKHandshake creates and completes an NK handshake against the given
+// server static key, returning the client and server sessions.
+func setupNKHandshake(t *testing.T, serverKey *noise.DHKey) (*Session, *Session) {
+	t.Helper()
+
+	client, err := NewSession(&SessionConfig{
+		Pattern:       noise.HandshakeNK,
+		IsInitiator:   true,
+		PeerStaticKey: serverKey.Public,
+	})
+	require.NoError(t, err)
+
+	server, err := NewSession(&SessionConfig{
+		Pattern:        noise.HandshakeNK,
+		LocalStaticKey: serverKey,
+		IsInitiator:    false,
+	})
+	require.NoError(t, err)
+
+	err = client.InitHandshake()
+	require.NoError(t, err)
+	err = server.InitHandshake()
+	require.NoError(t, err)
+
+	msg1, _, err := client.HandshakeMessage(nil)
+	require.NoError(t, err)
+	msg2, _, err := server.HandshakeMessage(msg1)
+	require.NoError(t, err)
+	_, _, err = client.HandshakeMessage(msg2)
+	require.NoError(t, err)
+
+	return client, server
 }

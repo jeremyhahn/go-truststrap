@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`noiseproto.Session.ChannelBinding()` exposes the Noise handshake hash**
+  (#22, requested by go-xkms for go-xkms#129). The session captures the
+  handshake hash `h` as the handshake completes -- before the handshake state
+  is released -- and hands out a copy of it, so a consumer can bind an
+  application-layer artefact (go-xkms binds a device attestation signature) to
+  the session it was produced on. Because `h` commits to the ephemeral keys as
+  well as the static ones, the binding is unique per session rather than per
+  key pair: two handshakes between the same two identities produce different
+  values, which a derivation over the static keys alone cannot distinguish.
+  The accessor refuses with `ErrSessionNotReady` until the handshake completes,
+  rather than returning a partial hash committing to an unauthenticated peer.
+  Purely additive: no existing path changes, and `h` is a digest over public
+  transcript data, so retaining it neither discloses key material nor weakens
+  the forward secrecy that clearing the handshake state provides.
+
 - **`truststrap serve` listen address is configurable by file, environment and
   flag** (#30, supersedes #26; conventions/configuration.md §3). The command
   now carries a viper surface -- `SetEnvPrefix("TRUSTSTRAP")`,
