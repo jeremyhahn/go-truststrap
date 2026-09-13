@@ -179,7 +179,7 @@ Downstream projects should back the `PinStore` interface with replicated, durabl
 
 ## Architecture
 
-The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`.
+The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`, with the packaging and tooling directories `configs/`, `init/`, `scripts/`, `docs/` and `assets/` beside them.
 
 ```
 cmd/truststrap/              CLI built on cobra: fetch, dane, noise, spki, serve, version
@@ -271,6 +271,21 @@ test/integration/            Integration suite, guarded by the integration build
   integration_test.go        End-to-end CLI flows over Noise, DANE and SPKI
   Dockerfile                 Test image with coredns and openssl baked in
   testdata/gen.sh            Generates the test PKI, Noise key and CoreDNS zone
+
+configs/                     Configuration templates
+  truststrap.yaml.example    Sample serve config; file, TRUSTSTRAP_* env and flag precedence
+
+init/                        Service-manager integration for truststrap serve
+  truststrap.service         systemd unit
+  truststrap.rc              SysV/LSB init script
+  truststrap.env             EnvironmentFile read by both
+
+scripts/                     Pinned, checksum-verified tool installers
+  install-shellcheck.sh      shellcheck, installed by the CI lint job
+  install-trivy.sh           trivy, installed by make install-trivy
+
+docs/                        Package documentation, indexed by docs/README.md
+assets/                      logo.svg, the project logo
 ```
 
 ## Documentation
