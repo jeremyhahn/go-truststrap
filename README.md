@@ -66,11 +66,14 @@ resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
     },
 })
 
-// Noise-only (no PKI required -- just a 32-byte key)
+// Noise-only (no PKI required -- just a pre-shared responder public key)
 resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
     Noise: &truststrap.NoiseConfig{
         ServerAddr:      "kms.example.com:8445",
-        ServerStaticKey: "ab12cd34...",
+        ServerStaticKey: "ab12cd34...", // Curve25519, 64-char hex
+        // FIPS: pin the responder's uncompressed P-256 point (130-char hex)
+        // and the approved suite is selected automatically.
+        ServerP256StaticKey: "04ef56ab...",
     },
 })
 
@@ -145,7 +148,7 @@ sudo systemctl enable --now truststrap
 | Method | Trust Basis | Security | When to Use |
 |--------|------------|----------|-------------|
 | **DANE/TLSA** | DNSSEC-signed TLSA records | Highest | You control DNS and have DNSSEC deployed |
-| **Noise_NK** | Pre-shared Curve25519 public key | High | Provisioning systems that can distribute a 32-byte key (refused in FIPS builds) |
+| **Noise** | Pre-shared responder public key (Curve25519, or P-256 under FIPS) | High | Provisioning systems that can distribute a single public key out of band |
 | **SPKI Pinning** | SHA-256 hash of server's SPKI | Medium | Can distribute a hex pin via config management |
 | **Direct HTTPS** | System trust store (OS CA bundle) | Baseline | Fallback when the OS already has a usable trust store |
 | **Embedded** | In-process call (no network) | N/A | KMS runs in the same process |
@@ -157,10 +160,19 @@ AutoFetch tries them in the order above and returns the first success. Configure
 
 Noise_NK is `Noise_NK_25519_ChaChaPoly_SHA256`, and its protocol-mandated X25519
 key agreement is rejected by the Go Cryptographic Module under
-`GODEBUG=fips140=only`. Building with `-tags fips` makes that method refuse with
-`ErrFIPSUnsupported` instead of performing key agreement; no exported API
-changes, and DANE, SPKI, direct and TOFU are unaffected. `make test-fips` runs
-the build and the full suite in that mode. See [FIPS 140-3 Mode](docs/fips.md).
+`GODEBUG=fips140=only`. Building with `-tags fips` refuses that suite with
+`ErrFIPSUnsupported` instead of performing key agreement.
+
+The Noise *method* still bootstraps there, because the same transport also
+speaks the approved `TSBOOT1_P256_AESGCM_SHA256` suite: pin the responder's
+P-256 point in `NoiseConfig.ServerP256StaticKey` and that suite is selected
+wherever X25519 is unavailable — no lower-level integration, no exported API
+removed, and `AutoBootstrapper`'s Noise arm inherits the same selection.
+Pinning `Suite: truststrap.SuiteNoiseNK` where X25519 is unavailable fails with
+`ErrFIPSUnsupported` rather than quietly using the other suite. DANE, SPKI,
+direct and TOFU are unaffected. `make test-fips` runs the build and the full
+suite in that mode, including the facade's real P-256 handshake. See
+[FIPS 140-3 Mode](docs/fips.md).
 
 ### TOFU Semantics and Security Caveat
 

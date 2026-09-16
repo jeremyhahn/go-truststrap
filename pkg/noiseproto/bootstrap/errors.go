@@ -36,6 +36,20 @@ var (
 	// ErrConnectionFailed indicates a TCP connection could not be established.
 	ErrConnectionFailed = errors.New("bootstrap: connection failed")
 
+	// ErrClientClosed indicates Client.Close ended the operation: the socket was
+	// closed while Connect or GetCABundle was in flight, or Close arrived while
+	// Connect was still dialing. It is the Kind of a ClientError whose Err is
+	// the I/O error the closed socket produced, if any.
+	ErrClientClosed = errors.New("bootstrap: client closed")
+
+	// ErrAlreadyConnected indicates Connect was called on a client that already
+	// holds a connection.
+	ErrAlreadyConnected = errors.New("bootstrap: already connected")
+
+	// ErrHandshakeIncomplete indicates the handshake's final message was
+	// processed but yielded no transport keys.
+	ErrHandshakeIncomplete = errors.New("bootstrap: handshake did not complete")
+
 	// ErrTimeout indicates an I/O operation exceeded its deadline.
 	ErrTimeout = errors.New("bootstrap: operation timeout")
 
@@ -64,3 +78,46 @@ var (
 	// ErrRateLimited indicates the client was rejected due to per-IP rate limiting.
 	ErrRateLimited = errors.New("bootstrap: rate limited")
 )
+
+// ClientError is returned by Client.Connect and Client.GetCABundle when an
+// operation fails at a named stage. Kind is the sentinel that classifies the
+// failure -- ErrConnectionFailed, ErrHandshakeFailed, ErrClientClosed,
+// ErrInvalidRequest -- and Err the underlying cause, if any. Unwrap exposes
+// both, so errors.Is matches the sentinel and the cause alike.
+type ClientError struct {
+	// Stage names where the operation failed, e.g. "dial", "read msg2",
+	// "write request".
+	Stage string
+	// Kind is the sentinel classifying the failure.
+	Kind error
+	// Err is the underlying cause, if any.
+	Err error
+}
+
+// Error returns the sentinel's message, the stage, and the cause if any.
+func (e ClientError) Error() string {
+	if e.Err != nil {
+		return e.Kind.Error() + ": " + e.Stage + ": " + e.Err.Error()
+	}
+	return e.Kind.Error() + ": " + e.Stage
+}
+
+// Unwrap returns the sentinel and the cause so both match with errors.Is.
+func (e ClientError) Unwrap() []error {
+	if e.Err == nil {
+		return []error{e.Kind}
+	}
+	return []error{e.Kind, e.Err}
+}
+
+// ServerError is returned by Client.GetCABundle when the server answered the
+// request with an error of its own rather than a bundle. Message is the text
+// the server sent.
+type ServerError struct {
+	Message string
+}
+
+// Error returns the server's message with the package prefix.
+func (e ServerError) Error() string {
+	return "bootstrap: server error: " + e.Message
+}

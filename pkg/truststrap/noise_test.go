@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
 func TestNewNoiseBootstrapper_Success(t *testing.T) {
@@ -130,11 +132,11 @@ func TestNewNoiseBootstrapper_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
-	if bs.connectTO != DefaultNoiseConnectTimeout {
-		t.Errorf("connectTO = %v, want %v", bs.connectTO, DefaultNoiseConnectTimeout)
+	if bs.config.ConnectTimeout != DefaultNoiseConnectTimeout {
+		t.Errorf("ConnectTimeout = %v, want %v", bs.config.ConnectTimeout, DefaultNoiseConnectTimeout)
 	}
-	if bs.operationTO != DefaultNoiseOperationTimeout {
-		t.Errorf("operationTO = %v, want %v", bs.operationTO, DefaultNoiseOperationTimeout)
+	if bs.config.OperationTimeout != DefaultNoiseOperationTimeout {
+		t.Errorf("OperationTimeout = %v, want %v", bs.config.OperationTimeout, DefaultNoiseOperationTimeout)
 	}
 }
 
@@ -149,11 +151,11 @@ func TestNewNoiseBootstrapper_CustomTimeouts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
-	if bs.connectTO != 3*time.Second {
-		t.Errorf("connectTO = %v, want %v", bs.connectTO, 3*time.Second)
+	if bs.config.ConnectTimeout != 3*time.Second {
+		t.Errorf("ConnectTimeout = %v, want %v", bs.config.ConnectTimeout, 3*time.Second)
 	}
-	if bs.operationTO != 7*time.Second {
-		t.Errorf("operationTO = %v, want %v", bs.operationTO, 7*time.Second)
+	if bs.config.OperationTimeout != 7*time.Second {
+		t.Errorf("OperationTimeout = %v, want %v", bs.config.OperationTimeout, 7*time.Second)
 	}
 }
 
@@ -178,6 +180,90 @@ func TestNoiseBootstrapper_FetchCABundle_UnreachableServer(t *testing.T) {
 	}
 	if !errors.Is(err, ErrFetchFailed) {
 		t.Errorf("FetchCABundle() error = %v, want %v", err, ErrFetchFailed)
+	}
+	// The failure is typed: the stage is named and the transport cause is
+	// reachable through Unwrap, not only through the message.
+	var fetchErr NoiseFetchError
+	if !errors.As(err, &fetchErr) {
+		t.Fatalf("FetchCABundle() error = %T, want NoiseFetchError", err)
+	}
+	if fetchErr.Op != "connect" {
+		t.Errorf("Op = %q, want %q", fetchErr.Op, "connect")
+	}
+	if fetchErr.Err == nil {
+		t.Error("NoiseFetchError.Err = nil, want the dial error")
+	}
+	if !errors.Is(err, fetchErr.Err) {
+		t.Error("errors.Is(err, cause) = false, want the cause reachable through Unwrap")
+	}
+}
+
+// Construction failures are NoiseConfigError values naming the field, so a
+// caller can distinguish a missing address from a missing key without parsing
+// the message.
+func TestNewNoiseBootstrapper_ConfigErrorsNameTheField(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       *NoiseConfig
+		wantField string
+	}{
+		{"missing address", &NoiseConfig{ServerStaticKey: strings.Repeat("ab", 32)}, "ServerAddr"},
+		{"missing keys", &NoiseConfig{ServerAddr: "kms.example.com:8445"}, "ServerStaticKey"},
+		{"bad hex", &NoiseConfig{ServerAddr: "kms.example.com:8445", ServerStaticKey: "zz"}, "ServerStaticKey"},
+		{"bad length", &NoiseConfig{ServerAddr: "kms.example.com:8445", ServerStaticKey: "abcd"}, "ServerStaticKey"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewNoiseBootstrapper(tt.cfg)
+			var cfgErr NoiseConfigError
+			if !errors.As(err, &cfgErr) {
+				t.Fatalf("error = %T (%v), want NoiseConfigError", err, err)
+			}
+			if cfgErr.Field != tt.wantField {
+				t.Errorf("Field = %q, want %q", cfgErr.Field, tt.wantField)
+			}
+			if !errors.Is(err, ErrInvalidConfig) {
+				t.Errorf("error = %v, want it to wrap %v", err, ErrInvalidConfig)
+			}
+			if !strings.Contains(err.Error(), tt.wantField) {
+				t.Errorf("Error() = %q, want it to name %q", err.Error(), tt.wantField)
+			}
+		})
+	}
+}
+
+// NoiseConfigError and NoiseFetchError expose their sentinel and their cause
+// through Unwrap, with and without a cause present.
+func TestNoiseErrorTypes_Unwrap(t *testing.T) {
+	cause := errors.New("cause")
+
+	withCause := NoiseConfigError{Field: "Suite", Reason: "r", Err: cause}
+	if !errors.Is(withCause, ErrInvalidConfig) || !errors.Is(withCause, cause) {
+		t.Errorf("NoiseConfigError with cause: Is(sentinel)=%v Is(cause)=%v, want both true",
+			errors.Is(withCause, ErrInvalidConfig), errors.Is(withCause, cause))
+	}
+	if !strings.Contains(withCause.Error(), "cause") {
+		t.Errorf("Error() = %q, want it to include the cause", withCause.Error())
+	}
+
+	noCause := NoiseConfigError{Field: "Suite", Reason: "r"}
+	if !errors.Is(noCause, ErrInvalidConfig) {
+		t.Error("NoiseConfigError without cause: Is(sentinel) = false, want true")
+	}
+	if got := noCause.Unwrap(); len(got) != 1 {
+		t.Errorf("Unwrap() len = %d, want 1 with no cause", len(got))
+	}
+	if strings.Contains(noCause.Error(), "<nil>") {
+		t.Errorf("Error() = %q, must not render a nil cause", noCause.Error())
+	}
+
+	fetch := NoiseFetchError{Op: "connect", Err: cause}
+	if !errors.Is(fetch, ErrFetchFailed) || !errors.Is(fetch, cause) {
+		t.Errorf("NoiseFetchError: Is(sentinel)=%v Is(cause)=%v, want both true",
+			errors.Is(fetch, ErrFetchFailed), errors.Is(fetch, cause))
+	}
+	if !strings.Contains(fetch.Error(), "connect") || !strings.Contains(fetch.Error(), "cause") {
+		t.Errorf("Error() = %q, want it to name the stage and the cause", fetch.Error())
 	}
 }
 
@@ -265,7 +351,9 @@ func TestNoiseBootstrapper_FetchCABundle_HandshakeFailsWithRequest(t *testing.T)
 	}
 }
 
-func TestNoiseBootstrapper_Connect_AlreadyConnected(t *testing.T) {
+// A second fetch cannot begin while one is in flight: begin registers the
+// fetch and refuses another until it ends.
+func TestNoiseBootstrapper_Begin_AlreadyConnected(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{
 		ServerAddr:      "kms.example.com:8445",
@@ -275,64 +363,71 @@ func TestNoiseBootstrapper_Connect_AlreadyConnected(t *testing.T) {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
 
-	// Simulate a connected state by setting the atomic flag.
-	bs.connected.Store(true)
-
-	err = bs.connect(context.Background())
-	if !errors.Is(err, ErrAlreadyConnected) {
-		t.Errorf("connect() error = %v, want %v", err, ErrAlreadyConnected)
+	first, _, err := bs.begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin() error = %v", err)
 	}
 
-	// Reset for cleanup.
-	bs.connected.Store(false)
+	if _, _, err := bs.begin(context.Background()); !errors.Is(err, ErrAlreadyConnected) {
+		t.Errorf("second begin() error = %v, want %v", err, ErrAlreadyConnected)
+	}
+
+	bs.end(first)
+	if bs.fetch != nil {
+		t.Error("fetch should be nil after end")
+	}
+
+	// Ended, so a new fetch may begin.
+	again, _, err := bs.begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin() after end error = %v", err)
+	}
+	bs.end(again)
 }
 
+// The begin/connect/end sequence is driven against a real responder, which is
+// the approved suite so the test runs in both build modes.
 func TestNoiseBootstrapper_Connect_Success(t *testing.T) {
-	// Create a TCP listener that holds the connection open.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("net.Listen() error = %v", err)
-	}
-	defer listener.Close()
+	bundle := newTestCertBundle(t)
+	_, keyHex, addr := startTestP256NoiseServer(t, bundle.combinedPEM)
 
-	go func() {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			return
-		}
-		// Keep the connection open until the listener is closed.
-		defer conn.Close()
-		buf := make([]byte, 1)
-		conn.Read(buf) //nolint:errcheck // Wait until connection is closed
-	}()
-
-	key := strings.Repeat("ab", 32)
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{
-		ServerAddr:      listener.Addr().String(),
-		ServerStaticKey: key,
-		ConnectTimeout:  2 * time.Second,
+		ServerAddr:          addr,
+		ServerP256StaticKey: keyHex,
+		ConnectTimeout:      5 * time.Second,
+		OperationTimeout:    5 * time.Second,
+		Logger:              newTestLogger(),
 	})
 	if err != nil {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
 
-	err = bs.connect(context.Background())
+	f, ctx, err := bs.begin(context.Background())
 	if err != nil {
+		t.Fatalf("begin() error = %v", err)
+	}
+	if err := bs.connect(f, ctx); err != nil {
 		t.Fatalf("connect() error = %v, want nil", err)
 	}
 
-	if !bs.connected.Load() {
-		t.Error("connected should be true after successful connect")
-	}
-	if bs.conn == nil {
-		t.Error("conn should not be nil after successful connect")
+	if !bs.owns(f) {
+		t.Error("the fetch should still be owned after a successful connect")
 	}
 
-	// Clean up.
-	bs.closeConn() //nolint:errcheck
+	bs.end(f)
+	if bs.fetch != nil {
+		t.Error("fetch should be nil after end")
+	}
+	// The connection is closed, so the client refuses further use.
+	if _, err := f.client.GetCABundle(ctx, "", ""); !errors.Is(err, noiseboot.ErrConnectionFailed) {
+		t.Errorf("GetCABundle() after end error = %v, want %v", err, noiseboot.ErrConnectionFailed)
+	}
 }
 
-func TestNoiseBootstrapper_CloseConn_WithConnection(t *testing.T) {
+// Close while a fetch is in flight revokes it: the fetch is no longer owned,
+// its context is cancelled, and a handshake that returns afterwards is reported
+// as ErrClosed. Close itself does not touch the client.
+func TestNoiseBootstrapper_Close_RevokesFetchInFlight(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{
 		ServerAddr:      "kms.example.com:8445",
@@ -342,51 +437,33 @@ func TestNoiseBootstrapper_CloseConn_WithConnection(t *testing.T) {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
 
-	// Simulate a connected state with a real net.Conn using net.Pipe.
-	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
-
-	bs.connected.Store(true)
-	bs.conn = clientConn
-
-	err = bs.closeConn()
+	f, ctx, err := bs.begin(context.Background())
 	if err != nil {
-		t.Errorf("closeConn() error = %v, want nil", err)
+		t.Fatalf("begin() error = %v", err)
 	}
 
-	if bs.connected.Load() {
-		t.Error("connected should be false after closeConn")
+	if err := bs.Close(); err != nil {
+		t.Errorf("Close() error = %v, want nil", err)
 	}
-	if bs.conn != nil {
-		t.Error("conn should be nil after closeConn")
-	}
-	if bs.session != nil {
-		t.Error("session should be nil after closeConn")
-	}
-}
 
-func TestNoiseBootstrapper_CloseConn_ConnectedButNilConn(t *testing.T) {
-	key := strings.Repeat("ab", 32)
-	bs, err := NewNoiseBootstrapper(&NoiseConfig{
-		ServerAddr:      "kms.example.com:8445",
-		ServerStaticKey: key,
-	})
+	if bs.owns(f) {
+		t.Error("the fetch should not be owned after Close")
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Errorf("fetch context error = %v, want %v", ctx.Err(), context.Canceled)
+	}
+
+	// end is what the fetch runs on its way out; after a revocation it must
+	// still close the client and must not disturb a fetch that began since.
+	next, _, err := bs.begin(context.Background())
 	if err != nil {
-		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
+		t.Fatalf("begin() after Close error = %v", err)
 	}
-
-	// Simulate connected state but with nil conn (edge case).
-	bs.connected.Store(true)
-	bs.conn = nil
-
-	err = bs.closeConn()
-	if err != nil {
-		t.Errorf("closeConn() error = %v, want nil", err)
+	bs.end(f)
+	if !bs.owns(next) {
+		t.Error("ending a revoked fetch must not deregister the fetch that replaced it")
 	}
-
-	if bs.connected.Load() {
-		t.Error("connected should be false after closeConn")
-	}
+	bs.end(next)
 }
 
 func TestNoiseBootstrapper_Close_NotConnected(t *testing.T) {
@@ -440,12 +517,12 @@ func TestNoiseBootstrapper_ServerKeyBytes(t *testing.T) {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
 
-	if len(bs.serverKey) != 32 {
-		t.Errorf("serverKey length = %d, want 32", len(bs.serverKey))
+	if len(bs.config.ServerStaticKey) != 32 {
+		t.Errorf("ServerStaticKey length = %d, want 32", len(bs.config.ServerStaticKey))
 	}
-	for i, b := range bs.serverKey {
+	for i, b := range bs.config.ServerStaticKey {
 		if b != byte(i) {
-			t.Errorf("serverKey[%d] = %d, want %d", i, b, i)
+			t.Errorf("ServerStaticKey[%d] = %d, want %d", i, b, i)
 			break
 		}
 	}

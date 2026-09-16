@@ -65,6 +65,11 @@ var (
 	_ func(*nbootstrap.Server) net.Addr                          = (*nbootstrap.Server).Addr
 
 	_ error = nbootstrap.ErrFIPSUnsupported
+	_ error = nbootstrap.ErrClientClosed
+	_ error = nbootstrap.ErrAlreadyConnected
+	_ error = nbootstrap.ErrHandshakeIncomplete
+	_ error = nbootstrap.ClientError{}
+	_ error = nbootstrap.ServerError{}
 
 	// Server.Stop's incomplete-drain signal. go-xkms re-exports this server
 	// through pkg/trust/bootstrap, and callers key their decision to retain or
@@ -73,10 +78,27 @@ var (
 	_ error = nbootstrap.ErrShutdownIncomplete
 )
 
-// pkg/truststrap: the Noise_NK bootstrapper behind the Bootstrapper interface.
+// pkg/truststrap: the Noise bootstrapper behind the Bootstrapper interface.
 var (
 	_ func(*truststrap.NoiseConfig) (*truststrap.NoiseBootstrapper, error) = truststrap.NewNoiseBootstrapper
 	_ truststrap.Bootstrapper                                              = (*truststrap.NoiseBootstrapper)(nil)
+
+	// The suite selector and the key each suite needs. A FIPS build reaches the
+	// bootstrap transport through these, so they exist in both builds.
+	_ byte = truststrap.SuiteNoiseNK
+	_ byte = truststrap.SuiteP256AESGCM
+	_      = truststrap.NoiseConfig{
+		ServerStaticKey:     "",
+		ServerP256StaticKey: "",
+		Suite:               truststrap.SuiteP256AESGCM,
+	}
+
+	// The typed failures of the facade: construction and fetch each name their
+	// field or stage and unwrap to the sentinel a caller already matches.
+	_ error = truststrap.NoiseConfigError{}
+	_ error = truststrap.NoiseFetchError{}
+	_ error = truststrap.NoiseInterruptedError{}
+	_ error = truststrap.ErrClosed
 )
 
 // TestAPISurface exists so `go test` reports this file as a real test target;

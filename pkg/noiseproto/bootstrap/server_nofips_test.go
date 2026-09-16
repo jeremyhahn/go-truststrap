@@ -559,8 +559,9 @@ func TestServer_BundlerErrorViaClient(t *testing.T) {
 	}
 
 	// The error message should contain the server's error.
-	if !strings.Contains(err.Error(), "server error") {
-		t.Errorf("expected server error in message, got: %v", err)
+	var serverErr ServerError
+	if !errors.As(err, &serverErr) || serverErr.Message == "" {
+		t.Errorf("expected a ServerError carrying the server's message, got: %#v", err)
 	}
 
 	// The response should still be returned with the Error field set.

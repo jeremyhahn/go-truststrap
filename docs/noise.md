@@ -6,7 +6,7 @@ The Noise bootstrap method uses the [Noise Protocol Framework](https://noiseprot
 
 This is the preferred method for structurally secure bootstrapping when DANE/DNSSEC is not available.
 
-> **Refused in FIPS builds.** `Noise_NK_25519_ChaChaPoly_SHA256` mandates X25519, which the Go Cryptographic Module rejects under `GODEBUG=fips140=only`. Building with `-tags fips` makes the handshake fail with `ErrFIPSUnsupported` rather than perform key agreement; the API is otherwise unchanged. See [FIPS 140-3 Mode](fips.md).
+> **Refused in FIPS builds.** `Noise_NK_25519_ChaChaPoly_SHA256` mandates X25519, which the Go Cryptographic Module rejects under `GODEBUG=fips140=only`. Building with `-tags fips` makes the handshake fail with `ErrFIPSUnsupported` rather than perform key agreement; the API is otherwise unchanged. The approved `TSBOOT1_P256_AESGCM_SHA256` suite runs over the same listener, the same client and the same facade — pin the responder's P-256 key instead. See [FIPS 140-3 Mode](fips.md) and [bootstrap-negotiation.md](bootstrap-negotiation.md).
 
 ## How It Works
 
@@ -63,13 +63,66 @@ type ServerConfig struct {
 
 ```go
 type ClientConfig struct {
-    ServerAddr       string        // Server TCP address (e.g., "kms.example.com:8445")
-    ServerStaticKey  []byte        // Server's 32-byte Curve25519 public key (required)
-    ConnectTimeout   time.Duration // TCP connect deadline (default: 10s)
-    OperationTimeout time.Duration // Request/response deadline (default: 10s)
-    Logger           *slog.Logger  // Structured logger (optional)
+    ServerAddr          string        // Server TCP address (e.g., "kms.example.com:8445")
+    ServerStaticKey     []byte        // Server's 32-byte Curve25519 public key (Noise suite)
+    ServerP256StaticKey []byte        // Server's 65-byte uncompressed P-256 point (approved suite)
+    Suite               byte          // 0x01 / 0x02; zero selects per policy
+    ConnectTimeout      time.Duration // TCP connect deadline (default: 10s)
+    OperationTimeout    time.Duration // Request/response deadline (default: 10s)
+    Logger              *slog.Logger  // Structured logger (optional)
 }
 ```
+
+At least one server key is required, and the client offers exactly one suite per
+connection. See [bootstrap-negotiation.md](bootstrap-negotiation.md) for the
+selection policy and why there is no negotiation round-trip to strip.
+
+### Facade
+
+`truststrap.NoiseConfig` is the same configuration one layer up, with the keys
+as hex so they can come straight from a provisioning file, and it delegates the
+handshake to the client above rather than running one of its own:
+
+```go
+type NoiseConfig struct {
+    ServerAddr          string        // Server TCP address
+    ServerStaticKey     string        // Hex 32-byte Curve25519 public key (Noise suite)
+    ServerP256StaticKey string        // Hex 65-byte uncompressed P-256 point (approved suite)
+    Suite               byte          // truststrap.SuiteNoiseNK / SuiteP256AESGCM; zero selects per policy
+    ConnectTimeout      time.Duration // TCP connect deadline (default: 10s)
+    OperationTimeout    time.Duration // Whole-operation deadline (default: 30s)
+    Logger              *slog.Logger  // Structured logger (optional)
+}
+```
+
+- A key that is configured but malformed — wrong length, wrong point prefix, or
+  a P-256 point that is not on the curve — and a `Suite` pinned without the key
+  that suite needs, are refused by `NewNoiseBootstrapper` as a `NoiseConfigError`
+  naming the field; it wraps `ErrInvalidConfig` and the parse cause, so
+  `errors.Is(err, ErrInvalidConfig)` holds for every construction failure.
+- Whether a suite is *available* is a property of the running process, so it is
+  not decided at construction: a Noise-only configuration still constructs in a
+  FIPS build and `FetchCABundle` reports `bootstrap.ErrFIPSUnsupported` through
+  a `NoiseFetchError` that wraps `ErrFetchFailed` and names the failed stage.
+  Availability is probed — the transport tries the X25519 path itself — so
+  `-tags fips` and `GODEBUG=fips140=only` both refuse Noise while the permissive
+  `GODEBUG=fips140=on` keeps it. An unavailable suite is skipped, never
+  substituted for a suite the caller pinned. See [FIPS 140-3 Mode](fips.md).
+- `AutoBootstrapper`'s Noise arm takes the same `NoiseConfig` and therefore the
+  same selection.
+- Each `FetchCABundle` owns the connection it opens and closes it before
+  returning; one fetch runs at a time, and a concurrent call fails with
+  `ErrAlreadyConnected`. `Close` ends the fetch in flight at whatever stage it
+  is — dialing, in the handshake, or waiting on the response: it revokes the
+  fetch's ownership, cancels its context and closes its connection, which ends
+  a read blocked on a stalled peer without waiting out `OperationTimeout`, and
+  that fetch reports `ErrClosed` (wrapped in `ErrFetchFailed`). Cancelling the
+  caller's context interrupts the fetch the same way, and the fetch then
+  reports the context's error. Either arrives as a `NoiseInterruptedError`
+  whose `Reason` is `ErrClosed` or the context's error and whose `Err` is the
+  transport's `bootstrap.ErrClientClosed`, so `errors.Is` matches any of them.
+  The bootstrapper is reusable afterwards, and `Close` with nothing in flight
+  is a no-op.
 
 ## Go API
 

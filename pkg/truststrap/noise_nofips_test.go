@@ -291,26 +291,84 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
 	}
 
-	// Connect and then handshake.
-	if err := bs.connect(context.Background()); err != nil {
+	// connect dials and completes the NK handshake in one step; it returns nil
+	// only once the responder's message 2 has been processed.
+	f, ctx, err := bs.begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin() error = %v", err)
+	}
+	defer bs.end(f)
+
+	if err := bs.connect(f, ctx); err != nil {
 		t.Fatalf("connect() error = %v", err)
-	}
-	defer bs.closeConn() //nolint:errcheck
-
-	if err := bs.handshake(); err != nil {
-		t.Fatalf("handshake() error = %v", err)
-	}
-
-	if bs.session == nil {
-		t.Error("session should not be nil after successful handshake")
-	}
-	if !bs.session.IsHandshakeComplete() {
-		t.Error("session should report handshake complete")
 	}
 
 	// Wait for server goroutine to finish.
 	if srvErr := <-serverDone; srvErr != nil {
 		t.Errorf("server handshake error: %v", srvErr)
+	}
+}
+
+// Outside FIPS the zero-value suite must still choose Noise when its key is
+// configured: that is the live first-contact path for current consumers and #51
+// must not move it. The P-256 key pinned alongside is a valid point that
+// belongs to no server -- and the server under test serves ONLY Noise -- so
+// had the selector reached for the approved suite the handshake would fail
+// instead of quietly passing.
+func TestNoiseBootstrapper_DefaultSuiteSelectsNoise(t *testing.T) {
+	bundle := newTestCertBundle(t)
+
+	srv, keyHex, addr := startTestNoiseServer(t, bundle.combinedPEM)
+	defer srv.Stop(context.Background()) //nolint:errcheck
+
+	bs, err := NewNoiseBootstrapper(&NoiseConfig{
+		ServerAddr:          addr,
+		ServerStaticKey:     keyHex,
+		ServerP256StaticKey: validP256KeyHex(t),
+		ConnectTimeout:      5 * time.Second,
+		OperationTimeout:    5 * time.Second,
+		Logger:              newTestLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
+	}
+	defer bs.Close()
+
+	resp, err := bs.FetchCABundle(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("FetchCABundle() error = %v, want the Noise suite to be offered", err)
+	}
+	if len(resp.Certificates) != 2 {
+		t.Errorf("Certificates count = %d, want 2", len(resp.Certificates))
+	}
+}
+
+// Pinning the Noise suite explicitly is honoured where X25519 is available.
+func TestNoiseBootstrapper_PinnedNoiseSuiteRoundTrip(t *testing.T) {
+	bundle := newTestCertBundle(t)
+
+	srv, keyHex, addr := startTestNoiseServer(t, bundle.combinedPEM)
+	defer srv.Stop(context.Background()) //nolint:errcheck
+
+	bs, err := NewNoiseBootstrapper(&NoiseConfig{
+		ServerAddr:       addr,
+		ServerStaticKey:  keyHex,
+		Suite:            SuiteNoiseNK,
+		ConnectTimeout:   5 * time.Second,
+		OperationTimeout: 5 * time.Second,
+		Logger:           newTestLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
+	}
+	defer bs.Close()
+
+	resp, err := bs.FetchCABundle(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("FetchCABundle() error = %v", err)
+	}
+	if len(resp.Certificates) != 2 {
+		t.Errorf("Certificates count = %d, want 2", len(resp.Certificates))
 	}
 }
 
@@ -351,16 +409,6 @@ func TestNoiseBootstrapper_FetchCABundle_MalformedBase64Cert(t *testing.T) {
 	if len(resp.Certificates) != 1 {
 		t.Errorf("Certificates count = %d, want 1", len(resp.Certificates))
 	}
-}
-
-// testBundleProvider implements noiseboot.BundleProvider for test servers.
-type testBundleProvider struct {
-	bundle []byte
-	err    error
-}
-
-func (p *testBundleProvider) CABundle() ([]byte, error) {
-	return p.bundle, p.err
 }
 
 // startTestNoiseServer starts a real Noise_NK bootstrap server for testing.

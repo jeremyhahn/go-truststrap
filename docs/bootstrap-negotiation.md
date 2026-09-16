@@ -67,10 +67,20 @@ v0.4.0-alpha.
 ## Suite selection policy
 
 Mirrors the B2/#15 selection ruling (and the go-luks2 KDF ruling), applied at
-the bootstrap layer. `fipsEnforced()` is true when the binary was built
-`-tags fips` **or** `crypto/fips140.Enabled()` reports the process is running
-under `GODEBUG=fips140=only` — i.e. whenever the Noise/X25519 path is
-unavailable.
+the bootstrap layer. `fipsEnforced()` is true whenever the Noise/X25519 path is
+unavailable in this process, and it decides that by **probing**, not by
+predicate: it constructs the Noise cipher suite and generates an X25519 key
+pair through the same code path the handshake takes, and any failure means the
+suite is refused. That is the case when the binary was built `-tags fips`
+(`dh_fips.go` makes the cipher suite refuse) and when it runs under
+`GODEBUG=fips140=only` (the Go Cryptographic Module rejects X25519 at runtime,
+even in a binary built without the tag — the shape a pipeline that sets
+`GOFIPS140` and nothing else produces). It is deliberately **not** the case
+under `GODEBUG=fips140=on`, which loads the module but still permits
+non-approved algorithms: X25519 remains available there, so Noise remains the
+non-FIPS default. `crypto/fips140.Enabled()` is true in both runtime modes and
+cannot tell them apart, which is why the probe replaced it (#51 review). Both
+ends consult the same probe, so a client and a server in the same mode agree.
 
 **Server (per connection, on the suite byte it reads):**
 
@@ -98,6 +108,12 @@ behaviour.
   Noise, P-256 selectable — the migration default.
 - The client must hold the pinned server key for the suite it offers
   (`ServerStaticKey` for Noise, `ServerP256StaticKey` for P-256).
+
+`truststrap.NoiseBootstrapper` — the high-level facade, and the only way
+`AutoBootstrapper` reaches this transport — carries the same two keys and the
+same `Suite` selector and delegates to this `Client` (#51). It therefore makes
+this decision in one place rather than mirroring the policy a layer up, and a
+consumer of the facade and a consumer of this package choose identically.
 
 ## Downgrade resistance
 

@@ -4,7 +4,7 @@
 package bootstrap
 
 import (
-	"crypto/fips140"
+	"crypto/rand"
 	"fmt"
 
 	"github.com/flynn/noise"
@@ -43,18 +43,39 @@ func NoiseSuiteHeader() []byte {
 	return []byte{protocolVersion, SuiteNoiseNK}
 }
 
-// fipsEnforced reports whether the Noise/X25519 suite must be refused: either
-// this binary was built -tags fips (buildForcesFIPS, matching dh_fips.go's
-// static refusal) or it is running under GODEBUG=fips140=only, where the Go
-// Cryptographic Module rejects X25519 at runtime. In both cases the negotiation
-// requires the approved P-256 suite (0x02) and refuses Noise (0x01) BEFORE any
-// key agreement, which is what makes a downgrade to Noise unreachable against a
-// FIPS peer.
+// fipsEnforced reports whether the Noise/X25519 suite must be refused because
+// this process cannot run it. It is decided by probing, not by predicate: the
+// Noise cipher suite is constructed and an X25519 key pair generated through
+// the same code path the handshake takes, and any failure means the suite is
+// unavailable. That is true when the binary was built -tags fips (dh_fips.go
+// makes nkCipherSuite refuse) and when it runs under GODEBUG=fips140=only
+// (the Go Cryptographic Module rejects X25519 at runtime) -- and, deliberately,
+// NOT under GODEBUG=fips140=on, which loads the module but still permits
+// non-approved algorithms, so X25519 remains available and refusing it there
+// would be policy the module does not impose. crypto/fips140.Enabled is true in
+// both runtime modes and so cannot tell them apart; the probe can.
+//
+// Both ends consult it: the negotiation requires the approved P-256 suite
+// (0x02) and refuses Noise (0x01) BEFORE any key agreement, which is what makes
+// a downgrade to Noise unreachable against a FIPS peer. The probe costs one
+// scalar multiplication per call and is not cached, so the nkCipherSuite test
+// seam stays honest.
 //
 // It is a variable so a non-FIPS test can drive the refusal branches without a
 // separate FIPS build, mirroring nkCipherSuite. Tests restore it with a defer.
 var fipsEnforced = func() bool {
-	return buildForcesFIPS() || fips140.Enabled()
+	return !noiseSuiteAvailable()
+}
+
+// noiseSuiteAvailable reports whether this process can run the Noise_NK suite:
+// its cipher suite constructs and X25519 key generation succeeds.
+func noiseSuiteAvailable() bool {
+	cs, err := nkCipherSuite()
+	if err != nil {
+		return false
+	}
+	_, err = cs.GenerateKeypair(rand.Reader)
+	return err == nil
 }
 
 // secureSession is the post-handshake encrypted channel, abstracting the two

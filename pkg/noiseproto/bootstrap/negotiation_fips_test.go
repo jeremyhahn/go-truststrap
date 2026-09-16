@@ -133,3 +133,12 @@ func TestFIPS_ClientDefaultSelectsP256(t *testing.T) {
 		t.Fatalf("GetCABundle: %v", err)
 	}
 }
+
+// TestFIPS_ProbeRefusesNoise executes the real fipsEnforced probe (not the
+// withFIPS seam). In a fips build dh_fips.go makes the cipher suite refuse, so
+// the probe must report the Noise suite unavailable whatever GODEBUG says.
+func TestFIPS_ProbeRefusesNoise(t *testing.T) {
+	if !fipsEnforced() {
+		t.Fatal("fipsEnforced() = false in a fips build, want true")
+	}
+}

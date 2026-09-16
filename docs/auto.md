@@ -32,6 +32,12 @@ type AutoConfig struct {
 }
 ```
 
+The Noise arm is the same `NoiseConfig` the standalone bootstrapper takes, so it
+inherits that method's suite selection: pin `ServerP256StaticKey` and the arm
+offers the approved `TSBOOT1_P256_AESGCM_SHA256` suite wherever X25519 is
+unavailable, instead of failing the attempt. See [noise.md](noise.md) and
+[FIPS 140-3 Mode](fips.md).
+
 ## Go API
 
 ```go

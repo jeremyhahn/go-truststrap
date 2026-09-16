@@ -13,8 +13,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
 // acceptAndHold starts a listener that accepts connections and holds them open,
@@ -46,8 +47,9 @@ func acceptAndHold(t *testing.T) net.Listener {
 	return ln
 }
 
-// The bootstrapper is still constructible in a FIPS build -- only the handshake
-// needs X25519 -- so the refusal has to surface from FetchCABundle.
+// A Noise-only configuration is still constructible in a FIPS build -- only the
+// handshake needs X25519 -- so the refusal has to surface from FetchCABundle,
+// and with no approved key pinned there is no second suite to fall back to.
 func TestNoiseBootstrapper_FetchCABundle_FIPSRefused(t *testing.T) {
 	ln := acceptAndHold(t)
 
@@ -61,11 +63,71 @@ func TestNoiseBootstrapper_FetchCABundle_FIPSRefused(t *testing.T) {
 	defer b.Close()
 
 	_, err = b.FetchCABundle(context.Background(), nil)
-	if !errors.Is(err, noiseproto.ErrFIPSUnsupported) {
-		t.Errorf("FetchCABundle() error = %v, want noiseproto.ErrFIPSUnsupported", err)
+	if !errors.Is(err, noiseboot.ErrFIPSUnsupported) {
+		t.Errorf("FetchCABundle() error = %v, want noiseboot.ErrFIPSUnsupported", err)
 	}
 	if !errors.Is(err, ErrFetchFailed) {
 		t.Errorf("FetchCABundle() error = %v, want it to wrap ErrFetchFailed", err)
+	}
+}
+
+// The zero-value suite must reach the approved suite under FIPS even when a
+// Noise key is pinned as well: the unavailable suite is skipped, and the
+// migration default of preferring Noise does not apply where it cannot run. The
+// responder serves ONLY P-256, so a bundle can only have arrived over it.
+func TestNoiseBootstrapper_DefaultSuiteUnderFIPSSelectsP256(t *testing.T) {
+	bundle := newTestCertBundle(t)
+	_, p256Hex, addr := startTestP256NoiseServer(t, bundle.combinedPEM)
+
+	b, err := NewNoiseBootstrapper(&NoiseConfig{
+		ServerAddr:          addr,
+		ServerStaticKey:     strings.Repeat("ab", noisePublicKeySize),
+		ServerP256StaticKey: p256Hex,
+		ConnectTimeout:      5 * time.Second,
+		OperationTimeout:    5 * time.Second,
+		Logger:              newTestLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewNoiseBootstrapper() error = %v", err)
+	}
+	defer b.Close()
+
+	resp, err := b.FetchCABundle(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("FetchCABundle() error = %v, want the approved suite to be selected", err)
+	}
+	if len(resp.Certificates) != 2 {
+		t.Errorf("Certificates count = %d, want 2", len(resp.Certificates))
+	}
+}
+
+// Fail closed rather than help: with the approved suite configured and its
+// responder reachable, a caller who pins the unavailable suite gets the typed
+// refusal, not a silent upgrade to the suite FIPS allows.
+func TestNoiseBootstrapper_PinnedNoiseUnderFIPSRefused(t *testing.T) {
+	bundle := newTestCertBundle(t)
+	_, p256Hex, addr := startTestP256NoiseServer(t, bundle.combinedPEM)
+
+	b, err := NewNoiseBootstrapper(&NoiseConfig{
+		ServerAddr:          addr,
+		ServerStaticKey:     strings.Repeat("ab", noisePublicKeySize),
+		ServerP256StaticKey: p256Hex,
+		Suite:               SuiteNoiseNK,
+		ConnectTimeout:      5 * time.Second,
+		OperationTimeout:    5 * time.Second,
+		Logger:              newTestLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewNoiseBootstrapper() error = %v, want success", err)
+	}
+	defer b.Close()
+
+	resp, err := b.FetchCABundle(context.Background(), nil)
+	if resp != nil {
+		t.Error("FetchCABundle() returned a bundle for a suite FIPS forbids")
+	}
+	if !errors.Is(err, noiseboot.ErrFIPSUnsupported) {
+		t.Errorf("FetchCABundle() error = %v, want noiseboot.ErrFIPSUnsupported", err)
 	}
 }
 
@@ -137,7 +199,7 @@ func TestAutoBootstrapper_NoiseAttemptRecordsFIPSRefusal(t *testing.T) {
 	if len(agg.Attempts) != 1 || agg.Attempts[0].Method != MethodNoise {
 		t.Fatalf("attempts = %+v, want a single noise attempt", agg.Attempts)
 	}
-	if !errors.Is(agg.Attempts[0].Err, noiseproto.ErrFIPSUnsupported) {
-		t.Errorf("attempt error = %v, want noiseproto.ErrFIPSUnsupported", agg.Attempts[0].Err)
+	if !errors.Is(agg.Attempts[0].Err, noiseboot.ErrFIPSUnsupported) {
+		t.Errorf("attempt error = %v, want noiseboot.ErrFIPSUnsupported", agg.Attempts[0].Err)
 	}
 }

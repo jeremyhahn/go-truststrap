@@ -6,6 +6,7 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,15 +18,57 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
+// Stages reported in ClientError.Stage, in the order a connection goes
+// through them.
+const (
+	stageDial            = "dial"
+	stageHandshake       = "handshake"
+	stageInitHandshake   = "init handshake state"
+	stageInitInitiator   = "init initiator"
+	stageGenerateMsg1    = "generate msg1"
+	stageSendMsg1        = "send msg1"
+	stageReadMsg2        = "read msg2"
+	stageProcessMsg2     = "process msg2"
+	stageMarshalRequest  = "marshal request"
+	stageEncryptRequest  = "encrypt request"
+	stageWriteRequest    = "write request"
+	stageReadResponse    = "read response"
+	stageDecryptResponse = "decrypt response"
+	stageParseResponse   = "parse response"
+)
+
 // Client connects to a Noise_NK bootstrap server over TCP, performs a
 // 2-message NK handshake, and sends encrypted requests to retrieve the
 // CA certificate bundle.
+//
+// Close may be called from any goroutine at any time, including while Connect
+// or GetCABundle is blocked in a socket read: it closes the socket, which ends
+// that read with an error, so a caller can abandon a stalled peer without
+// waiting for the operation's deadline.
 type Client struct {
+	config *ClientConfig
+	logger *slog.Logger
+
+	// mu guards conn and session. It is held for state transitions only, never
+	// across socket I/O: Connect publishes the socket under mu before the
+	// handshake and GetCABundle takes its own reference under mu before the
+	// exchange, so Close can take mu while either is blocked in a read, close
+	// the socket, and thereby end it.
 	mu      sync.Mutex
-	config  *ClientConfig
 	conn    net.Conn
 	session secureSession
-	logger  *slog.Logger
+	// gen counts Close calls. Connect and GetCABundle read it when they begin
+	// and carry that reading through the operation: a Close since then is what
+	// ErrClientClosed reports, and a Connect whose dial completes after one
+	// refuses the socket rather than running a handshake nobody will use.
+	// Each attempt holds its own reading, so a Connect that begins after the
+	// Close cannot revive an earlier attempt's socket.
+	gen uint64
+
+	// reqMu serialises GetCABundle calls, which share one session whose cipher
+	// state is not safe for concurrent use. Close does not take it, which is
+	// what lets Close interrupt a request in flight.
+	reqMu sync.Mutex
 }
 
 // NewClient creates a new bootstrap client with the given configuration. At
@@ -71,9 +114,13 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 	}, nil
 }
 
-// Connect establishes a TCP connection to the bootstrap server and
-// performs the Noise_NK handshake as the initiator. The context controls
-// the overall connection and handshake timeout.
+// Connect establishes a TCP connection to the bootstrap server and performs
+// the selected suite's handshake as the initiator. The context controls the
+// dial, and its deadline bounds the handshake; a Close from another goroutine
+// ends a handshake blocked on the peer, and Connect then fails with
+// ErrClientClosed rather than keeping a socket Close has already closed. A
+// client that has been closed may Connect again. Failures are ClientError
+// values naming the stage.
 func (c *Client) Connect(ctx context.Context) error {
 	// Choose the suite BEFORE dialing so a FIPS client refusing Noise, or a
 	// misconfigured selection, fails without opening a connection.
@@ -82,43 +129,95 @@ func (c *Client) Connect(ctx context.Context) error {
 		return err
 	}
 
-	// Dial TCP with timeout.
-	dialer := &net.Dialer{
-		Timeout: c.config.ConnectTimeout,
+	// This attempt's reading of gen: a Close from here on ends it, and only a
+	// Close from here on -- an earlier Close is history.
+	c.mu.Lock()
+	attempt := c.gen
+	c.mu.Unlock()
+
+	conn, err := dialBootstrap(ctx, c.config.ConnectTimeout, c.config.ServerAddr)
+	if err != nil {
+		return ClientError{Stage: stageDial, Kind: ErrConnectionFailed, Err: err}
 	}
 
-	conn, err := dialer.DialContext(ctx, "tcp", c.config.ServerAddr)
-	if err != nil {
-		return fmt.Errorf("%w: dial: %w", ErrConnectionFailed, err)
+	// Publish the socket before the handshake so a concurrent Close can reach
+	// it. The handshake itself works on the local reference: Close may clear
+	// c.conn at any moment.
+	c.mu.Lock()
+	if c.gen != attempt {
+		// Close arrived while the dial was in flight. Another Connect may have
+		// begun since and must not be disturbed: this socket is simply refused.
+		c.mu.Unlock()
+		_ = conn.Close()
+		return ClientError{Stage: stageDial, Kind: ErrClientClosed}
+	}
+	if c.conn != nil {
+		c.mu.Unlock()
+		_ = conn.Close()
+		return ClientError{Stage: stageDial, Kind: ErrConnectionFailed, Err: ErrAlreadyConnected}
 	}
 	c.conn = conn
+	c.mu.Unlock()
 
 	// Perform the selected suite's handshake as initiator.
 	var session secureSession
 	switch suite {
 	case SuiteP256AESGCM:
-		session, err = c.handshakeP256(ctx)
+		session, err = c.handshakeP256(ctx, conn)
 	default:
-		session, err = c.handshakeNoise(ctx)
+		session, err = c.handshakeNoise(ctx, conn)
 	}
 	if err != nil {
-		c.conn.Close()
-		c.conn = nil
-		return err
+		c.release(conn)
+		return c.closedErr(attempt, stageHandshake, err)
 	}
 
+	// Close may have taken the socket while the handshake ran; a session on a
+	// closed socket is not a connection.
+	c.mu.Lock()
+	if c.conn != conn {
+		c.mu.Unlock()
+		return ClientError{Stage: stageHandshake, Kind: ErrClientClosed}
+	}
 	c.session = session
+	c.mu.Unlock()
 
 	c.logger.Debug("handshake complete", "server", c.config.ServerAddr, "suite", suite)
 	return nil
 }
 
-// GetCABundle sends a get_ca_bundle request over the encrypted channel and
-// returns the server's response. The context controls the operation timeout.
-func (c *Client) GetCABundle(ctx context.Context, storeType, algorithm string) (*Response, error) {
+// dialBootstrap dials the bootstrap server over TCP, bounded by timeout and
+// ctx. It is a variable so a test can interpose on the dial -- to Close the
+// client while a dial is in flight, say -- mirroring the nkCipherSuite seam.
+var dialBootstrap = func(ctx context.Context, timeout time.Duration, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout}
+	return dialer.DialContext(ctx, "tcp", addr)
+}
+
+// release closes conn and forgets it if it is still the client's socket. It is
+// the failure path out of Connect; a Close that already took the socket leaves
+// nothing to forget and the second close of a net.Conn is harmless.
+func (c *Client) release(conn net.Conn) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn == nil || c.session == nil {
+	if c.conn == conn {
+		c.conn = nil
+		c.session = nil
+	}
+	c.mu.Unlock()
+	_ = conn.Close()
+}
+
+// GetCABundle sends a get_ca_bundle request over the encrypted channel and
+// returns the server's response. The context's deadline bounds the exchange;
+// a Close from another goroutine ends a read blocked on the peer.
+func (c *Client) GetCABundle(ctx context.Context, storeType, algorithm string) (*Response, error) {
+	c.reqMu.Lock()
+	defer c.reqMu.Unlock()
+
+	c.mu.Lock()
+	conn, session, attempt := c.conn, c.session, c.gen
+	c.mu.Unlock()
+	if conn == nil || session == nil {
 		return nil, ErrConnectionFailed
 	}
 
@@ -130,13 +229,13 @@ func (c *Client) GetCABundle(ctx context.Context, storeType, algorithm string) (
 
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshal request: %w", ErrInvalidRequest, err)
+		return nil, ClientError{Stage: stageMarshalRequest, Kind: ErrInvalidRequest, Err: err}
 	}
 
 	// Encrypt the request.
-	ciphertext, err := c.session.Encrypt(reqData)
+	ciphertext, err := session.Encrypt(reqData)
 	if err != nil {
-		return nil, fmt.Errorf("%w: encrypt request: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageEncryptRequest, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	// Determine deadline from context or default timeout.
@@ -146,40 +245,43 @@ func (c *Client) GetCABundle(ctx context.Context, storeType, algorithm string) (
 	}
 
 	// Write the encrypted request frame.
-	if err := WriteFrame(c.conn, ciphertext, deadline); err != nil {
-		return nil, fmt.Errorf("bootstrap: write request: %w", err)
+	if err := WriteFrame(conn, ciphertext, deadline); err != nil {
+		return nil, c.closedErr(attempt, stageWriteRequest, err)
 	}
 
 	// Read the encrypted response frame.
-	respCiphertext, err := ReadFrame(c.conn, deadline)
+	respCiphertext, err := ReadFrame(conn, deadline)
 	if err != nil {
-		return nil, fmt.Errorf("bootstrap: read response: %w", err)
+		return nil, c.closedErr(attempt, stageReadResponse, err)
 	}
 
 	// Decrypt the response.
-	respPlaintext, err := c.session.Decrypt(respCiphertext)
+	respPlaintext, err := session.Decrypt(respCiphertext)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decrypt response: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageDecryptResponse, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	// Parse the response.
 	var resp Response
 	if err := json.Unmarshal(respPlaintext, &resp); err != nil {
-		return nil, fmt.Errorf("%w: parse response: %w", ErrInvalidRequest, err)
+		return nil, ClientError{Stage: stageParseResponse, Kind: ErrInvalidRequest, Err: err}
 	}
 
 	// Check for server-side errors.
 	if resp.Error != "" {
-		return &resp, fmt.Errorf("bootstrap: server error: %s", resp.Error)
+		return &resp, ServerError{Message: resp.Error}
 	}
 
 	return &resp, nil
 }
 
-// Close shuts down the client connection. It is safe to call multiple times.
+// Close shuts down the client connection. It is safe to call multiple times
+// and from any goroutine: closing the socket ends a Connect or GetCABundle that
+// is blocked on the peer, which then returns ErrClientClosed.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gen++
 	if c.conn != nil {
 		err := c.conn.Close()
 		c.conn = nil
@@ -187,6 +289,25 @@ func (c *Client) Close() error {
 		return err
 	}
 	return nil
+}
+
+// closedErr classifies an I/O failure at stage for an operation that began at
+// gen reading attempt. If Close has been called since, the failure is the
+// closure it is: a ClientError of Kind ErrClientClosed wrapping err. Otherwise
+// err is reported as the connection failure it is, unless it already carries
+// its own classification.
+func (c *Client) closedErr(attempt uint64, stage string, err error) error {
+	c.mu.Lock()
+	closed := c.gen != attempt
+	c.mu.Unlock()
+	if closed {
+		return ClientError{Stage: stage, Kind: ErrClientClosed, Err: err}
+	}
+	var typed ClientError
+	if errors.As(err, &typed) {
+		return err
+	}
+	return ClientError{Stage: stage, Kind: ErrConnectionFailed, Err: err}
 }
 
 // clientDeadline resolves the handshake deadline from the context, falling back
@@ -205,7 +326,7 @@ func (c *Client) clientDeadline(ctx context.Context) time.Time {
 // NK pattern:
 //   - Message 1 (client -> server): [e, es]
 //   - Message 2 (server -> client): [e, ee]
-func (c *Client) handshakeNoise(ctx context.Context) (secureSession, error) {
+func (c *Client) handshakeNoise(ctx context.Context, conn net.Conn) (secureSession, error) {
 	cipherSuite, err := nkCipherSuite()
 	if err != nil {
 		return nil, err
@@ -221,7 +342,7 @@ func (c *Client) handshakeNoise(ctx context.Context) (secureSession, error) {
 		Prologue:    header,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: init handshake state: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageInitHandshake, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	deadline := c.clientDeadline(ctx)
@@ -229,27 +350,27 @@ func (c *Client) handshakeNoise(ctx context.Context) (secureSession, error) {
 	// Write msg1 to the server: header || [e, es]
 	body, _, _, err := hs.WriteMessage(nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: generate msg1: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageGenerateMsg1, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	msg1 := append(append(make([]byte, 0, len(header)+len(body)), header...), body...)
-	if err := WriteFrame(c.conn, msg1, deadline); err != nil {
-		return nil, fmt.Errorf("%w: send msg1: %w", ErrHandshakeFailed, err)
+	if err := WriteFrame(conn, msg1, deadline); err != nil {
+		return nil, ClientError{Stage: stageSendMsg1, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	// Read msg2 from the server: [e, ee] - this is the final message.
-	msg2, err := ReadFrame(c.conn, deadline)
+	msg2, err := ReadFrame(conn, deadline)
 	if err != nil {
-		return nil, fmt.Errorf("%w: read msg2: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageReadMsg2, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	_, cs1, cs2, err := hs.ReadMessage(nil, msg2)
 	if err != nil {
-		return nil, fmt.Errorf("%w: process msg2: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageProcessMsg2, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	if cs1 == nil || cs2 == nil {
-		return nil, fmt.Errorf("%w: handshake did not complete", ErrHandshakeFailed)
+		return nil, ClientError{Stage: stageProcessMsg2, Kind: ErrHandshakeFailed, Err: ErrHandshakeIncomplete}
 	}
 
 	// For the initiator: cs1 is the initiator's send cipher (our send),
@@ -260,10 +381,10 @@ func (c *Client) handshakeNoise(ctx context.Context) (secureSession, error) {
 // handshakeP256 executes the approved TSBOOT1_P256_AESGCM_SHA256 handshake as
 // initiator. p256proto's message 1 already begins with version||suite and binds
 // those bytes into its transcript, so it is sent verbatim as the first frame.
-func (c *Client) handshakeP256(ctx context.Context) (secureSession, error) {
+func (c *Client) handshakeP256(ctx context.Context, conn net.Conn) (secureSession, error) {
 	initiator, err := p256proto.NewInitiator(c.config.ServerP256StaticKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: init initiator: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageInitInitiator, Kind: ErrHandshakeFailed, Err: err}
 	}
 	defer initiator.Destroy()
 
@@ -271,20 +392,20 @@ func (c *Client) handshakeP256(ctx context.Context) (secureSession, error) {
 
 	msg1, err := initiator.WriteMessage1()
 	if err != nil {
-		return nil, fmt.Errorf("%w: generate msg1: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageGenerateMsg1, Kind: ErrHandshakeFailed, Err: err}
 	}
-	if err := WriteFrame(c.conn, msg1, deadline); err != nil {
-		return nil, fmt.Errorf("%w: send msg1: %w", ErrHandshakeFailed, err)
+	if err := WriteFrame(conn, msg1, deadline); err != nil {
+		return nil, ClientError{Stage: stageSendMsg1, Kind: ErrHandshakeFailed, Err: err}
 	}
 
-	msg2, err := ReadFrame(c.conn, deadline)
+	msg2, err := ReadFrame(conn, deadline)
 	if err != nil {
-		return nil, fmt.Errorf("%w: read msg2: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageReadMsg2, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	transport, err := initiator.ReadMessage2(msg2)
 	if err != nil {
-		return nil, fmt.Errorf("%w: process msg2: %w", ErrHandshakeFailed, err)
+		return nil, ClientError{Stage: stageProcessMsg2, Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	return &p256Session{t: transport}, nil

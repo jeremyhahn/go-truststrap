@@ -33,7 +33,7 @@ func TestClient_HandshakeNoise_CipherSuiteRefused(t *testing.T) {
 
 	// handshakeNoise builds the cipher suite before touching the connection, so
 	// the injected refusal surfaces without any I/O.
-	if _, err := c.handshakeNoise(t.Context()); !errors.Is(err, errInjected) {
+	if _, err := c.handshakeNoise(t.Context(), nil); !errors.Is(err, errInjected) {
 		t.Fatalf("handshakeNoise() error = %v, want the injected refusal", err)
 	}
 }

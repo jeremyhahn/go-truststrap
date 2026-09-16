@@ -19,7 +19,12 @@ unchanged, and a failure here is still the finding described below.
 
 `GODEBUG=fips140=on` is deliberately **not** used. It loads the module but still
 permits non-approved algorithms, so a regulated path could use prohibited
-cryptography and the gate would report green anyway.
+cryptography and the gate would report green anyway. For the same reason the
+bootstrap suite selection does not treat `on` as FIPS: it probes whether X25519
+actually runs (see [bootstrap-negotiation.md](bootstrap-negotiation.md#suite-selection-policy)),
+so Noise stays available under `on` and is refused under `only` and `-tags
+fips`. Each of the two runtime modes is pinned by a test that re-executes the
+test binary under that `GODEBUG` and runs a real handshake.
 
 ## The finding
 
@@ -44,6 +49,15 @@ inside the module boundary, verified by running the real handshake under
 [approved-handshake.md](approved-handshake.md) for the design, the wire format
 and the measurements that shaped it — in particular why it is a separate
 protocol rather than Noise with the curve swapped.
+
+It is reachable from the high-level facade as well as from
+`pkg/noiseproto/bootstrap`: `truststrap.NoiseConfig` carries
+`ServerP256StaticKey` (the hex uncompressed responder point) and `Suite`, and
+its zero value selects the approved suite wherever X25519 is unavailable (#51),
+decided by probing the process rather than by build tag or `GODEBUG` value.
+A FIPS client therefore needs no lower-level integration to bootstrap — it pins
+the approved responder key and calls `NewNoiseBootstrapper`, and
+`AutoBootstrapper`'s Noise arm inherits the same selection.
 
 ## Why this is an exemption and not a defect to fix
 
@@ -108,14 +122,23 @@ Refusal happens as early as the primitive is needed, and no earlier:
 | `noiseproto.NewSession` (caller supplies a key) | session | session; `InitHandshake` then refuses |
 | `bootstrap.NewClient` / `NewServer` / `Start` / `Stop` / `Addr` | works | works — construction and listening need no key agreement |
 | `bootstrap.Client.Connect`, server handshake | handshake | `ErrFIPSUnsupported` |
-| `truststrap.NewNoiseBootstrapper` | bootstrapper | bootstrapper |
-| `truststrap.NoiseBootstrapper.FetchCABundle` | CA bundle | `ErrFIPSUnsupported`, wrapped in `ErrFetchFailed` |
+| `truststrap.NewNoiseBootstrapper` | bootstrapper | bootstrapper — availability is a property of the process, not of the configuration |
+| `truststrap.NoiseBootstrapper.FetchCABundle` (`ServerP256StaticKey` pinned) | CA bundle | CA bundle, over the approved suite |
+| `truststrap.NoiseBootstrapper.FetchCABundle` (Noise key only) | CA bundle | `bootstrap.ErrFIPSUnsupported`, wrapped in `ErrFetchFailed` |
+| `truststrap.NoiseBootstrapper.FetchCABundle` (`Suite: SuiteNoiseNK`) | CA bundle | `bootstrap.ErrFIPSUnsupported` — never an unrequested upgrade to the approved suite |
 | `truststrap` DANE / SPKI / direct / TOFU methods | works | works |
 | `truststrap noise …`, `truststrap serve` (CLI) | works | registered, and report the refusal |
 
+The sentinel on those rows is `pkg/noiseproto/bootstrap`'s, because that is the
+layer where the suite is chosen and the refusal is decided; the facade only adds
+`ErrFetchFailed`. It was `noiseproto.ErrFIPSUnsupported` before #51, when the
+facade drove a `noiseproto.Session` of its own.
+
 `AutoBootstrapper` needs no FIPS-specific handling: a configured Noise method
-records the refusal as an ordinary attempt failure in `AggregateError.Attempts`
-and the run continues to the next method in the order.
+that cannot offer an available suite records the refusal as an ordinary attempt
+failure in `AggregateError.Attempts` and the run continues to the next method in
+the order. A Noise method that *can* — one with the approved responder key
+pinned — simply succeeds.
 
 `pkg/truststrap/api_surface_test.go` is an untagged external-package test that
 names every exported declaration involved. It compiles under both builds, so
@@ -135,7 +158,7 @@ sibling `*_nofips_test.go` carrying `//go:build !fips`.
 | `pkg/noiseproto` | `session_nofips_test.go` | 25 of 26 |
 | `pkg/noiseproto/bootstrap` | `server_nofips_test.go` | 25 of 35 |
 | `pkg/noiseproto/bootstrap` | `ratelimit_nofips_test.go` | 1 of 6 |
-| `pkg/truststrap` | `noise_nofips_test.go` | 7 of 27 |
+| `pkg/truststrap` | `noise_nofips_test.go` | 9 of 39 |
 | `cmd/truststrap` | `noise_nofips_test.go` | 3 of 16 |
 | `cmd/truststrap` | `serve_nofips_test.go` | 5 of 16 |
 | `cmd/truststrap` | `keyfile_nofips_test.go` | 8 of 12 |
@@ -149,6 +172,12 @@ paths that have nothing to do with key agreement.
 Each package also gains a `fips`-tagged counterpart (`dh_fips_test.go`,
 `noise_fips_test.go`, `fips_test.go`) asserting that the excluded behaviour
 refuses rather than simply going untested.
+
+The approved suite needs no exclusion at all, in either direction: it runs in
+both builds, so `pkg/truststrap/noise_p256_test.go` is untagged and its real
+handshakes against a real P-256 responder execute under `make test-fips` as a
+FIPS-built client. That is what proves the facade can bootstrap under FIPS,
+rather than merely compile there.
 
 Every other test -- including all four remaining bootstrap methods -- runs under
 the FIPS gate unchanged. The untagged `test` job continues to build and test

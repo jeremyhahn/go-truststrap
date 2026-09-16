@@ -90,12 +90,3 @@ func TestServer_PerformHandshake_Policy(t *testing.T) {
 		}
 	})
 }
-
-// TestFIPSEnforced_RealPredicate executes the real fipsEnforced closure (not the
-// test seam) so buildForcesFIPS and the runtime check are covered. In the
-// coverage build (non-fips, no fips140) it must report false.
-func TestFIPSEnforced_RealPredicate(t *testing.T) {
-	if got := fipsEnforced(); got != buildForcesFIPS() {
-		t.Fatalf("fipsEnforced() = %v, want buildForcesFIPS() = %v when fips140 is off", got, buildForcesFIPS())
-	}
-}
