@@ -12,7 +12,7 @@
 # Everything the suite needs is baked in: no bind mount, no sibling checkout,
 # nothing from the host but a Docker daemon. A job container cannot see the
 # developer's filesystem (infra/gitea lessons.md, "the daemon's world").
-FROM golang:1.26.7-bookworm
+FROM golang:1.27.0-bookworm
 
 # openssl mints the test PKI in testdata/gen.sh; make drives build-cli, which
 # gen.sh needs before it can generate the Noise static key.

@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-truststrap
 
-go 1.26.7
+go 1.27.0
 
 require (
 	github.com/awnumar/memguard v0.23.0

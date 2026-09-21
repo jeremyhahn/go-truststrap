@@ -12,7 +12,7 @@ Solves the chicken-and-egg PKI problem: new nodes need CA certificates to establ
 4. **Direct** - Direct fetch (trust-on-first-use)
 
 ## Tech Stack
-- Language: Go 1.26
+- Language: Go 1.27
 - Module: `github.com/jeremyhahn/go-truststrap`
 - CLI: cobra
 - Build: Makefile, CGO_ENABLED=0

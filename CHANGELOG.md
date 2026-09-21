@@ -36,6 +36,24 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Go 1.27.0 across every declaration** (#14, this repo's half of the
+  portfolio-wide toolchain wave; devops.md §9 — latest stable, adopted
+  portfolio-wide in one pass, never piecemeal). The `go` directive, both
+  workflow `GO_VERSION` pins and all three `golang:` bases move together, so
+  no declaration can build or test on a different toolchain than another;
+  `release.yml` reads `go-version-file: go.mod` and follows with no edit.
+  Every base is bound to the **patch** tag `golang:1.27.0-bookworm` — the
+  root `Dockerfile` was the one floating `golang:1.26-bookworm` left, and a
+  floating tag is an unpinned toolchain (devops.md §9a: that is how the
+  2026-08-20 Go 1.27.0/swiss breakage entered release builds). `ci.yml`'s
+  inline rationale for holding at 1.26 is rewritten rather than left behind:
+  the `cockroachdb/swiss` compile failure it recorded is fixed upstream at
+  `v0.0.0-20260820225851-333444432258`, and this module never required swiss
+  on any path. No dependency changed — `go mod tidy` is a no-op on both
+  `go.mod` and `go.sum` — and `gofmt` from 1.27 reformats nothing here.
+  `docs/integration.md` now states the real floor (Go 1.27+): a consumer on
+  1.26 cannot build a `go 1.27.0` module under `GOTOOLCHAIN=local`.
+
 - **CI synced from `ci-template` v1 to v1.11, and `nightly.yml` adopted at
   `nightly-template` v1.4** (#39, operator rulings on the same issue; drift
   outside the marked `CUSTOMIZE` blocks is a defect under devops.md §8). What

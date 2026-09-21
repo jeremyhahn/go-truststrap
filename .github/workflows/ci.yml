@@ -204,7 +204,7 @@ permissions:
   security-events: write
 
 env:
-  GO_VERSION: "1.26.7"        # latest 1.26 patch (owner ruling 2026-08-20): 1.27.0 is BLOCKED — cockroachdb/swiss fails to compile under it (undefined fastrand64; task #121). Bump within 1.26 as patches ship; move to 1.27 only in the #121 wave after the swiss/pebble chain is bumped
+  GO_VERSION: "1.27.0"        # latest stable, raised from 1.26.7 in the portfolio-wide Go 1.27 wave (#14; devops.md §9 — latest stable, adopted portfolio-wide in one pass, never piecemeal). The block this line used to record is GONE: cockroachdb/swiss compiles under 1.27 as of v0.0.0-20260820225851-333444432258, and this module never depended on it. A PATCH, never `1.27` or `stable` (devops.md §9a — a floating tag is an unpinned toolchain). Keep in lockstep with go.mod, nightly.yml's GO_VERSION, and the golang: bases in Dockerfile, .devcontainer/Dockerfile and test/integration/Dockerfile
   COVERAGE_THRESHOLD: 90      # CUSTOMIZE: matches COVERAGE_THRESHOLD in the Makefile (testing-guidelines.md)
 
 jobs:
