@@ -191,7 +191,7 @@ Downstream projects should back the `PinStore` interface with replicated, durabl
 
 ## Architecture
 
-The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`, with the packaging and tooling directories `configs/`, `init/`, `scripts/`, `docs/` and `assets/` beside them.
+The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`, with the packaging, tooling and release directories `configs/`, `init/`, `scripts/`, `changelog.d/`, `docs/` and `assets/` beside them.
 
 ```
 cmd/truststrap/              CLI built on cobra: fetch, dane, noise, spki, serve, version
@@ -243,13 +243,11 @@ pkg/noiseproto/bootstrap/    Noise_NK bootstrap server and client
   client.go                  TCP client with NK handshake
   handler.go                 Request dispatch and CA bundle serving
   config.go                  ServerConfig, ClientConfig, BundleProvider interface
-  negotiation.go             Per-connection suite selection (Noise_NK or P-256)
+  negotiation.go             Per-connection suite selection (Noise_NK or P-256), FIPS probe
   framing.go                 Length-prefixed frame read/write
   ratelimit.go               Per-IP rate limiting
   dh.go                      Noise cipher suite construction (non-FIPS builds)
   dh_fips.go                 Replaces dh.go under -tags fips; X25519 refused
-  fips_policy.go             Build-level suite policy (non-FIPS builds)
-  fips_policy_fips.go        Build-level suite policy under -tags fips
   errors.go                  Package doc and sentinel errors
 
 pkg/p256proto/               TSBOOT1_P256_AESGCM_SHA256, the FIPS-approved handshake
@@ -296,6 +294,7 @@ scripts/                     Pinned, checksum-verified tool installers
   install-shellcheck.sh      shellcheck, installed by the CI lint job
   install-trivy.sh           trivy, installed by make install-trivy
 
+changelog.d/                 One <issue>-<slug>.md fragment per PR, assembled at release
 docs/                        Package documentation, indexed by docs/README.md
 assets/                      logo.svg, the project logo
 ```
