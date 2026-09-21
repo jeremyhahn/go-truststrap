@@ -234,7 +234,7 @@ jobs:
       # silently re-add it.
       #
       # WHAT WAS HERE: a three-attempt retry loop around
-      # `go install .../golangci-lint@v2.12.2`. The pin was not a default — it
+      # `go install .../golangci-lint@<pin>`. The pin was not a default — it
       # exists for a specific reason (go-qrdb#42, 2026-08-19): @latest moved to
       # v2.13.0, which panics under Go 1.26 ("nilness: internal error:
       # unhandled builtin recover" in honnef.co/go/tools v0.8.0-rc.1) and took
@@ -248,11 +248,24 @@ jobs:
       # WHY IT CAN GO NOW: #35 declined to drop it without first reading the
       # image's pin list, because guessing WHICH golangci-lint the image
       # carries would trade a network flake for the exact outage the pin
-      # prevents. That list is now on the record (#29): the image bakes
-      # golangci-lint at v2.12.2 — THE SAME VERSION this step pinned — and the
-      # image build FAILS CLOSED if any tool's self-report disagrees with its
-      # pin, so the manifest cannot drift from the binaries. Removing the
-      # install keeps the pin's effect and drops only the network fetch.
+      # prevents. That list is now on the record (#29): at the time of the
+      # removal the image baked the SAME version this step pinned, so dropping
+      # the install changed nothing about which linter ran — and the image
+      # build FAILS CLOSED if any tool's self-report disagrees with its pin,
+      # so the manifest cannot drift from the binaries. Removing the install
+      # kept the pin's effect and dropped only the network fetch. The image's
+      # pin has MOVED SINCE, which is exactly why it belongs there and not
+      # here: it moves under review, and CI follows it with no edit to this
+      # file.
+      #
+      # NO VERSION NUMBER IS NAMED ABOVE, deliberately (#68): the version in
+      # force is the image's, which is the whole point of #29, and a number
+      # copied into a comment here is a second copy with nothing to keep it
+      # honest. This comment went stale exactly that way — it kept naming the
+      # release this step used to install long after the Go 1.27 wave moved
+      # the image on to a newer one. The authority is
+      # infra/gitea/ci-runner/Dockerfile; the report step below is what says
+      # which binary actually ran.
       #
       # It also closes the reverse hazard the install created: actions/setup-go
       # prepends GOPATH/bin to PATH, so a SUCCESSFUL install SHADOWED the

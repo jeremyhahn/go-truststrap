@@ -27,6 +27,23 @@ LDFLAGS     := -ldflags="-s -w -X main.version=$(VERSION)"
 GOTEST      := $(GO) test -count=1 -race
 GOBENCH     := $(GO) test -bench=. -benchmem -count=1
 
+# Tool pins
+# The version the ci-runner image bakes (infra/gitea/ci-runner/Dockerfile is
+# the authority; the image build fails closed if a tool's self-report
+# disagrees with its pin). It is pinned HERE so a developer's `make lint` and
+# CI's lint are the same linter: `install-tools` used to say @latest, which
+# handed whoever ran it whatever shipped that morning, and a local lint that
+# disagrees with the gate is worse than no local lint at all (#68). This pin
+# follows the image, it does not lead it — to bump, the image's pin moves
+# first. CI installs nothing: `make lint` resolves golangci-lint from PATH and
+# exits 1 when it is absent.
+#
+# The module path carries the /v2 suffix because that is where golangci-lint
+# lives since v2.0.0. The old unpinned line asked for @latest on the v1 path,
+# which resolves to v1.64.8 — so `install-tools` was not merely unpinned, it
+# could only ever fetch a linter a major version behind the gate.
+GOLANGCI_LINT_VERSION := v2.13.2
+
 # Docker
 DOCKER            := docker
 DOCKER_IMAGE      := $(PROJECT)
@@ -451,7 +468,7 @@ install-trivy: ## Install Trivy vulnerability scanner (pinned, checksum-verified
 install-tools: install-gosec install-govulncheck install-trivy ## Install all development/security tools
 	@printf "$(CYAN)Installing golangci-lint...$(NC)\n"
 	@if ! command -v golangci-lint >/dev/null 2>&1 && ! [ -x "$$HOME/go/bin/golangci-lint" ]; then \
-		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+		$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
 		printf "$(GREEN)golangci-lint installed$(NC)\n"; \
 	else \
 		printf "$(GREEN)golangci-lint already installed$(NC)\n"; \
