@@ -45,6 +45,10 @@ const (
 	// hashSize is the output of SHA-256, and the width of the transcript
 	// hash, the chaining key and every derived key.
 	hashSize = 32
+
+	// scheduleSize is the width of a handshake key schedule: the chaining key
+	// and the AEAD key, back to back in one locked region (see symmetricState).
+	scheduleSize = 2 * hashSize
 )
 
 // HKDF info strings. They are distinct so that a chaining-key expansion can

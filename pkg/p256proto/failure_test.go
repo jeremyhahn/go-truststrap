@@ -8,18 +8,24 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 )
 
-// lockedKey returns a destroyable 32-byte buffer for tests that build an AEAD
-// directly rather than through a handshake.
-func lockedKey(t *testing.T) *memguard.LockedBuffer {
+// lockedKey returns a destroyable 32-byte protected buffer for tests that build
+// a Transport directly rather than through a handshake.
+func lockedKey(t *testing.T) *enclave.MemoryEnclave {
 	t.Helper()
 
-	key := memguard.NewBuffer(hashSize)
+	key := sizedEnclave(t, hashSize)
 	t.Cleanup(key.Destroy)
 
 	return key
+}
+
+// borrowedKey is the shape checkedAEAD and newAEAD take: the slice a borrow
+// hands out, never retained past the call.
+func borrowedKey() []byte {
+	return make([]byte, hashSize)
 }
 
 // The cipher-construction error paths below cannot be reached with a correct
@@ -39,7 +45,7 @@ func withFailingAEAD(t *testing.T) {
 	t.Helper()
 
 	original := newAEAD
-	newAEAD = func(*memguard.LockedBuffer) (cipher.AEAD, error) {
+	newAEAD = func([]byte) (cipher.AEAD, error) {
 		return nil, ErrCipher
 	}
 	t.Cleanup(func() { newAEAD = original })
@@ -106,7 +112,7 @@ func TestHandshake_ReportsACipherFailure(t *testing.T) {
 func TestNewTransport_ReportsAFailureOnTheSecondKey(t *testing.T) {
 	original := newAEAD
 	calls := 0
-	newAEAD = func(key *memguard.LockedBuffer) (cipher.AEAD, error) {
+	newAEAD = func(key []byte) (cipher.AEAD, error) {
 		calls++
 		if calls == 2 {
 			return nil, ErrCipher
@@ -140,7 +146,7 @@ func TestHandshake_ReportsACipherFailureLate(t *testing.T) {
 
 		original := newAEAD
 		calls := 0
-		newAEAD = func(key *memguard.LockedBuffer) (cipher.AEAD, error) {
+		newAEAD = func(key []byte) (cipher.AEAD, error) {
 			calls++
 			if calls > n {
 				return nil, ErrCipher
@@ -290,7 +296,7 @@ func TestCheckedAEAD_RejectsAnAEADThatWantsANonce(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := newAEAD
-			newAEAD = func(key *memguard.LockedBuffer) (cipher.AEAD, error) {
+			newAEAD = func(key []byte) (cipher.AEAD, error) {
 				real, err := original(key)
 				if err != nil {
 					return nil, err
@@ -299,7 +305,7 @@ func TestCheckedAEAD_RejectsAnAEADThatWantsANonce(t *testing.T) {
 			}
 			t.Cleanup(func() { newAEAD = original })
 
-			if _, err := checkedAEAD(lockedKey(t)); !errors.Is(err, ErrCipher) {
+			if _, err := checkedAEAD(borrowedKey()); !errors.Is(err, ErrCipher) {
 				t.Fatalf("checkedAEAD: got %v, want ErrCipher", err)
 			}
 
@@ -322,7 +328,7 @@ func TestCheckedAEAD_RejectsAnAEADThatWantsANonce(t *testing.T) {
 // The real construction must satisfy the invariant, or every handshake would
 // fail closed. This is the positive half of the check above.
 func TestCheckedAEAD_AcceptsTheRealConstruction(t *testing.T) {
-	gcm, err := checkedAEAD(lockedKey(t))
+	gcm, err := checkedAEAD(borrowedKey())
 	if err != nil {
 		t.Fatalf("checkedAEAD with the real constructor: %v", err)
 	}

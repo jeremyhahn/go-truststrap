@@ -13,6 +13,45 @@ The module requires Go 1.27+ and has no CGO dependencies (`CGO_ENABLED=0` compat
 - `github.com/flynn/noise` -- Noise Protocol Framework
 - `github.com/miekg/dns` -- DNS resolution for DANE/TLSA
 - `golang.org/x/crypto` -- Curve25519 operations
+- `github.com/awnumar/memguard` -- protected memory for `pkg/noiseproto`
+- `github.com/jeremyhahn/go-enclave` -- protected memory for `pkg/p256proto`:
+  mlock'd, guard-paged, canaried regions whose every failure is a returned
+  error. This is a **first-party module**, so it resolves from the internal
+  Gitea in development and CI (`GOPRIVATE=github.com/jeremyhahn/*` plus git's
+  `insteadOf` rewrite -- conventions/dependency-resolution.md §6) and from
+  GitHub for public builds. Container builds get the same wiring through an
+  optional BuildKit secret; see both `Dockerfile`s.
+
+### Sizing locked memory (binaries only)
+
+`pkg/p256proto` holds every secret in locked memory and admits every allocation
+against **one process-wide budget**, so that an unauthenticated peer cannot
+exhaust `RLIMIT_MEMLOCK`: a refused allocation fails that one connection with
+`p256proto.ErrProtectedMemory` (carrying `enclave.ErrBudgetExhausted`) instead
+of ending the process.
+
+`RLIMIT_MEMLOCK` is process-scoped, so **the binary sizes that budget, not the
+library**. go-truststrap installs nothing and never calls `enclave.SetAllocator`
+or `enclave.WipeAll`. A consuming binary that wants headroom installs its own
+allocator before it constructs anything that allocates:
+
+```go
+func main() {
+    budget, err := enclave.NewAllocatorWithinRLimit(48 << 20)
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := enclave.SetAllocator(budget); err != nil {
+        log.Fatal(err)
+    }
+    defer enclave.WipeAll()
+    // ... construct the bootstrap client or server ...
+}
+```
+
+Installing nothing is a supported choice: the first allocation installs a
+default whose budget is the discovered `RLIMIT_MEMLOCK`, which never admits past
+the kernel's own figure. Installation is one-shot, so it must happen first.
 
 ## Using with go-xkms
 

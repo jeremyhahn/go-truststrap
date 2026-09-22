@@ -28,37 +28,36 @@
 // Per the Layer 0 protected-memory mandate (conventions/security-review.md
 // section 6), no key material this package derives is held on the Go heap:
 //
-//   - Chaining keys, AEAD keys and both transport keys live in memguard
-//     LockedBuffers for their whole lifetime.
+//   - Chaining keys, AEAD keys and both transport keys live in go-enclave
+//     MemoryEnclaves for their whole lifetime: mlock'd pages outside the Go
+//     heap, fenced by guard pages, canary-protected and kept out of core dumps.
 //   - Every ECDH shared secret and every HKDF intermediate is wiped as soon as
 //     the key schedule has absorbed it.
-//   - A long-term static scalar enters through a LockedBuffer; NewStaticKey
-//     accepts nothing else, so the boundary cannot be used unsafely.
+//   - A long-term static scalar enters through a *enclave.MemoryEnclave;
+//     NewStaticKey accepts nothing else, so the boundary cannot be used
+//     unsafely. Once final it is frozen read-only.
 //   - The handshake's key schedule is destroyed when the handshake completes,
 //     rather than left alive for the session, and on every terminal failure.
 //
 // # Handshake ownership and responder admission
 //
 // Locked memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the
-// garbage collector does not reclaim, and memguard does not report an mlock
-// failure -- it purges every protected buffer in the process and panics. The
-// responder is the exposed side: a server builds one per accepted connection
-// from unauthenticated input. Two measures keep that from becoming a
-// connect-cost denial of service (owner ruling 2026-08-23 on #15/#17):
+// garbage collector does not reclaim. The responder is the exposed side: a
+// server builds one per accepted connection from unauthenticated input. Two
+// measures keep that from becoming a connect-cost denial of service (owner
+// rulings 2026-08-23 on #15/#17 and 2026-09-22 on #19):
 //
 //   - A responder locks NO pages at construction and none for a message it
 //     rejects on the cheap structural checks. A bare or abandoned connection
 //     pins nothing. The one pre-authentication allocation that remains -- the
 //     key schedule a structurally valid message 1 forces before its tag can be
-//     checked -- is bounded by admission control, which fails an over-the-limit
-//     connection closed with ErrResourceExhausted rather than locking a page
-//     that could reach memguard's Purge. The ceiling is DERIVED at init from
-//     the process's RLIMIT_MEMLOCK -- a fraction of the limit divided by a
-//     schedule's locked footprint -- so it stays under the budget on a low-
-//     memlock deployment where a fixed count would not. See
-//     SetMaxConcurrentResponders to override it.
-//   - Initiator and Responder expose Destroy, releasing the schedule and, for
-//     the responder, its admission slot. CALLERS MUST DEFER IT.
+//     checked -- is drawn from the process's ONE locked-memory budget
+//     (enclave.ProcessAllocator), which admits it against a byte budget BEFORE
+//     any locked memory is requested. A refusal fails that one connection
+//     closed with ErrProtectedMemory, carrying enclave.ErrBudgetExhausted as
+//     its cause. No other live handshake is disturbed and nothing panics.
+//   - Initiator and Responder expose Destroy, releasing the schedule and its
+//     reservation. CALLERS MUST DEFER IT.
 //
 // The deferred-Destroy idiom on both sides:
 //
@@ -73,10 +72,22 @@
 // the remedy for a peer that sends a valid message 1 and then abandons the
 // connection.
 //
-// This is the interim measure. It closes the measured attack independently, but
-// does not make memguard error-returning; the standing fix is the
-// error-returning locked-memory primitive (go-enclave) this package will
-// consume in its place. See admission.go for the full rationale and residual.
+// Sizing that budget is the consuming BINARY's decision, not this package's:
+// RLIMIT_MEMLOCK is process-scoped, so a library holding its own allocator
+// would stay inside its own budget while the process's allocators together
+// exceeded the one ceiling they share. This package declares no setter and
+// never calls enclave.SetAllocator or enclave.WipeAll; a binary installs its
+// allocator before it constructs anything that allocates, and a binary that
+// installs nothing gets a default budget equal to the discovered
+// RLIMIT_MEMLOCK. See protected.go, and cmd/truststrap for the binary half.
+//
+// This replaces the interim hand-rolled concurrency cap that shipped with #17
+// (SetMaxConcurrentResponders and ErrResourceExhausted, both removed in #19).
+// That cap bounded memguard rather than replacing it, so it could not close two
+// residuals: memguard reported no mlock failure -- it purged every protected
+// buffer in the process and panicked -- and the cap's private accounting could
+// not see locked memory taken elsewhere in the process. A byte budget charged
+// in the same unit RLIMIT_MEMLOCK is expressed in closes both.
 //
 // Two residuals are outside this package's control and are stated rather than
 // glossed: crypto/ecdh's PrivateKey keeps its own heap copy of the scalar for
@@ -84,6 +95,8 @@
 // schedule. Neither exposes an API to lock or wipe that copy. Reimplementing
 // P-256 or AES to avoid them would put the primitives outside the Go
 // Cryptographic Module and forfeit the FIPS validation this suite exists to
-// obtain -- a worse trade than the residual. See the StaticKey doc comment for
-// how this compares with the flynn/noise limit recorded on issue #7.
+// obtain -- a worse trade than the residual. They are properties of the
+// standard library's API rather than of the storage primitive, so adopting
+// go-enclave did not close them. See the StaticKey doc comment for how this
+// compares with the flynn/noise limit recorded on issue #7.
 package p256proto

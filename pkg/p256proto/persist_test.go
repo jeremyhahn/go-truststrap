@@ -8,16 +8,16 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // encodeKey hex-encodes key into a fresh protected buffer and returns a
 // protected buffer holding the encoded bytes, mirroring how a consumer hands the
 // encoded form to a barrier for sealing. The caller Destroys it.
-func encodeKey(t *testing.T, key *StaticKey) *memguard.LockedBuffer {
+func encodeKey(t *testing.T, key *StaticKey) *enclave.MemoryEnclave {
 	t.Helper()
 
-	dst := memguard.NewBuffer(HexKeySize)
+	dst := sizedEnclave(t, HexKeySize)
 	if err := EncodeStaticKey(dst, key); err != nil {
 		dst.Destroy()
 		t.Fatalf("EncodeStaticKey: %v", err)
@@ -82,7 +82,7 @@ func TestEncodeStaticKey_Errors(t *testing.T) {
 	}
 
 	t.Run("nil key", func(t *testing.T) {
-		dst := memguard.NewBuffer(HexKeySize)
+		dst := sizedEnclave(t, HexKeySize)
 		defer dst.Destroy()
 		if err := EncodeStaticKey(dst, nil); !errors.Is(err, ErrInvalidPrivateKey) {
 			t.Fatalf("err = %v, want ErrInvalidPrivateKey", err)
@@ -96,7 +96,7 @@ func TestEncodeStaticKey_Errors(t *testing.T) {
 	})
 
 	t.Run("destroyed destination buffer", func(t *testing.T) {
-		dst := memguard.NewBuffer(HexKeySize)
+		dst := sizedEnclave(t, HexKeySize)
 		dst.Destroy()
 		if err := EncodeStaticKey(dst, key); !errors.Is(err, ErrBufferSize) {
 			t.Fatalf("err = %v, want ErrBufferSize", err)
@@ -104,7 +104,7 @@ func TestEncodeStaticKey_Errors(t *testing.T) {
 	})
 
 	t.Run("destination buffer too small", func(t *testing.T) {
-		dst := memguard.NewBuffer(HexKeySize - 1)
+		dst := sizedEnclave(t, HexKeySize-1)
 		defer dst.Destroy()
 		if err := EncodeStaticKey(dst, key); !errors.Is(err, ErrBufferSize) {
 			t.Fatalf("err = %v, want ErrBufferSize", err)
@@ -113,10 +113,17 @@ func TestEncodeStaticKey_Errors(t *testing.T) {
 }
 
 // bufferFrom copies b into a fresh protected buffer for the decode-error tests.
-func bufferFrom(t *testing.T, b []byte) *memguard.LockedBuffer {
+func bufferFrom(t *testing.T, b []byte) *enclave.MemoryEnclave {
 	t.Helper()
-	buf := memguard.NewBuffer(len(b))
-	buf.Copy(b)
+
+	buf := sizedEnclave(t, len(b))
+	if err := buf.WithBytes(func(dst []byte) error {
+		copy(dst, b)
+		return nil
+	}); err != nil {
+		t.Fatalf("filling a protected buffer: %v", err)
+	}
+
 	return buf
 }
 
@@ -128,7 +135,7 @@ func TestDecodeStaticKey_Errors(t *testing.T) {
 	})
 
 	t.Run("destroyed buffer", func(t *testing.T) {
-		buf := memguard.NewBuffer(HexKeySize)
+		buf := sizedEnclave(t, HexKeySize)
 		buf.Destroy()
 		if _, err := DecodeStaticKey(buf); !errors.Is(err, ErrInvalidPrivateKey) {
 			t.Fatalf("err = %v, want ErrInvalidPrivateKey", err)

@@ -121,3 +121,38 @@ type ServerError struct {
 func (e ServerError) Error() string {
 	return "bootstrap: server error: " + e.Message
 }
+
+// handshakeError is returned by the server's per-connection handshake when it
+// fails at a named stage. It has the same shape as ClientError for the same
+// reason: Kind classifies the failure (ErrHandshakeFailed, ErrUnsupportedSuite)
+// and Err carries the cause -- for the P-256 suite that is p256proto's typed
+// error, which itself wraps go-enclave's ErrBudgetExhausted or
+// ErrLockedMemoryUnavailable when the process budget refused the connection.
+// Unwrap exposes both, so errors.Is reaches the sentinel and the cause alike.
+//
+// It is unexported because it never leaves the server: the connection handler
+// logs it and closes that one connection.
+type handshakeError struct {
+	// Stage names where the handshake failed, e.g. "process msg1".
+	Stage string
+	// Kind is the sentinel classifying the failure.
+	Kind error
+	// Err is the underlying cause, if any.
+	Err error
+}
+
+// Error returns the sentinel's message, the stage, and the cause if any.
+func (e handshakeError) Error() string {
+	if e.Err != nil {
+		return e.Kind.Error() + ": " + e.Stage + ": " + e.Err.Error()
+	}
+	return e.Kind.Error() + ": " + e.Stage
+}
+
+// Unwrap returns the sentinel and the cause so both match with errors.Is.
+func (e handshakeError) Unwrap() []error {
+	if e.Err == nil {
+		return []error{e.Kind}
+	}
+	return []error{e.Kind, e.Err}
+}

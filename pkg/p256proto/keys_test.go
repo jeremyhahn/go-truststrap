@@ -8,21 +8,26 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 )
 
-// lockedScalar copies raw into a locked buffer of the same length, so a test
-// can hand NewStaticKey the protected input it requires. A zero-length input
-// yields a nil buffer, which is itself a case worth passing.
-func lockedScalar(t *testing.T, raw []byte) *memguard.LockedBuffer {
+// lockedScalar copies raw into an enclave of the same length, so a test can
+// hand NewStaticKey the protected input it requires. A zero-length input yields
+// a nil enclave, which is itself a case worth passing.
+func lockedScalar(t *testing.T, raw []byte) *enclave.MemoryEnclave {
 	t.Helper()
 
 	if len(raw) == 0 {
 		return nil
 	}
 
-	buf := memguard.NewBuffer(len(raw))
-	buf.Copy(raw)
+	buf := sizedEnclave(t, len(raw))
+	if err := buf.WithBytes(func(b []byte) error {
+		copy(b, raw)
+		return nil
+	}); err != nil {
+		t.Fatalf("filling a protected buffer: %v", err)
+	}
 	t.Cleanup(buf.Destroy)
 
 	return buf
@@ -83,7 +88,7 @@ func TestNewStaticKey(t *testing.T) {
 	// lifetime, so the boundary refuses a destroyed buffer as well as a nil
 	// one: reading either would be reading freed or unprotected memory.
 	t.Run("rejects a destroyed buffer", func(t *testing.T) {
-		buf := memguard.NewBuffer(PrivateKeySize)
+		buf := sizedEnclave(t, PrivateKeySize)
 		buf.Destroy()
 
 		if _, err := NewStaticKey(buf); !errors.Is(err, ErrInvalidPrivateKey) {

@@ -145,6 +145,39 @@ jobs:
             type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
+      # The root Dockerfile's `go mod download` resolves the internal first-party
+      # module go-enclave from Gitea, which the build container cannot reach on
+      # its own (dependency-resolution.md section 6). A job environment does not
+      # cross into a docker build, so stage the credential as a BuildKit secret
+      # file under RUNNER_TEMP -- deliberately OUTSIDE the build context, so a
+      # `COPY . .` cannot bake it into a layer (.dockerignore is the second
+      # guard) -- and expose its PATH as a step output. Read GIT_CONFIG_KEY_0
+      # straight from the shell environment, NEVER through ${{ env.X }}: that
+      # expression reads this workflow's own env: block, which does not define
+      # it, and would quietly write a blank (the build then dies on an
+      # unrelated-looking "unknown revision"). The path is an output rather than
+      # env for the same class of reason -- ${{ runner.temp }} can resolve empty
+      # inside an action's input expressions. On github.com the variable does not
+      # exist, the file is written empty, and the Dockerfile's secret mount is
+      # optional, so the build resolves from the public proxy.
+      - name: Stage module-fetch credentials
+        id: gomodauth
+        run: |
+          set -eu
+          umask 077
+          : > "${RUNNER_TEMP}/gomodauth.secret"
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            # ONLY the tokenised insteadOf key, as raw data with no trailing
+            # newline -- never as `export NAME=value` shell. The Dockerfile reads
+            # it with a quoted command substitution, so a credential containing
+            # shell metacharacters is assigned literally, never executed.
+            printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
+            echo "staged Gitea module credential"
+          else
+            echo "no Gitea credentials in this environment; resolving from the public proxy"
+          fi
+          echo "path=${RUNNER_TEMP}/gomodauth.secret" >> "$GITHUB_OUTPUT"
+
       # devops.md §8: every container image is gated on CRITICAL/HIGH *before*
       # it reaches a registry. Build the amd64 leg locally, scan it, then
       # publish the multi-arch manifest from the same layer cache.
@@ -158,6 +191,8 @@ jobs:
           tags: go-truststrap:scan
           build-args: |
             VERSION=${{ github.ref_name }}
+          secret-files: |
+            gomodauth=${{ steps.gomodauth.outputs.path }}
           cache-from: type=gha
 
       # The trivy CLI works identically on both hosts; trivy-action's setup
@@ -220,8 +255,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
+          secret-files: |
+            gomodauth=${{ steps.gomodauth.outputs.path }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Staged credentials do not outlive the job that needed them, however it
+      # ended.
+      - name: Remove staged credentials
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/gomodauth.secret"
 
       # A skipped step is easy to miss in a run summary, and a release that
       # quietly ships no image is exactly the state #12 was filed about. Say so

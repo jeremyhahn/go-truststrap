@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"errors"
 	"testing"
-
-	"github.com/awnumar/memguard"
 )
 
 // withRandom swaps readRandom for the duration of a test and restores it.
@@ -51,16 +49,17 @@ func TestGenerateStaticKey_RejectsOutOfRange(t *testing.T) {
 	}
 
 	// The accepted key must be the scalar 1: round-trip its encoding.
-	dst := memguard.NewBuffer(HexKeySize)
+	dst := sizedEnclave(t, HexKeySize)
 	defer dst.Destroy()
 	if err := EncodeStaticKey(dst, key); err != nil {
 		t.Fatalf("EncodeStaticKey: %v", err)
 	}
 	want := make([]byte, HexKeySize)
 	hexEncodeInto(want, valid)
-	if !bytes.Equal(dst.Bytes()[:HexKeySize], want) {
-		t.Fatal("generated key did not encode to the accepted scalar")
-	}
+	// Compared in place: the hex form of a scalar is as sensitive as the scalar
+	// itself, so it is never copied out of its locked region for a test to look
+	// at (testing-guidelines.md).
+	assertEnclaveHolds(t, dst, want, "generated key did not encode to the accepted scalar")
 }
 
 func TestGenerateStaticKey_RandError(t *testing.T) {
@@ -82,7 +81,7 @@ func TestStaticKey_Destroy(t *testing.T) {
 
 	// After Destroy the locked scalar is gone, so encoding must refuse rather
 	// than read freed memory.
-	dst := memguard.NewBuffer(HexKeySize)
+	dst := sizedEnclave(t, HexKeySize)
 	defer dst.Destroy()
 	if err := EncodeStaticKey(dst, key); !errors.Is(err, ErrInvalidPrivateKey) {
 		t.Fatalf("EncodeStaticKey after Destroy: err = %v, want ErrInvalidPrivateKey", err)

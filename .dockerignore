@@ -28,6 +28,13 @@ coverage/
 # A stray go.work silently changes module resolution inside the build
 go.work
 go.work.sum
+
+# Module-fetch credentials are staged OUTSIDE the build context and handed in as
+# a BuildKit secret (see the Dockerfiles). This is the second guard: a copy that
+# ever lands in the tree must not be baked into a layer by `COPY . .`.
+gomodauth
+gomodauth.*
+*.secret
 vendor/
 
 # Editor, agent and OS noise

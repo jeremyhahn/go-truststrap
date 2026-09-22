@@ -8,7 +8,7 @@ import (
 	"crypto/cipher"
 	"sync/atomic"
 
-	"github.com/awnumar/memguard"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // Transport carries application data once the handshake has completed. The two
@@ -38,18 +38,33 @@ type Transport struct {
 // newTransport builds the two directional AEADs and DESTROYS the key buffers
 // it was given: aes.NewCipher expands the key into its own round-key schedule,
 // so the locked copy has no further use and holding it would only widen the
-// window. See the note on Transport's residual exposure in doc.go.
-func newTransport(sendKey, recvKey *memguard.LockedBuffer) (*Transport, error) {
+// window. Destroying them also returns their reservations to the process's
+// locked-memory budget, on every path including the failing ones. See the note
+// on Transport's residual exposure in doc.go.
+func newTransport(sendKey, recvKey *enclave.MemoryEnclave) (*Transport, error) {
 	defer sendKey.Destroy()
 	defer recvKey.Destroy()
 
-	send, err := checkedAEAD(sendKey)
-	if err != nil {
+	var send, recv cipher.AEAD
+
+	// Each key is read through a borrow, so the enclave's read lock is held for
+	// exactly as long as aes.NewCipher needs the bytes and the key never exists
+	// outside the locked region.
+	if err := borrow("newTransport", sendKey, func(k []byte) error {
+		var err error
+		send, err = checkedAEAD(k)
+
+		return err
+	}); err != nil {
 		return nil, err
 	}
 
-	recv, err := checkedAEAD(recvKey)
-	if err != nil {
+	if err := borrow("newTransport", recvKey, func(k []byte) error {
+		var err error
+		recv, err = checkedAEAD(k)
+
+		return err
+	}); err != nil {
 		return nil, err
 	}
 
@@ -68,7 +83,7 @@ func newTransport(sendKey, recvKey *memguard.LockedBuffer) (*Transport, error) {
 // asserts, which is what the #nosec G407 annotations at the Seal sites rely on.
 // It is deliberately outside newAEAD so that an injected constructor is checked
 // too.
-func checkedAEAD(key *memguard.LockedBuffer) (cipher.AEAD, error) {
+func checkedAEAD(key []byte) (cipher.AEAD, error) {
 	gcm, err := newAEAD(key)
 	if err != nil {
 		return nil, err
@@ -85,13 +100,14 @@ func checkedAEAD(key *memguard.LockedBuffer) (cipher.AEAD, error) {
 	return gcm, nil
 }
 
-// newAEAD builds the protocol's AEAD for a key held in locked memory. It is a
+// newAEAD builds the protocol's AEAD over a key borrowed from locked memory --
+// callers pass the slice a borrow handed them and never retain it. It is a
 // variable for the same reason nkCipherSuite is one in pkg/noiseproto: with a
 // correct 32-byte key neither constructor below can fail, so the error paths
 // that guard them are otherwise unreachable and untested. Call checkedAEAD,
 // not this, so the nonce-geometry invariant is enforced.
-var newAEAD = func(key *memguard.LockedBuffer) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key.Bytes())
+var newAEAD = func(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, wrap("newAEAD", ErrCipher, err)
 	}

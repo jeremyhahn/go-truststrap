@@ -147,24 +147,25 @@ analogue of the Noise `noiseproto.StaticKey` the existing bootstrap persists.
 `pkg/p256proto` gains the same at-rest serialisation surface as `noiseproto`:
 
 - `GenerateStaticKey()` — already present; a fresh key pair.
-- `NewStaticKey(*memguard.LockedBuffer)` — already present; reconstruct from a
-  scalar in protected memory.
-- `StaticKey` owns its private scalar in a `memguard.LockedBuffer` for the key's
-  whole lifetime (with a `Destroy` lifecycle), mirroring `noiseproto.StaticKey`.
-  `GenerateStaticKey` draws the scalar straight into that locked buffer via
-  rejection sampling — it never materialises the scalar as an ordinary heap
-  `[]byte`.
-- `HexKeySize`, `EncodeStaticKey(dst *memguard.LockedBuffer, key)`,
-  `DecodeStaticKey(encoded *memguard.LockedBuffer)` — new. Both ends of the
-  boundary are protected memory: encode reads straight from the owned locked
-  scalar (never `crypto/ecdh`'s `PrivateKey.Bytes()`) into a caller-supplied
-  `LockedBuffer`, so the plaintext scalar never touches the Go heap in this
-  package. The only residual is the copy `crypto/ecdh` keeps internally, tracked
-  as go-enclave adoption #7/#19.
+- `NewStaticKey(*enclave.MemoryEnclave)` — already present; reconstruct from a
+  scalar in protected memory. It took a `*memguard.LockedBuffer` until the
+  go-enclave adoption (#19) retyped it.
+- `StaticKey` owns its private scalar in an `enclave.MemoryEnclave` for the
+  key's whole lifetime (with a `Destroy` lifecycle), mirroring
+  `noiseproto.StaticKey`. `GenerateStaticKey` draws the scalar straight into
+  that locked region via rejection sampling and freezes it read-only — it never
+  materialises the scalar as an ordinary heap `[]byte`.
+- `HexKeySize`, `EncodeStaticKey(dst *enclave.MemoryEnclave, key)`,
+  `DecodeStaticKey(encoded *enclave.MemoryEnclave)`. Both ends of the boundary
+  are protected memory: encode reads straight from the owned locked scalar
+  (never `crypto/ecdh`'s `PrivateKey.Bytes()`) into a caller-supplied enclave,
+  so the plaintext scalar never touches the Go heap in this package. The only
+  residual is the copy `crypto/ecdh` keeps internally, which is a property of
+  the standard library's API rather than of the storage primitive.
 
 `ServerConfig.P256StaticKey *p256proto.StaticKey` is the responder key; the
 consumer (go-xkms barrier, #23) persists and reloads it post-unseal exactly as
-it does the Noise key. The one residual is the one p256proto already documents:
+it does the Noise key, constructing the `MemoryEnclave` it hands in. The one residual is the one p256proto already documents:
 `crypto/ecdh` keeps a heap copy of the scalar for the key's lifetime, which no
 API can lock — reimplementing P-256 to avoid it would forfeit the FIPS
 validation this suite exists for.

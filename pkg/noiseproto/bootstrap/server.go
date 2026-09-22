@@ -416,30 +416,31 @@ func (s *Server) performHandshake(conn net.Conn) (secureSession, error) {
 // p256proto re-validates and binds into its transcript.
 func (s *Server) handshakeP256(conn net.Conn, msg1 []byte) (secureSession, error) {
 	if s.config.P256StaticKey == nil {
-		return nil, fmt.Errorf("%w: 0x02 not configured on this server", ErrUnsupportedSuite)
+		return nil, handshakeError{Stage: "0x02 not configured on this server", Kind: ErrUnsupportedSuite}
 	}
 
 	responder, err := p256proto.NewResponder(s.config.P256StaticKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: init responder: %w", ErrHandshakeFailed, err)
+		return nil, handshakeError{Stage: "init responder", Kind: ErrHandshakeFailed, Err: err}
 	}
-	// Releases the responder's admission slot and any locked schedule; harmless
-	// on the completed path (WriteMessage2 already released them) and the remedy
-	// for a peer that sends a valid msg1 and then abandons the connection.
+	// Releases any locked key schedule and returns its reservation to the
+	// process's locked-memory budget; harmless on the completed path
+	// (WriteMessage2 already released it) and the remedy for a peer that sends a
+	// valid msg1 and then abandons the connection.
 	defer responder.Destroy()
 
 	if err := responder.ReadMessage1(msg1); err != nil {
-		return nil, fmt.Errorf("%w: process msg1: %w", ErrHandshakeFailed, err)
+		return nil, handshakeError{Stage: "process msg1", Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	msg2, transport, err := responder.WriteMessage2()
 	if err != nil {
-		return nil, fmt.Errorf("%w: generate msg2: %w", ErrHandshakeFailed, err)
+		return nil, handshakeError{Stage: "generate msg2", Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	writeDeadline := time.Now().Add(s.config.WriteTimeout)
 	if err := WriteFrame(conn, msg2, writeDeadline); err != nil {
-		return nil, fmt.Errorf("%w: send msg2: %w", ErrHandshakeFailed, err)
+		return nil, handshakeError{Stage: "send msg2", Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	return &p256Session{t: transport}, nil

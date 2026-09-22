@@ -265,21 +265,35 @@ method on it, and `Bytes()` — the only way out — is something this package
 simply never calls. So the private scalar can be unsealed exactly once, at
 construction, and never exist as a caller-visible `[]byte` again.
 
-`memguard` is **already a dependency of this repository** (`v0.23.0`, used by
-`pkg/noiseproto` and `cmd/truststrap`), so applying the Layer 0 mandate here
-was not a new dependency decision and did not need to wait on #7. It is
-implemented:
+The Layer 0 mandate is implemented here on
+[go-enclave](https://github.com/jeremyhahn/go-enclave) (`v0.6.0-alpha`), the
+owner-ruled protected-memory primitive (#19). It shipped first on `memguard`,
+which was already a dependency of this repository, and moved as soon as the
+error-returning primitive had a consumable tag — memguard reports no `mlock`
+failure, it purges every protected buffer in the process and panics, which is
+not a failure an unauthenticated path can survive:
 
-- chaining keys, AEAD keys and both transport keys live in `LockedBuffer`s for
-  their whole lifetime;
+- chaining keys, AEAD keys and both transport keys live in `MemoryEnclave`s for
+  their whole lifetime, and are read only through `WithBytes` borrows;
 - every ECDH shared secret and HKDF intermediate is wiped as soon as the key
   schedule has absorbed it;
-- `NewStaticKey` accepts a `*memguard.LockedBuffer` and **nothing else**, so a
-  long-term scalar cannot enter through unprotected memory;
+- `NewStaticKey` accepts a `*enclave.MemoryEnclave` and **nothing else**, so a
+  long-term scalar cannot enter through unprotected memory. Once the scalar is
+  final the pages are frozen read-only, so a retained slice faults rather than
+  rewriting the key;
 - the handshake's key schedule is destroyed when the handshake completes,
   **and on every terminal failure**;
 - `Initiator` and `Responder` expose an idempotent `Destroy`, and callers must
   defer it.
+
+Every allocation is admitted against the process's ONE locked-memory budget
+(`enclave.ProcessAllocator`) before any locked memory is requested, so a
+refusal arrives as `ErrProtectedMemory` — carrying `enclave.ErrBudgetExhausted`
+— on the one connection that asked for it. Sizing that budget belongs to the
+consuming binary (`enclave.SetAllocator`, done in `cmd/truststrap`), because
+`RLIMIT_MEMLOCK` is process-scoped and a library holding its own allocator
+would stay inside its own budget while the process exceeded the one ceiling
+they share. This package installs nothing and never calls `WipeAll`.
 
 The ownership rule is not cosmetic. A handshake holds locked pages from the
 moment it is constructed, locked memory is a bounded per-process resource
@@ -291,6 +305,15 @@ allowance simply by connecting and sending well-formed messages with forged
 tags. Every rejection therefore releases the schedule and latches the handshake
 as spent, and `Destroy` covers the case no rejection can — a peer that connects
 and then goes away.
+
+The interim measure this replaced — a hand-rolled cap on concurrent responder
+schedules, `SetMaxConcurrentResponders` / `ErrResourceExhausted`, derived at
+init from `RLIMIT_MEMLOCK` (#17) — is **gone**. It bounded memguard rather than
+replacing it, so it could not close two residuals: a limit set below a single
+schedule's own footprint still met memguard's panic on the first handshake, and
+its private accounting could not see locked memory taken elsewhere in the
+process. A byte budget charged in the same unit `RLIMIT_MEMLOCK` is expressed
+in closes both.
 
 **What it does not reach**, stated rather than glossed: `crypto/ecdh`'s
 `PrivateKey` keeps its own heap copy of the scalar for the key's lifetime, and

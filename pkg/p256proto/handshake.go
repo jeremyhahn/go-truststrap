@@ -6,7 +6,6 @@ package p256proto
 import (
 	"crypto/ecdh"
 	"crypto/rand"
-	"strconv"
 )
 
 // Initiator drives the initiating half of the handshake. It is single-use:
@@ -91,7 +90,14 @@ func NewInitiator(responderStatic []byte) (*Initiator, error) {
 		return nil, err
 	}
 
-	sym := newSymmetricState()
+	// The initiator's key schedule is locked here rather than deferred: its
+	// handshake is outbound and not reachable by unauthenticated peers, so
+	// there is nothing to defer it past. A locked-memory refusal is reported as
+	// ErrProtectedMemory instead of ending the process (see protected.go).
+	sym, err := newSymmetricState("NewInitiator")
+	if err != nil {
+		return nil, err
+	}
 	sym.mixHash(responder.Bytes())
 
 	return &Initiator{sym: sym, responder: responder}, nil
@@ -187,7 +193,7 @@ func (i *Initiator) ReadMessage2(msg []byte) (*Transport, error) {
 		return nil, i.fail(err)
 	}
 
-	send, recv, err := i.sym.split()
+	send, recv, err := i.sym.split("ReadMessage2")
 	if err != nil {
 		return nil, i.fail(err)
 	}
@@ -219,17 +225,17 @@ type Responder struct {
 	destroyed bool
 }
 
-// Destroy releases the handshake's locked key-schedule memory and returns its
-// admission slot.
+// Destroy releases the handshake's locked key-schedule memory, returning its
+// reservation to the process's locked-memory budget.
 //
-// A responder locks nothing until ReadMessage1 has admitted a structurally
-// valid message 1 (see NewResponder and admission.go), so a bare or abandoned
-// connection pins no locked pages and needs no Destroy for memory's sake. Once
-// a schedule IS locked -- during and after a valid ReadMessage1 -- locked
-// memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the garbage
-// collector does not reclaim, and the admission slot is held until it is
-// released. Callers therefore still defer Destroy on every Responder: it is the
-// remedy for a peer that sends a valid message 1 and then abandons the
+// A responder locks nothing until ReadMessage1 has been admitted for a
+// structurally valid message 1 (see NewResponder and protected.go), so a bare or
+// abandoned connection pins no locked pages and needs no Destroy for memory's
+// sake. Once a schedule IS locked -- during and after a valid ReadMessage1 --
+// locked memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the
+// garbage collector does not reclaim, and the budget stays charged until the
+// pages go back. Callers therefore still defer Destroy on every Responder: it is
+// the remedy for a peer that sends a valid message 1 and then abandons the
 // connection, and it is harmless on one that locked nothing.
 //
 //	r, err := NewResponder(static)
@@ -271,11 +277,12 @@ func (r *Responder) fail(err error) error {
 
 // NewResponder prepares a handshake using the given long-term static key.
 //
-// It locks NO memory. The transcript is seeded and the responder's static
-// public key is mixed into it -- both public operations -- but the secret key
-// schedule is not allocated until ReadMessage1 has done the cheap structural
-// checks on the peer's message and been admitted (see admission.go). A bare or
-// abandoned connection therefore pins no locked pages.
+// It locks NO memory and does not so much as reach the process allocator. The
+// transcript is seeded and the responder's static public key is mixed into it --
+// both public operations -- but the secret key schedule is not allocated until
+// ReadMessage1 has done the cheap structural checks on the peer's message and
+// the process budget has admitted it (see protected.go). A bare or abandoned
+// connection therefore pins no locked pages.
 func NewResponder(static *StaticKey) (*Responder, error) {
 	// Refuse a nil OR destroyed key: after Destroy the private half is gone, and
 	// a destroyed key must not authenticate. Checking alive (not just a non-nil
@@ -322,26 +329,47 @@ func (r *Responder) ReadMessage1(msg []byte) error {
 
 	// The cheap checks have passed and nothing has been locked or folded into
 	// the transcript yet. Locking the key schedule is the responder's one
-	// pre-authentication allocation -- the tag is checked below -- so it is
-	// admission-controlled: a denied slot fails THIS connection closed with a
-	// typed error, having locked nothing and mutated no state, so a
-	// connect-cost flood cannot drive locked memory to memguard's process-wide
-	// Purge (see admission.go). A denied admission is not this handshake's
-	// fault, so it does not latch the handshake failed.
-	if !admitResponder() {
-		return failure("ReadMessage1", ErrResourceExhausted, "limit "+strconv.Itoa(MaxConcurrentResponders()))
+	// pre-authentication allocation -- the tag is checked below -- so it is the
+	// allocation the process's locked-memory budget has to refuse. A refusal
+	// fails THIS connection closed with ErrProtectedMemory (carrying
+	// enclave.ErrBudgetExhausted or enclave.ErrLockedMemoryUnavailable),
+	// having locked nothing and mutated no state, so a connect-cost flood
+	// costs one connection each rather than the process: no other live
+	// handshake is disturbed and nothing panics (see protected.go). A refused
+	// allocation is not this handshake's fault, so it does not latch the
+	// handshake failed.
+	if err := r.sym.lockSchedule("ReadMessage1"); err != nil {
+		return err
 	}
-	r.sym.holdsSlot = true
-	r.sym.lockSchedule()
 
 	r.sym.mixHash(msg[:2])
 	r.peer = peer
 	r.sym.mixHash(peer.Bytes())
 
-	es, err := r.static.priv.ECDH(peer)
-	if err != nil {
-		return r.fail(wrap("ReadMessage1", ErrKeyAgreement, err))
+	// The key agreement runs inside a borrow of the static credential's
+	// protected storage. NewResponder checked the key was alive when this
+	// responder was built, and that answer is stale by the time the peer's
+	// first message arrives: the enclave can be destroyed in between -- a
+	// shutdown sweep is the realistic way -- while crypto/ecdh's own heap copy
+	// of the scalar survives it. Re-reading a predicate here would have the
+	// same problem one instruction later; the borrow is what makes the check
+	// and the use one thing. A released credential fails THIS connection with
+	// ErrProtectedMemory rather than authenticating a peer against a key the
+	// process has already wiped. See StaticKey.withScalar.
+	var es []byte
+
+	if err := r.static.withScalar("ReadMessage1", func(priv *ecdh.PrivateKey) error {
+		shared, ecdhErr := priv.ECDH(peer)
+		if ecdhErr != nil {
+			return wrap("ReadMessage1", ErrKeyAgreement, ecdhErr)
+		}
+		es = shared
+
+		return nil
+	}); err != nil {
+		return r.fail(err)
 	}
+
 	if err := r.sym.mixKey(es); err != nil {
 		return r.fail(err)
 	}
@@ -395,7 +423,7 @@ func (r *Responder) WriteMessage2() ([]byte, *Transport, error) {
 	msg = append(msg, pub...)
 	msg = append(msg, tag...)
 
-	recv, send, err := r.sym.split()
+	recv, send, err := r.sym.split("WriteMessage2")
 	if err != nil {
 		return nil, nil, r.fail(err)
 	}

@@ -23,18 +23,15 @@ func assertScheduleReleased(t *testing.T, s *symmetricState, context string) {
 	if s == nil {
 		return
 	}
-	if s.ck != nil && s.ck.IsAlive() {
-		t.Errorf("%s: the chaining key buffer is still alive", context)
-	}
-	if s.k != nil && s.k.IsAlive() {
-		t.Errorf("%s: the AEAD key buffer is still alive", context)
+	if s.schedule.IsAlive() {
+		t.Errorf("%s: the key schedule is still alive", context)
 	}
 }
 
 func assertScheduleHeld(t *testing.T, s *symmetricState, context string) {
 	t.Helper()
 
-	if s == nil || s.ck == nil || s.k == nil || !s.ck.IsAlive() || !s.k.IsAlive() {
+	if s == nil || !s.schedule.IsAlive() {
 		t.Errorf("%s: the key schedule was released while the handshake was still usable", context)
 	}
 }
@@ -45,7 +42,7 @@ func assertScheduleHeld(t *testing.T, s *symmetricState, context string) {
 func assertNoSchedule(t *testing.T, s *symmetricState, context string) {
 	t.Helper()
 
-	if s != nil && (s.ck != nil || s.k != nil) {
+	if s != nil && s.schedule != nil {
 		t.Errorf("%s: locked pages were allocated before authenticating peer input", context)
 	}
 }

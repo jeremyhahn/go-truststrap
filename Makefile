@@ -376,7 +376,30 @@ bench-truststrap: ## Run all benchmarks
 # anywhere else. The image bakes coredns and the source in; nothing is mounted.
 integration-test: ## Run all integration tests (containerised)
 	@printf "$(CYAN)Building integration test image...$(NC)\n"
-	@$(DOCKER) build -f test/integration/Dockerfile -t $(INTEGRATION_IMAGE) .
+	@# `docker build` does NOT inherit this shell's environment, and go.mod now
+	@# requires the internal first-party module go-enclave, which the build
+	@# container cannot reach on its own (dependency-resolution.md §6). Stage the
+	@# tokenised insteadOf key in a file OUTSIDE the build context -- mktemp -d
+	@# puts it under TMPDIR, which `COPY . .` cannot see -- and hand it in as a
+	@# BuildKit secret, so the token reaches neither a layer, image metadata, nor
+	@# a command line. The mount in the Dockerfile is OPTIONAL, so a host with no
+	@# Gitea credentials writes an empty file and still builds from the public
+	@# proxy. Never echo the value: verify a credential by shape, never by
+	@# content.
+	@set -eu; \
+	umask 077; \
+	secret_dir=$$(mktemp -d); \
+	trap 'rm -rf "$$secret_dir"' EXIT INT TERM; \
+	: > "$$secret_dir/gomodauth"; \
+	if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
+		printf '%s' "$$GIT_CONFIG_KEY_0" > "$$secret_dir/gomodauth"; \
+		printf "$(CYAN)Using the staged Gitea module credential$(NC)\n"; \
+	else \
+		printf "$(YELLOW)No Gitea module credential in this environment; resolving from the public proxy$(NC)\n"; \
+	fi; \
+	DOCKER_BUILDKIT=1 $(DOCKER) build -f test/integration/Dockerfile \
+		--secret id=gomodauth,src="$$secret_dir/gomodauth" \
+		-t $(INTEGRATION_IMAGE) .
 	@printf "$(CYAN)Running all integration tests...$(NC)\n"
 	@$(DOCKER) run --rm $(INTEGRATION_IMAGE)
 	@printf "$(GREEN)All integration tests passed$(NC)\n"

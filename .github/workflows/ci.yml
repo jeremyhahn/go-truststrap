@@ -662,6 +662,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # No credential-staging step here, deliberately. `make integration-test`
+      # reads GIT_CONFIG_KEY_0 straight from this job's process environment --
+      # which the act_runner injects via runner.envs (dependency-resolution.md
+      # §6) -- and stages it itself as a BuildKit secret outside the build
+      # context, because `docker build` does not inherit a job environment. That
+      # keeps the same command working identically from a developer's shell. On
+      # github.com the variable does not exist, the staged file is empty, and
+      # the Dockerfile's secret mount is optional, so the image resolves from
+      # the public proxy. NEVER move this to `${{ env.GIT_CONFIG_KEY_0 }}`: that
+      # reads this workflow's own env: block, writes a blank, and the build then
+      # dies on an unrelated-looking "unknown revision".
       - name: Run integration suite (containerised)
         run: make integration-test
 

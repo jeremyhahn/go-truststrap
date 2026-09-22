@@ -196,6 +196,7 @@ The layout follows [golang-standards/project-layout](https://github.com/golang-s
 ```
 cmd/truststrap/              CLI built on cobra: fetch, dane, noise, spki, serve, version
   main.go                    Entry point; runs rootCmd and exits non-zero on failure
+  lockedmemory.go            Installs the process locked-memory budget; wipes at exit
   root.go                    Root command, global flags, logger configuration
   config.go                  Config file and TRUSTSTRAP_* environment binding (viper)
   fetch.go                   fetch command: tries methods in priority order
@@ -258,9 +259,7 @@ pkg/p256proto/               TSBOOT1_P256_AESGCM_SHA256, the FIPS-approved hands
   persist.go                 Static key encode/decode via locked buffers
   symmetric.go               Transcript hash and HKDF key schedule
   transport.go               Post-handshake Transport (Seal/Open)
-  admission.go               Bounds pre-authentication locked-page allocation
-  admission_rlimit_linux.go  Locked-memory limit query (Linux)
-  admission_rlimit_other.go  Locked-memory limit query (non-Linux)
+  protected.go               go-enclave seam: budgeted locked-memory allocation
   errors.go                  Sentinel errors for the package
 
 pkg/spkipin/                 SPKI pin computation and verification

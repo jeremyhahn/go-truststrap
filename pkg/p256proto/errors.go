@@ -61,15 +61,25 @@ var (
 	// garbage or forged frame cannot deny the legitimate one.
 	ErrTransportConsumed = errors.New("p256proto: transport direction already used")
 
-	// ErrResourceExhausted indicates a responder could not be admitted because
-	// the number of concurrent responder key schedules holding locked memory
-	// has reached its ceiling (see admission.go). It is returned by
-	// Responder.ReadMessage1 for the connection that was refused, which locks
-	// nothing and leaves other in-flight handshakes untouched; it is not a
-	// protocol failure, so the caller drops that one connection and keeps
-	// serving. It exists so that unauthenticated input cannot drive
-	// RLIMIT_MEMLOCK to memguard's process-wide Purge.
-	ErrResourceExhausted = errors.New("p256proto: too many concurrent responder handshakes")
+	// ErrProtectedMemory indicates locked memory could not be allocated, filled
+	// or read. It classifies every refusal from go-enclave and always carries
+	// the enclave error as its cause, so errors.Is reaches the allocator's own
+	// sentinel too: enclave.ErrBudgetExhausted when the process's locked-memory
+	// budget refused the allocation before any was requested,
+	// enclave.ErrLockedMemoryUnavailable when the kernel refused the lock
+	// despite admission, and enclave.ErrEnclaveDestroyed for a buffer already
+	// released.
+	//
+	// Responder.ReadMessage1 returns it for the one connection that was
+	// refused, having locked nothing and mutated no state. It is not a protocol
+	// failure: the caller drops that connection and keeps serving, and every
+	// other in-flight handshake is untouched. That is what keeps a
+	// connect-cost flood of unauthenticated message 1 values from becoming a
+	// denial of service (see protected.go).
+	//
+	// It replaces ErrResourceExhausted, which classified the hand-rolled
+	// concurrency cap retired in the go-enclave adoption (#19).
+	ErrProtectedMemory = errors.New("p256proto: protected memory unavailable")
 
 	// ErrBufferSize indicates a caller-supplied destination buffer was too
 	// small for the encoded output. It is a caller mistake, not a runtime or

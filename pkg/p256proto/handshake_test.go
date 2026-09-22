@@ -221,7 +221,7 @@ func TestHandshake_RejectsForeignSuiteAndVersion(t *testing.T) {
 // drives the symmetric state directly.
 func TestHandshake_HeaderIsBoundIntoTheTranscript(t *testing.T) {
 	sealed := func(header []byte) []byte {
-		s := newSymmetricState()
+		s := mustSymmetricState(t)
 		s.mixHash(header)
 		if err := s.mixKey(make([]byte, 32)); err != nil {
 			t.Fatalf("mixKey: %v", err)
@@ -234,7 +234,7 @@ func TestHandshake_HeaderIsBoundIntoTheTranscript(t *testing.T) {
 	}
 
 	opened := func(header, tag []byte) error {
-		s := newSymmetricState()
+		s := mustSymmetricState(t)
 		s.mixHash(header)
 		if err := s.mixKey(make([]byte, 32)); err != nil {
 			t.Fatalf("mixKey: %v", err)

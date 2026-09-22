@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Copyright 2026 Jeremy Hahn
 # SPDX-License-Identifier: MIT
 #
@@ -46,7 +47,26 @@ WORKDIR /workspace
 
 # Dependencies first so a source-only change does not re-download them.
 COPY go.mod go.sum ./
-RUN go mod download
+# The same internal-module credential wiring as the root Dockerfile, for the
+# same reason: go.mod requires github.com/jeremyhahn/go-enclave from the
+# internal Gitea, which this container cannot reach on its own
+# (conventions/dependency-resolution.md section 6). The secret carries ONLY the
+# tokenised GIT_CONFIG_KEY_0 value, is mounted for this RUN alone, is read
+# through a quoted command substitution rather than sourced, and never reaches a
+# layer or image metadata. The mount is optional, so the image still builds
+# against the public proxy where no secret is supplied.
+#
+# This one matters more than the release image's: `make integration-test` builds
+# it on every pull request, and the integration job gates the required CI Gate.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -s /run/secrets/gomodauth ]; then \
+        export GOPRIVATE='github.com/jeremyhahn/*'; \
+        export GIT_CONFIG_COUNT=1; \
+        export GIT_CONFIG_KEY_0="$(cat /run/secrets/gomodauth)"; \
+        export GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/'; \
+    fi; \
+    go mod download
 
 COPY . .
 
