@@ -11,24 +11,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
 // Server.Stop's contract is independent of the handshake, so these tests run in
-// both the default and the "fips" build. They never complete a handshake, which
-// is what lets them use a static key of the right shape rather than a generated
-// one -- GenerateStaticKey refuses in a FIPS build.
+// both the default and the "fips" build. They configure the approved P-256 key,
+// which both builds can generate; noiseproto's key refuses in a FIPS build.
 
-// newUnstartedStopTestServer returns a server whose static key is structurally
-// valid but never used.
+// newUnstartedStopTestServer returns a server whose static key is never used.
 func newUnstartedStopTestServer(t *testing.T) *Server {
 	t.Helper()
 
+	static, err := p256proto.GenerateStaticKey()
+	if err != nil {
+		t.Fatalf("GenerateStaticKey failed: %v", err)
+	}
+	t.Cleanup(static.Destroy)
+
 	srv, err := NewServer(&ServerConfig{
-		ListenAddr: "127.0.0.1:0",
-		StaticKey:  &noise.DHKey{Private: make([]byte, 32), Public: make([]byte, 32)},
-		CABundler:  &mockCABundler{bundle: []byte{}},
-		Logger:     slog.Default(),
+		ListenAddr:    "127.0.0.1:0",
+		P256StaticKey: static,
+		CABundler:     &mockCABundler{bundle: []byte{}},
+		Logger:        slog.Default(),
 	})
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)

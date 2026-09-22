@@ -95,3 +95,36 @@ func TestSizeLimitDetail(t *testing.T) {
 		t.Errorf("sizeLimitDetail = %q, want %q", got, want)
 	}
 }
+
+// requireCommandError asserts err is a *CommandError raised by op. The
+// functions converted off fmt.Errorf (errors.md section 2) are pinned with it,
+// so a regression to an untyped wrapper fails a test rather than a review.
+func requireCommandError(t *testing.T, err error, op string) *CommandError {
+	t.Helper()
+
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) {
+		t.Fatalf("error %v is not a *CommandError", err)
+	}
+	if cmdErr.Op != op {
+		t.Fatalf("CommandError.Op = %q, want %q", cmdErr.Op, op)
+	}
+	return cmdErr
+}
+
+func TestCommandWrapDetail_CarriesDetailAndCause(t *testing.T) {
+	cause := errors.New("disk full")
+	err := commandWrapDetail("runNoiseGenerate", ErrFileOperation, "writing key file /tmp/k", cause)
+
+	cmdErr := requireCommandError(t, err, "runNoiseGenerate")
+	if cmdErr.Detail != "writing key file /tmp/k" {
+		t.Fatalf("Detail = %q", cmdErr.Detail)
+	}
+	if !errors.Is(err, ErrFileOperation) || !errors.Is(err, cause) {
+		t.Fatalf("errors.Is must match both sentinel and cause: %v", err)
+	}
+	want := "runNoiseGenerate: file operation failed: writing key file /tmp/k: disk full"
+	if err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+}

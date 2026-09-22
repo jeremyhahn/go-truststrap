@@ -39,10 +39,10 @@ func TestFIPS_KeyOperationsRefused(t *testing.T) {
 	}
 }
 
-// A session with no local static key has to generate one, so construction is
-// where it refuses.
+// A session whose pattern needs a local static key it was not given has to
+// generate one, so construction is where it refuses.
 func TestFIPS_NewSessionRefused(t *testing.T) {
-	s, err := NewSession(&SessionConfig{Pattern: noise.HandshakeNK, IsInitiator: true})
+	s, err := NewSession(&SessionConfig{Pattern: noise.HandshakeXX, IsInitiator: true})
 	if err == nil {
 		t.Fatal("NewSession() succeeded in a FIPS build")
 	}
@@ -59,13 +59,14 @@ func TestFIPS_NewSessionRefused(t *testing.T) {
 func TestFIPS_InitHandshakeRefused(t *testing.T) {
 	s, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeNK,
-		LocalStaticKey: &noise.DHKey{Private: make([]byte, KeySize), Public: make([]byte, KeySize)},
+		LocalStaticKey: lockedTestKey(t, make([]byte, KeySize), make([]byte, KeySize)),
 		PeerStaticKey:  make([]byte, KeySize),
 		IsInitiator:    true,
 	})
 	if err != nil {
 		t.Fatalf("NewSession() error = %v, want success with a supplied static key", err)
 	}
+	t.Cleanup(s.Destroy)
 
 	if err := s.InitHandshake(); !errors.Is(err, ErrFIPSUnsupported) {
 		t.Errorf("InitHandshake() error = %v, want ErrFIPSUnsupported", err)
@@ -78,10 +79,7 @@ func TestFIPS_InitHandshakeRefused(t *testing.T) {
 // Operations that never touch X25519 keep working, which is what keeps the
 // exemption narrow.
 func TestFIPS_NonDHOperationsStillWork(t *testing.T) {
-	key := &StaticKey{DHKey: noise.DHKey{
-		Private: make([]byte, KeySize),
-		Public:  make([]byte, KeySize),
-	}}
+	key := lockedTestKey(t, make([]byte, KeySize), make([]byte, KeySize))
 
 	dst := make([]byte, HexKeySize)
 	if err := EncodeStaticKey(dst, key); err != nil {
@@ -91,10 +89,24 @@ func TestFIPS_NonDHOperationsStillWork(t *testing.T) {
 		t.Errorf("EncodeStaticKey() = %q, want the zero key", got)
 	}
 
-	WipeDHKey(&key.DHKey)
-	for _, b := range key.Private {
+	dh := &noise.DHKey{Private: []byte{1, 2, 3}, Public: []byte{4, 5, 6}}
+	WipeDHKey(dh)
+	for _, b := range dh.Private {
 		if b != 0 {
 			t.Fatal("WipeDHKey() left non-zero bytes")
 		}
+	}
+}
+
+// The NK initiator needs no static key, so it constructs in a FIPS build and
+// the cipher suite refuses at InitHandshake.
+func TestFIPS_NKInitiatorRefusedAtHandshake(t *testing.T) {
+	s, err := NewSession(&SessionConfig{Pattern: noise.HandshakeNK, IsInitiator: true, PeerStaticKey: make([]byte, KeySize)})
+	if err != nil {
+		t.Fatalf("NewSession() error = %v, want success", err)
+	}
+	t.Cleanup(s.Destroy)
+	if err := s.InitHandshake(); !errors.Is(err, ErrFIPSUnsupported) {
+		t.Errorf("InitHandshake() error = %v, want ErrFIPSUnsupported", err)
 	}
 }

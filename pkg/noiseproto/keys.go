@@ -7,28 +7,59 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
+	"strconv"
 
-	"github.com/awnumar/memguard"
 	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // HexKeySize is the length in bytes of a hex-encoded static private key.
 const HexKeySize = KeySize * 2
 
-// StaticKey is a Curve25519 static identity key pair whose private scalar is
-// held in a memguard LockedBuffer: guard-paged memory outside the Go heap,
-// locked against swap, canary-protected, and wiped on Destroy. The embedded
-// noise.DHKey lets a StaticKey be handed to the Noise session API directly,
-// with Private aliasing the protected region.
+// processAllocator is how this package reaches the one locked-memory budget the
+// process admits against (see cmd/truststrap's installLockedMemoryBudget). It
+// is a variable only so a test can drive the refusal paths deterministically:
+// the process allocator is install-once by design and cannot be shrunk and
+// restored around a test. Nothing in production assigns it.
+var processAllocator = enclave.ProcessAllocator
+
+// readRandom is indirected so a test can drive GenerateStaticKey's entropy
+// failure path. Nothing in production assigns it.
+var readRandom = rand.Read
+
+// StaticKey is a Curve25519 static identity key pair whose private scalar lives
+// in a go-enclave MemoryEnclave for its whole lifetime: locked pages outside
+// the Go heap, excluded from core dumps where the platform allows, frozen
+// read-only once filled, and zeroized on Destroy. The public key is not secret
+// and is held on the ordinary heap.
+//
+// The scalar is never handed out as a slice that outlives a borrow. WithDHKey
+// lends it to a callback, holding the enclave's read lock for the whole call,
+// so a concurrent Destroy -- this key's own, or a process-wide shutdown sweep
+// (enclave.WipeAll) -- waits for the callback rather than unmapping the pages
+// under it, and a sweep that has already run is reported as an error wrapping
+// enclave.ErrEnclaveDestroyed instead of a fault.
+//
+// # What flynn/noise still copies
+//
+// flynn/noise takes the key pair as a noise.DHKey{Private []byte} by value.
+// That copies the slice HEADER, not the scalar: the Private slice a handshake
+// retains aliases this key's locked pages, and this package reads through it
+// only inside a WithDHKey borrow. The scalar itself still leaves locked memory
+// once per X25519 operation: x/crypto/curve25519 delegates to crypto/ecdh,
+// whose NewPrivateKey copies the scalar into an ordinary heap allocation that
+// is never wiped and lives until the garbage collector reclaims it. That
+// happens for every key agreement a handshake performs with this key and once
+// when the public key is derived, and no API lets a caller lock or wipe that
+// copy. It is the Noise path's residual; see docs/noise.md.
 //
 // Every StaticKey must be released with Destroy once the key is no longer
-// needed. Destroy frees the protected pages, so it must not run while a Noise
-// handshake still holds the key pair.
+// needed. Destroy blocks until in-flight borrows return, but a handshake that
+// has not finished still holds an alias it will read through at its next
+// step, so Destroy must not run while a Session is mid-handshake with this key.
 type StaticKey struct {
-	noise.DHKey
-
-	priv *memguard.LockedBuffer
+	private *enclave.MemoryEnclave
+	public  []byte
 }
 
 // GenerateStaticKey generates a new Curve25519 static key pair suitable for
@@ -38,15 +69,24 @@ type StaticKey struct {
 // This mirrors noise.DH25519.GenerateKeypair -- 32 random bytes as the private
 // scalar, public key by scalar base multiplication -- and yields keys that are
 // byte-for-byte interchangeable with it.
+//
+// A locked-memory refusal is reported as ErrProtectedMemory wrapping the
+// allocator's own error (enclave.ErrBudgetExhausted or
+// enclave.ErrLockedMemoryUnavailable), so errors.Is reaches either.
 func GenerateStaticKey() (*StaticKey, error) {
-	priv := memguard.NewBuffer(KeySize)
+	const op = "GenerateStaticKey"
 
-	if _, err := rand.Read(priv.Bytes()); err != nil {
-		priv.Destroy()
-		return nil, fmt.Errorf("%w: %w", ErrHandshakeFailed, err)
+	priv, err := lockedScalar(op, func(b []byte) error {
+		if _, err := readRandom(b); err != nil {
+			return wrap(op, ErrHandshakeFailed, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return newStaticKey(priv)
+	return newStaticKey(op, priv)
 }
 
 // LoadStaticKey creates a StaticKey from raw private key bytes by copying them
@@ -54,62 +94,169 @@ func GenerateStaticKey() (*StaticKey, error) {
 // via scalar base multiplication. The caller's slice is left untouched and
 // remains the caller's to wipe.
 func LoadStaticKey(privateKey []byte) (*StaticKey, error) {
+	const op = "LoadStaticKey"
+
 	if len(privateKey) != KeySize {
 		return nil, ErrInvalidKeySize
 	}
 
-	priv := memguard.NewBuffer(KeySize)
-	priv.Copy(privateKey)
+	priv, err := lockedScalar(op, func(b []byte) error {
+		copy(b, privateKey)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
-	return newStaticKey(priv)
+	return newStaticKey(op, priv)
+}
+
+// lockedScalar admits KeySize bytes against the process's locked-memory budget,
+// lets fill write the scalar in place, and freezes the pages read-only. An
+// error from fill is returned unchanged; every refusal from the allocator or
+// the enclave is reported as ErrProtectedMemory wrapping the enclave error.
+// Nothing is left allocated on any failure path.
+func lockedScalar(op string, fill func([]byte) error) (*enclave.MemoryEnclave, error) {
+	allocator, err := processAllocator()
+	if err != nil {
+		return nil, wrap(op, ErrProtectedMemory, err)
+	}
+
+	priv, err := allocator.NewSized(KeySize)
+	if err != nil {
+		return nil, wrap(op, ErrProtectedMemory, err)
+	}
+
+	if err := borrow(op, priv, fill); err != nil {
+		priv.Destroy()
+		return nil, err
+	}
+
+	// A refused Freeze leaves the pages WRITABLE, so fault-on-write holds only
+	// because this error is checked.
+	if err := priv.Freeze(); err != nil {
+		priv.Destroy()
+		return nil, wrap(op, ErrProtectedMemory, err)
+	}
+
+	return priv, nil
+}
+
+// borrow runs fn over e's protected bytes under the enclave's read lock. An
+// error fn returns is passed through unchanged, so the classification its
+// author chose survives; an error from the enclave itself -- fn never ran --
+// is reported as ErrProtectedMemory wrapping it.
+func borrow(op string, e *enclave.MemoryEnclave, fn func([]byte) error) error {
+	var inner error
+
+	outer := e.WithBytes(func(b []byte) error {
+		inner = fn(b)
+		return inner
+	})
+
+	if inner != nil {
+		return inner
+	}
+	if outer != nil {
+		return wrap(op, ErrProtectedMemory, outer)
+	}
+
+	return nil
 }
 
 // newStaticKey derives the public key for a private scalar already resident in
-// protected memory and takes ownership of the buffer.
-func newStaticKey(priv *memguard.LockedBuffer) (*StaticKey, error) {
-	pub, err := derivePublicKey(priv.Bytes())
+// protected memory and takes ownership of the enclave.
+func newStaticKey(op string, priv *enclave.MemoryEnclave) (*StaticKey, error) {
+	var pub []byte
+
+	err := borrow(op, priv, func(b []byte) error {
+		derived, deriveErr := derivePublicKey(b)
+		if deriveErr != nil {
+			if errors.Is(deriveErr, ErrFIPSUnsupported) {
+				return deriveErr
+			}
+			return wrap(op, ErrInvalidKeySize, deriveErr)
+		}
+		pub = derived
+		return nil
+	})
 	if err != nil {
 		priv.Destroy()
-		if errors.Is(err, ErrFIPSUnsupported) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: %w", ErrInvalidKeySize, err)
+		return nil, err
 	}
 
-	return &StaticKey{
-		DHKey: noise.DHKey{Private: priv.Bytes(), Public: pub},
-		priv:  priv,
-	}, nil
+	return &StaticKey{private: priv, public: pub}, nil
 }
 
-// Destroy wipes the private key, releases its protected pages, and clears the
-// embedded key pair. It is idempotent and safe to call on a nil receiver.
-// Any noise.DHKey copied out of this StaticKey beforehand still points at the
-// freed pages and must not be read afterwards.
+// PublicBytes returns a copy of the Curve25519 public key, or nil for a nil or
+// destroyed key.
+func (k *StaticKey) PublicBytes() []byte {
+	if k == nil || len(k.public) == 0 {
+		return nil
+	}
+
+	out := make([]byte, len(k.public))
+	copy(out, k.public)
+	return out
+}
+
+// WithDHKey lends the key pair to fn as a noise.DHKey whose Private slice
+// aliases the locked pages. The loan lasts exactly as long as fn: the enclave's
+// read lock is held throughout, so Destroy and enclave.WipeAll wait for fn to
+// return. fn must not retain the slice past its return, and must not call
+// Destroy on this key.
+//
+// An error fn returns is passed through unchanged. If the scalar is no longer
+// available -- the key was destroyed, or a shutdown sweep wiped it -- fn is not
+// called and the error is ErrProtectedMemory wrapping
+// enclave.ErrEnclaveDestroyed. A nil key reports the same.
+func (k *StaticKey) WithDHKey(fn func(noise.DHKey) error) error {
+	const op = "StaticKey.WithDHKey"
+
+	if k == nil {
+		return wrap(op, ErrProtectedMemory, enclave.ErrEnclaveDestroyed)
+	}
+
+	return borrow(op, k.private, func(b []byte) error {
+		return fn(noise.DHKey{Private: b, Public: k.public})
+	})
+}
+
+// Destroy zeroizes the private scalar, releases its locked pages and their
+// reservation against the process budget, and clears the public key. It is
+// idempotent and safe to call on a nil receiver. It waits for any in-flight
+// WithDHKey borrow to return; it must not run concurrently with PublicBytes, or
+// while a Session is mid-handshake with this key (see StaticKey).
 func (k *StaticKey) Destroy() {
 	if k == nil {
 		return
 	}
 
-	k.priv.Destroy()
-	WipeBytes(k.Public)
-	k.DHKey = noise.DHKey{}
+	k.private.Destroy()
+	WipeBytes(k.public)
+	k.public = nil
 }
 
 // EncodeStaticKey hex-encodes the private component of key into dst for
 // persistent storage. dst must be at least HexKeySize bytes long and should
 // itself be protected memory; the encoded form is as sensitive as the key.
+// The scalar is read under a borrow, so it passes from one locked region to
+// the other without touching the heap.
 func EncodeStaticKey(dst []byte, key *StaticKey) error {
-	if key == nil || len(key.Private) != KeySize {
+	const op = "EncodeStaticKey"
+
+	if key == nil {
 		return ErrInvalidKeySize
 	}
 	if len(dst) < HexKeySize {
-		return fmt.Errorf("%w: need %d bytes for hex output, have %d",
-			ErrInvalidBufferSize, HexKeySize, len(dst))
+		return failure(op, ErrInvalidBufferSize,
+			"need "+strconv.Itoa(HexKeySize)+" bytes for hex output, have "+strconv.Itoa(len(dst)))
 	}
 
-	hex.Encode(dst[:HexKeySize], key.Private)
-	return nil
+	return borrow(op, key.private, func(b []byte) error {
+		hex.Encode(dst[:HexKeySize], b)
+		return nil
+	})
 }
 
 // DecodeStaticKey decodes a hex-encoded static private key and derives the
@@ -117,17 +264,22 @@ func EncodeStaticKey(dst []byte, key *StaticKey) error {
 // directly into protected memory, so it never passes through an immutable Go
 // string. encoded stays the caller's to wipe.
 func DecodeStaticKey(encoded []byte) (*StaticKey, error) {
+	const op = "DecodeStaticKey"
+
 	if len(encoded) != HexKeySize {
-		return nil, fmt.Errorf("%w: hex key must be %d characters, got %d",
-			ErrInvalidKeySize, HexKeySize, len(encoded))
+		return nil, failure(op, ErrInvalidKeySize,
+			"hex key must be "+strconv.Itoa(HexKeySize)+" characters, got "+strconv.Itoa(len(encoded)))
 	}
 
-	priv := memguard.NewBuffer(KeySize)
-
-	if _, err := hex.Decode(priv.Bytes(), encoded); err != nil {
-		priv.Destroy()
-		return nil, fmt.Errorf("%w: invalid hex encoding: %w", ErrInvalidKeySize, err)
+	priv, err := lockedScalar(op, func(b []byte) error {
+		if _, err := hex.Decode(b, encoded); err != nil {
+			return wrapDetail(op, ErrInvalidKeySize, "invalid hex encoding", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return newStaticKey(priv)
+	return newStaticKey(op, priv)
 }

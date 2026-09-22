@@ -7,7 +7,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -20,6 +19,8 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+
+	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 )
 
 // These tests need a real X25519 key pair or handshake, which a FIPS build refuses; the refusal itself is covered by the fips-tagged tests. See docs/fips.md.
@@ -158,7 +159,7 @@ func TestServer_CABundleFetch(t *testing.T) {
 		srv.Stop(ctx)
 	}()
 
-	client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+	client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -242,7 +243,7 @@ func TestServer_CABundleFetchWithFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+			client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 			defer client.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -275,7 +276,7 @@ func TestServer_WrongServerKey(t *testing.T) {
 
 	client, err := NewClient(&ClientConfig{
 		ServerAddr:       srv.Addr().String(),
-		ServerStaticKey:  wrongKey.Public,
+		ServerStaticKey:  wrongKey.PublicBytes(),
 		ConnectTimeout:   5 * time.Second,
 		OperationTimeout: 5 * time.Second,
 		Logger:           slog.Default(),
@@ -547,7 +548,7 @@ func TestServer_BundlerErrorViaClient(t *testing.T) {
 		srv.Stop(ctx)
 	}()
 
-	client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+	client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -587,7 +588,7 @@ func TestServer_ClientWithoutDeadlineContext(t *testing.T) {
 		srv.Stop(ctx)
 	}()
 
-	client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+	client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 	defer client.Close()
 
 	// Use a context without a deadline to cover the no-deadline branch.
@@ -616,7 +617,7 @@ func TestServer_ContextCancellation(t *testing.T) {
 
 	client, err := NewClient(&ClientConfig{
 		ServerAddr:       srv.Addr().String(),
-		ServerStaticKey:  serverKey.Public,
+		ServerStaticKey:  serverKey.PublicBytes(),
 		ConnectTimeout:   5 * time.Second,
 		OperationTimeout: 5 * time.Second,
 		Logger:           slog.Default(),
@@ -655,7 +656,7 @@ func TestServer_ConcurrentClients(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+			client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 			defer client.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -865,7 +866,7 @@ func TestClient_ConnectWithNoDeadlineContext(t *testing.T) {
 
 	client, err := NewClient(&ClientConfig{
 		ServerAddr:       srv.Addr().String(),
-		ServerStaticKey:  serverKey.Public,
+		ServerStaticKey:  serverKey.PublicBytes(),
 		ConnectTimeout:   5 * time.Second,
 		OperationTimeout: 5 * time.Second,
 		Logger:           slog.Default(),
@@ -908,7 +909,7 @@ func TestClient_CloseAfterConnect(t *testing.T) {
 		srv.Stop(ctx)
 	}()
 
-	client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+	client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 
 	// Close should succeed and nil out the ciphers.
 	if err := client.Close(); err != nil {
@@ -926,14 +927,16 @@ func TestClient_CloseAfterConnect(t *testing.T) {
 	}
 }
 
-// generateTestKey generates a Curve25519 key pair for tests.
-func generateTestKey(t *testing.T) *noise.DHKey {
+// generateTestKey generates a Curve25519 key pair in protected memory,
+// destroyed when the test ends.
+func generateTestKey(t *testing.T) *noiseproto.StaticKey {
 	t.Helper()
-	key, err := noise.DH25519.GenerateKeypair(rand.Reader)
+	key, err := noiseproto.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("failed to generate test key: %v", err)
 	}
-	return &key
+	t.Cleanup(key.Destroy)
+	return key
 }
 
 // createTestBundle creates a PEM-encoded certificate bundle for testing.
@@ -954,7 +957,7 @@ func createTestMixedBundle(t *testing.T) []byte {
 }
 
 // startTestServer creates and starts a test server on a random port.
-func startTestServer(t *testing.T, bundler *mockCABundler) (*Server, *noise.DHKey) {
+func startTestServer(t *testing.T, bundler *mockCABundler) (*Server, *noiseproto.StaticKey) {
 	t.Helper()
 
 	serverKey := generateTestKey(t)
@@ -1006,7 +1009,7 @@ func connectTestClient(t *testing.T, addr string, serverPubKey []byte) *Client {
 
 // rawConnect performs a raw Noise_NK handshake and returns the connection
 // and cipher states directly.
-func rawConnect(t *testing.T, addr string, serverKey *noise.DHKey) (net.Conn, *noise.CipherState, *noise.CipherState) {
+func rawConnect(t *testing.T, addr string, serverKey *noiseproto.StaticKey) (net.Conn, *noise.CipherState, *noise.CipherState) {
 	t.Helper()
 
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -1028,7 +1031,7 @@ func rawConnect(t *testing.T, addr string, serverKey *noise.DHKey) (net.Conn, *n
 		CipherSuite: cipherSuite,
 		Pattern:     noise.HandshakeNK,
 		Initiator:   true,
-		PeerStatic:  serverKey.Public,
+		PeerStatic:  serverKey.PublicBytes(),
 		Prologue:    header,
 	})
 	if err != nil {
@@ -1068,4 +1071,21 @@ func rawConnect(t *testing.T, addr string, serverKey *noise.DHKey) (net.Conn, *n
 	}
 
 	return conn, cs1, cs2
+}
+
+// A key destroyed before the server is built is refused up front rather than
+// failing every Noise handshake later.
+func TestNewServer_RejectsDestroyedNoiseKey(t *testing.T) {
+	key := generateTestKey(t)
+	key.Destroy()
+
+	_, err := NewServer(&ServerConfig{
+		ListenAddr: "127.0.0.1:0",
+		StaticKey:  key,
+		CABundler:  &mockCABundler{bundle: []byte{}},
+		Logger:     slog.Default(),
+	})
+	if !errors.Is(err, ErrHandshakeFailed) {
+		t.Fatalf("NewServer() error = %v, want ErrHandshakeFailed", err)
+	}
 }

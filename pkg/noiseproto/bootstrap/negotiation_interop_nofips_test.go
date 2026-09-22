@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-enclave"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
@@ -22,7 +24,7 @@ import (
 // returning it, the Noise public key, and the P-256 public key. This is the
 // mixed-fleet server a migration runs. The Noise path requires a real X25519
 // key, so this helper is !fips-only.
-func startDualServer(t *testing.T, bundler *mockCABundler) (*Server, *noise.DHKey, []byte) {
+func startDualServer(t *testing.T, bundler *mockCABundler) (*Server, *noiseproto.StaticKey, []byte) {
 	t.Helper()
 
 	noiseKey := generateTestKey(t)
@@ -94,13 +96,13 @@ func TestInterop_DualServerServesBothSuites(t *testing.T) {
 	addr := srv.Addr().String()
 
 	t.Run("Noise client (explicit)", func(t *testing.T) {
-		fetch(t, &ClientConfig{ServerAddr: addr, ServerStaticKey: noiseKey.Public, Suite: SuiteNoiseNK})
+		fetch(t, &ClientConfig{ServerAddr: addr, ServerStaticKey: noiseKey.PublicBytes(), Suite: SuiteNoiseNK})
 	})
 	t.Run("P-256 client (explicit)", func(t *testing.T) {
 		fetch(t, &ClientConfig{ServerAddr: addr, ServerP256StaticKey: p256Pub, Suite: SuiteP256AESGCM})
 	})
 	t.Run("default client prefers Noise", func(t *testing.T) {
-		fetch(t, &ClientConfig{ServerAddr: addr, ServerStaticKey: noiseKey.Public, ServerP256StaticKey: p256Pub})
+		fetch(t, &ClientConfig{ServerAddr: addr, ServerStaticKey: noiseKey.PublicBytes(), ServerP256StaticKey: p256Pub})
 	})
 	t.Run("default client with only a P-256 key selects P-256", func(t *testing.T) {
 		fetch(t, &ClientConfig{ServerAddr: addr, ServerP256StaticKey: p256Pub})
@@ -139,7 +141,7 @@ func TestInterop_NoiseSuiteStillWorks(t *testing.T) {
 		_ = srv.Stop(ctx)
 	}()
 
-	client := connectTestClient(t, srv.Addr().String(), serverKey.Public)
+	client := connectTestClient(t, srv.Addr().String(), serverKey.PublicBytes())
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -147,4 +149,84 @@ func TestInterop_NoiseSuiteStillWorks(t *testing.T) {
 	if _, err := client.GetCABundle(ctx, "", ""); err != nil {
 		t.Fatalf("GetCABundle over Noise: %v", err)
 	}
+}
+
+// A Noise static key that has been destroyed -- by its owner, or by a shutdown
+// sweep (enclave.WipeAll) -- while the server is still running must fail each
+// Noise connection that needs it, and nothing else: the handler survives,
+// keeps serving the other suite, and keeps answering later connections
+// (owner ruling 2026-08-23, point 3).
+func TestServer_NoiseKeyDestroyed_FailsOnlyThatConnection(t *testing.T) {
+	srv, noiseKey, p256Pub := startDualServer(t, p256Bundler(t))
+	noisePub := noiseKey.PublicBytes()
+
+	noiseKey.Destroy()
+
+	// The refusal is classified, not a fault: the borrow reports the destroyed
+	// enclave before flynn/noise can read the unmapped scalar.
+	err := performWithFrame(t, srv, noiseMsg1(t, noisePub))
+	if !errors.Is(err, ErrHandshakeFailed) {
+		t.Errorf("performHandshake() error = %v, want ErrHandshakeFailed", err)
+	}
+	if !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Errorf("performHandshake() error = %v, want enclave.ErrEnclaveDestroyed", err)
+	}
+
+	// Over the network the Noise client fails, the server keeps serving the
+	// approved suite, and a second Noise attempt is answered (and refused)
+	// rather than hanging on a dead handler.
+	for range 2 {
+		client, err := NewClient(&ClientConfig{
+			ServerAddr:       srv.Addr().String(),
+			ServerStaticKey:  noisePub,
+			Suite:            SuiteNoiseNK,
+			ConnectTimeout:   5 * time.Second,
+			OperationTimeout: 5 * time.Second,
+			Logger:           slog.Default(),
+		})
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := client.Connect(ctx); err == nil {
+			t.Error("Connect() succeeded against a destroyed Noise key")
+		}
+		cancel()
+		client.Close()
+
+		fetch(t, &ClientConfig{
+			ServerAddr:          srv.Addr().String(),
+			ServerP256StaticKey: p256Pub,
+			Suite:               SuiteP256AESGCM,
+		})
+	}
+}
+
+// noiseMsg1 builds a well-formed Noise_NK first frame -- version||suite
+// header, then the initiator's first message -- addressed to serverPub.
+func noiseMsg1(t *testing.T, serverPub []byte) []byte {
+	t.Helper()
+
+	header := []byte{protocolVersion, SuiteNoiseNK}
+	hs, err := noise.NewHandshakeState(noise.Config{
+		CipherSuite: noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256),
+		Pattern:     noise.HandshakeNK,
+		Initiator:   true,
+		PeerStatic:  serverPub,
+		Prologue:    header,
+	})
+	if err != nil {
+		t.Fatalf("NewHandshakeState: %v", err)
+	}
+
+	// flynn/noise appends the message to the buffer it is given, so the frame
+	// is built in one allocation behind the header.
+	frame := make([]byte, 0, len(header)+noiseproto.KeySize+16)
+	frame = append(frame, header...)
+	frame, _, _, err = hs.WriteMessage(frame, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	return frame
 }

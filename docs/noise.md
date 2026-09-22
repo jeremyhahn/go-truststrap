@@ -49,13 +49,13 @@ The key is a hex-encoded 64-character string. Only the public key is distributed
 
 ```go
 type ServerConfig struct {
-    ListenAddr     string         // TCP bind address (default: ":8445")
-    StaticKey      *noise.DHKey   // Server's Curve25519 key pair (required)
-    CABundler      BundleProvider // Provides the CA certificate bundle
-    MaxConnections int            // Concurrent connection limit (default: 100)
-    ReadTimeout    time.Duration  // Per-frame read deadline (default: 10s)
-    WriteTimeout   time.Duration  // Per-frame write deadline (default: 10s)
-    Logger         *slog.Logger   // Structured logger (optional)
+    ListenAddr     string                // TCP bind address (default: ":8445")
+    StaticKey      *noiseproto.StaticKey // Curve25519 key pair, scalar in protected memory
+    CABundler      BundleProvider        // Provides the CA certificate bundle
+    MaxConnections int                   // Concurrent connection limit (default: 100)
+    ReadTimeout    time.Duration         // Per-frame read deadline (default: 10s)
+    WriteTimeout   time.Duration         // Per-frame write deadline (default: 10s)
+    Logger         *slog.Logger          // Structured logger (optional)
 }
 ```
 
@@ -146,7 +146,7 @@ if err != nil {
 // new Server.
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
-    StaticKey:  &key.DHKey,
+    StaticKey:  key, // *noiseproto.StaticKey; the server borrows it, never destroys it
     CABundler:  myCABundler, // implements BundleProvider
 })
 if err != nil {
@@ -230,7 +230,7 @@ fmt.Printf("CA bundle:\n%s\n", resp.BundlePEM)
 
 ```go
 import (
-    "github.com/awnumar/memguard"
+    "github.com/jeremyhahn/go-enclave"
 
     "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 )
@@ -241,13 +241,21 @@ defer key.Destroy()
 
 // Encode to hex for storage. The destination is caller-owned and should be
 // protected memory too: the hex form is as sensitive as the key itself.
-buf := memguard.NewBuffer(noiseproto.HexKeySize)
+allocator, err := enclave.ProcessAllocator()
+buf, err := allocator.NewSized(noiseproto.HexKeySize)
 defer buf.Destroy()
-err = noiseproto.EncodeStaticKey(buf.Bytes(), key)
-
-// Decode from hex bytes
-restored, err := noiseproto.DecodeStaticKey(buf.Bytes())
-defer restored.Destroy()
+err = buf.WithBytes(func(hexKey []byte) error {
+    if err := noiseproto.EncodeStaticKey(hexKey, key); err != nil {
+        return err
+    }
+    // Decode from hex bytes, inside the same borrow
+    restored, err := noiseproto.DecodeStaticKey(hexKey)
+    if err != nil {
+        return err
+    }
+    defer restored.Destroy()
+    return nil
+})
 
 // Load from raw private key bytes
 loaded, err := noiseproto.LoadStaticKey(privateKeyBytes)
@@ -257,25 +265,62 @@ defer loaded.Destroy()
 ### Private Key Memory Protection
 
 `GenerateStaticKey`, `LoadStaticKey` and `DecodeStaticKey` place the private
-scalar in a [memguard](https://github.com/awnumar/memguard) `LockedBuffer` --
-the portfolio's protected-memory primitive. The allocation sits outside the Go
-heap between guard pages, is locked against swap and hibernation images, is
-canary-checked, and is wiped when released. The key never passes through an
-immutable Go string, so every copy can be wiped.
+scalar in a [go-enclave](https://github.com/jeremyhahn/go-enclave)
+`MemoryEnclave` -- the portfolio's protected-memory primitive -- admitted
+against the process's locked-memory budget (`enclave.ProcessAllocator`, which
+`cmd/truststrap` sizes at startup). A generated scalar is drawn straight into
+the locked pages; a loaded or decoded one is copied or hex-decoded straight
+into them. The pages are then frozen read-only. The key never passes through an
+immutable Go string.
 
-Two consequences for callers:
+The scalar is never handed out as a slice that outlives a borrow.
+`StaticKey.WithDHKey` lends it to a callback as a `noise.DHKey` whose `Private`
+aliases the locked pages, holding the enclave's read lock for the whole call,
+so `Destroy` or a shutdown sweep (`enclave.WipeAll`) waits for the callback
+instead of unmapping pages under it. The public key is available as
+`StaticKey.PublicBytes`. `SessionConfig.LocalStaticKey` and
+`bootstrap.ServerConfig.StaticKey` both take a `*noiseproto.StaticKey`, so an
+unprotected key pair cannot be configured.
 
-- Every `StaticKey` must be released with `Destroy`, which wipes the private
-  key and frees its protected pages. A `noise.DHKey` copied out beforehand
-  points at freed memory afterwards, so destroy only once the Noise session is
-  done with the key.
-- Protected memory is a finite per-process resource (`RLIMIT_MEMLOCK` on Unix).
-  memguard aborts the process rather than handing back ordinary heap memory, so
-  a host that cannot lock memory fails loudly instead of degrading silently.
+Every secret the Noise path touches, and where it lives:
 
-Secrets held inside `flynn/noise` -- the handshake state and derived cipher
-states -- live in that library's own heap allocations and are outside the scope
-of this protection.
+| Secret | Where it lives |
+|---|---|
+| Static private scalar (the `StaticKey` itself) | Locked, frozen go-enclave pages, for the key's whole lifetime |
+| The `noise.DHKey` flynn/noise's `HandshakeState` retains | A slice **header** aliasing those same locked pages -- not a copy of the scalar. `Session` and the bootstrap server read through it only under a `WithDHKey` borrow, and the server drops the handshake state before its borrow ends |
+| The scalar during each X25519 operation | **Ordinary heap.** `x/crypto/curve25519` delegates to `crypto/ecdh`, whose `NewPrivateKey` copies the scalar into a heap allocation that is never wiped and lives until the garbage collector reclaims it. One such copy per key agreement using the static key, and one when the public key is derived. No API lets a caller lock or wipe it. |
+| Ephemeral private keys, DH outputs, chaining and cipher keys | **Ordinary heap**, inside flynn/noise's handshake and cipher states |
+| Hex-encoded key (key files) | Wherever the caller's buffer is; `cmd/truststrap` uses a go-enclave buffer |
+
+So the Noise static key is held in locked memory **between** operations, but it
+is **not** true that it never reaches the heap: each key agreement leaves one
+unwiped heap copy behind. That is the residual of the `flynn/noise` path, which
+this repository does not replace (never hand-roll cryptography, 2026-08-25); the
+approved suite in `pkg/p256proto` keeps its scalar in a single long-lived
+`crypto/ecdh` key instead of making a copy per handshake -- see
+[approved-handshake.md](approved-handshake.md).
+
+Consequences for callers:
+
+- Every `StaticKey` must be released with `Destroy`, which zeroizes the scalar
+  and returns its locked pages to the process budget. A `Session` never
+  destroys a caller-supplied key; `Session.Destroy` releases only a key the
+  session generated for itself. `Session.Destroy` is terminal either way: a
+  destroyed session returns `ErrSessionDestroyed` from `InitHandshake` and
+  `HandshakeMessage`, and `ErrSessionNotReady` from `Encrypt`, `Decrypt` and
+  `ChannelBinding`. Do not destroy a key while a `Session` is part
+  way through a handshake with it.
+- A session whose pattern gives it no static key -- the NK initiator -- has no
+  key generated for it at all.
+- A key destroyed or wiped while still configured fails each handshake that
+  needs it with an error wrapping `noiseproto.ErrProtectedMemory` and
+  `enclave.ErrEnclaveDestroyed`. On the bootstrap server that fails **that one
+  connection** and the server keeps serving.
+- Locked memory is a finite per-process resource (`RLIMIT_MEMLOCK` on Unix).
+  An exhausted budget is a returned error (`ErrProtectedMemory` wrapping
+  `enclave.ErrBudgetExhausted` or `enclave.ErrLockedMemoryUnavailable`), never a
+  process-wide purge. The Noise server allocates no locked memory per
+  connection: the only allocation is the static key, made once by its owner.
 
 ### Channel Binding
 

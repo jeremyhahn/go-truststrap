@@ -5,9 +5,10 @@ package noiseproto
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -33,9 +34,16 @@ type SessionConfig struct {
 	// Supported: noise.HandshakeXX, noise.HandshakeNK
 	Pattern noise.HandshakePattern
 
-	// LocalStaticKey is the persistent local static key pair.
-	// If nil, a new ephemeral key will be generated.
-	LocalStaticKey *noise.DHKey
+	// LocalStaticKey is the persistent local static key pair, its private
+	// scalar held in protected memory. The session borrows it and never
+	// destroys it: its lifetime is the caller's, and it must outlive the
+	// session's handshake.
+	//
+	// If nil, and the pattern gives this side a static key (the XX initiator
+	// or responder, the NK responder), the session generates one with
+	// GenerateStaticKey, owns it, and releases it on Destroy. If the pattern
+	// gives this side no static key -- the NK initiator -- none is generated.
+	LocalStaticKey *StaticKey
 
 	// PeerStaticKey is the remote party's static public key.
 	// For NK pattern: REQUIRED (initiator must know the server's key).
@@ -52,9 +60,18 @@ type SessionConfig struct {
 
 // Session manages an encrypted Noise protocol session supporting both
 // XX (mutual authentication) and NK (known server key) handshake patterns.
+//
+// A Session must be released with Destroy once it is no longer needed, which
+// frees the static key it generated for itself, if any.
 type Session struct {
-	mu             sync.Mutex
-	localStatic    noise.DHKey
+	mu sync.Mutex
+	// localStatic is nil when the pattern gives this side no static key and
+	// none was supplied. ownsLocalStatic records whether the session generated
+	// it, and so whether Destroy may release it.
+	localStatic     *StaticKey
+	ownsLocalStatic bool
+	// destroyed is set by Destroy and never cleared: destruction is terminal.
+	destroyed      bool
 	peerStatic     []byte
 	prologue       []byte
 	handshakeState *noise.HandshakeState
@@ -67,44 +84,130 @@ type Session struct {
 }
 
 // NewSession creates a new Noise protocol session from the provided configuration.
-// If no LocalStaticKey is provided, a new Curve25519 key pair is generated.
+//
+// If no LocalStaticKey is provided and the pattern gives this side a static
+// key, a new Curve25519 key pair is generated straight into protected memory
+// and owned by the session. If the pattern gives this side no static key (the
+// NK initiator), nothing is generated: key material the handshake never uses
+// is not created at all.
 func NewSession(cfg *SessionConfig) (*Session, error) {
-	var localStatic noise.DHKey
-	var err error
+	const op = "NewSession"
 
-	if cfg.LocalStaticKey != nil {
-		localStatic = *cfg.LocalStaticKey
-	} else {
-		// The cipher suite's DH function is what generates the key pair, so a
-		// FIPS build refuses here rather than producing an X25519 key.
-		suite, suiteErr := nkCipherSuite()
-		if suiteErr != nil {
-			return nil, suiteErr
+	localStatic := cfg.LocalStaticKey
+	owns := false
+
+	if localStatic == nil && usesLocalStatic(cfg.Pattern, cfg.IsInitiator) {
+		// A FIPS build refuses here, before any key is generated, rather than
+		// producing an X25519 key.
+		if _, err := nkCipherSuite(); err != nil {
+			return nil, err
 		}
 
-		localStatic, err = suite.GenerateKeypair(rand.Reader)
+		generated, err := GenerateStaticKey()
 		if err != nil {
-			return nil, fmt.Errorf("%w: key generation: %w", ErrHandshakeFailed, err)
+			return nil, wrapDetail(op, ErrHandshakeFailed, "key generation", err)
 		}
+		localStatic = generated
+		owns = true
 	}
 
 	return &Session{
-		localStatic: localStatic,
-		peerStatic:  cfg.PeerStaticKey,
-		prologue:    cfg.Prologue,
-		isInitiator: cfg.IsInitiator,
-		pattern:     cfg.Pattern,
+		localStatic:     localStatic,
+		ownsLocalStatic: owns,
+		peerStatic:      cfg.PeerStaticKey,
+		prologue:        cfg.Prologue,
+		isInitiator:     cfg.IsInitiator,
+		pattern:         cfg.Pattern,
 	}, nil
 }
 
-// LocalStaticPublicKey returns the local static public key.
-func (s *Session) LocalStaticPublicKey() []byte {
-	return s.localStatic.Public
+// usesLocalStatic reports whether pattern gives the initiator (or responder)
+// a static key: one it is pre-known by, or one it transmits in any of its own
+// messages. Every DH token involving a party's static key presupposes one of
+// the two, so this is exactly the set of roles that need a local static key.
+func usesLocalStatic(pattern noise.HandshakePattern, initiator bool) bool {
+	pre := pattern.ResponderPreMessages
+	if initiator {
+		pre = pattern.InitiatorPreMessages
+	}
+	if slices.Contains(pre, noise.MessagePatternS) {
+		return true
+	}
+
+	// Messages alternate initiator, responder, initiator, ...
+	for i, msg := range pattern.Messages {
+		if (i%2 == 0) == initiator && slices.Contains(msg, noise.MessagePatternS) {
+			return true
+		}
+	}
+
+	return false
 }
 
-// LocalStaticPrivateKey returns the local static private key.
-func (s *Session) LocalStaticPrivateKey() []byte {
-	return s.localStatic.Private
+// LocalStaticPublicKey returns a copy of the local static public key, or nil
+// when the session has none (the NK initiator) or has been destroyed.
+func (s *Session) LocalStaticPublicKey() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.localStatic.PublicBytes()
+}
+
+// Destroy releases the session's handshake and transport state and, if the
+// session generated its own static key, that key's protected pages. A
+// caller-supplied LocalStaticKey is never destroyed: its lifetime belongs to
+// the caller. It is idempotent and safe to call on a nil receiver.
+//
+// Destruction is terminal whether or not the session owned a key: afterwards
+// InitHandshake and HandshakeMessage return ErrSessionDestroyed, and Encrypt,
+// Decrypt and ChannelBinding return ErrSessionNotReady.
+func (s *Session) Destroy() {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.destroyed = true
+	s.handshakeDone.Store(false)
+
+	// Drop the handshake state first: it retains an alias of the static key's
+	// pages, which must not outlive them.
+	s.handshakeState = nil
+	s.sendCipher = nil
+	s.recvCipher = nil
+	s.channelBinding = nil
+	if s.ownsLocalStatic {
+		s.localStatic.Destroy()
+	}
+}
+
+// withLocalStatic runs fn while the local static key's pages are borrowed, so
+// that every read flynn/noise makes through the alias its handshake state
+// retains happens under the enclave's read lock: a concurrent Destroy or
+// shutdown sweep waits for fn, and one that has already run is reported --
+// wrapped in ErrHandshakeFailed -- instead of letting flynn/noise read unmapped
+// pages. fn's own error is returned unchanged. A session with no local static
+// key has nothing to borrow and runs fn directly.
+func (s *Session) withLocalStatic(op string, fn func(noise.DHKey) error) error {
+	if s.localStatic == nil {
+		return fn(noise.DHKey{})
+	}
+
+	var inner error
+
+	err := s.localStatic.WithDHKey(func(key noise.DHKey) error {
+		inner = fn(key)
+		return inner
+	})
+	if inner != nil {
+		return inner
+	}
+	if err != nil {
+		return wrapDetail(op, ErrHandshakeFailed, "static key", err)
+	}
+
+	return nil
 }
 
 // PeerStaticPublicKey returns the peer's static public key.
@@ -168,8 +271,14 @@ func (s *Session) SetPrologue(prologue []byte) {
 // For NK pattern, the initiator must have the server's static public key
 // configured via SessionConfig.PeerStaticKey.
 func (s *Session) InitHandshake() error {
+	const op = "InitHandshake"
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.destroyed {
+		return failure(op, ErrSessionDestroyed, "")
+	}
 
 	cipherSuite, err := nkCipherSuite()
 	if err != nil {
@@ -181,10 +290,6 @@ func (s *Session) InitHandshake() error {
 		Pattern:     s.pattern,
 		Initiator:   s.isInitiator,
 		Prologue:    s.prologue,
-		StaticKeypair: noise.DHKey{
-			Private: s.localStatic.Private,
-			Public:  s.localStatic.Public,
-		},
 	}
 
 	// For NK pattern, the initiator must provide the server's static key
@@ -193,9 +298,21 @@ func (s *Session) InitHandshake() error {
 		config.PeerStatic = s.peerStatic
 	}
 
-	hs, err := noise.NewHandshakeState(config)
-	if err != nil {
-		return fmt.Errorf("%w: init: %w", ErrHandshakeFailed, err)
+	// flynn/noise keeps the key pair it is given for the whole handshake. The
+	// Private slice it keeps aliases the locked pages rather than copying the
+	// scalar, and HandshakeMessage reads through it only under a borrow.
+	var hs *noise.HandshakeState
+	if err := s.withLocalStatic(op, func(key noise.DHKey) error {
+		config.StaticKeypair = key
+
+		var initErr error
+		hs, initErr = noise.NewHandshakeState(config)
+		if initErr != nil {
+			return wrap(op, ErrHandshakeFailed, initErr)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	s.handshakeState = hs
@@ -215,13 +332,36 @@ func (s *Session) InitHandshake() error {
 // The method handles varying numbers of handshake messages depending on
 // the pattern. XX requires 3 messages; NK requires 2.
 func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
+	const op = "HandshakeMessage"
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.destroyed {
+		return nil, false, failure(op, ErrSessionDestroyed, "")
+	}
 	if s.handshakeState == nil {
 		return nil, false, ErrHandshakeFailed
 	}
 
+	var outgoing []byte
+	var done bool
+
+	err := s.withLocalStatic(op, func(noise.DHKey) error {
+		var stepErr error
+		outgoing, done, stepErr = s.handshakeStep(op, incoming)
+		return stepErr
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	return outgoing, done, nil
+}
+
+// handshakeStep is one HandshakeMessage exchange. It runs under s.mu and under
+// a borrow of the local static key; see withLocalStatic.
+func (s *Session) handshakeStep(op string, incoming []byte) ([]byte, bool, error) {
 	var outgoing []byte
 	var err error
 
@@ -230,7 +370,7 @@ func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
 			// First message from initiator (e for XX, e+es for NK)
 			outgoing, _, _, err = s.handshakeState.WriteMessage(nil, nil)
 			if err != nil {
-				return nil, false, fmt.Errorf("%w: write msg1: %w", ErrHandshakeFailed, err)
+				return nil, false, wrapDetail(op, ErrHandshakeFailed, "write msg1", err)
 			}
 			return outgoing, false, nil
 		}
@@ -239,7 +379,7 @@ func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
 		var c1, c2 *noise.CipherState
 		_, c1, c2, err = s.handshakeState.ReadMessage(nil, incoming)
 		if err != nil {
-			return nil, false, fmt.Errorf("%w: read response (size=%d): %w", ErrHandshakeFailed, len(incoming), err)
+			return nil, false, wrapDetail(op, ErrHandshakeFailed, "read response (size="+strconv.Itoa(len(incoming))+")", err)
 		}
 
 		// If ReadMessage returned ciphers, the handshake completed on read
@@ -251,19 +391,19 @@ func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
 			// More messages remain (e.g., XX pattern msg3: s, se)
 			outgoing, s.sendCipher, s.recvCipher, err = s.handshakeState.WriteMessage(nil, nil)
 			if err != nil {
-				return nil, false, fmt.Errorf("%w: write final: %w", ErrHandshakeFailed, err)
+				return nil, false, wrapDetail(op, ErrHandshakeFailed, "write final", err)
 			}
 		}
 	} else {
 		// Responder
 		if incoming == nil {
-			return nil, false, fmt.Errorf("%w: responder requires incoming message", ErrInvalidMessage)
+			return nil, false, failure(op, ErrInvalidMessage, "responder requires incoming message")
 		}
 
 		var c1, c2 *noise.CipherState
 		_, c1, c2, err = s.handshakeState.ReadMessage(nil, incoming)
 		if err != nil {
-			return nil, false, fmt.Errorf("%w: read: %w", ErrHandshakeFailed, err)
+			return nil, false, wrapDetail(op, ErrHandshakeFailed, "read", err)
 		}
 
 		if c1 != nil && c2 != nil {
@@ -274,7 +414,7 @@ func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
 			// Need to write a response
 			outgoing, s.recvCipher, s.sendCipher, err = s.handshakeState.WriteMessage(nil, nil)
 			if err != nil {
-				return nil, false, fmt.Errorf("%w: write response: %w", ErrHandshakeFailed, err)
+				return nil, false, wrapDetail(op, ErrHandshakeFailed, "write response", err)
 			}
 
 			// Check if writing response completed the handshake

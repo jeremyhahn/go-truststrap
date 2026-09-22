@@ -8,10 +8,10 @@ package noiseproto
 import (
 	"bytes"
 	"crypto/rand"
-	"strings"
 	"testing"
 
 	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/curve25519"
@@ -19,27 +19,32 @@ import (
 
 // These tests need a real X25519 key pair or handshake, which a FIPS build refuses; the refusal itself is covered by the fips-tagged tests. See docs/fips.md.
 
+// Every assertion about private material in this file runs inside a borrow of
+// the enclave that holds it: tests may not copy secrets out of protected
+// storage to assert on them (conventions/security-review.md §6).
+
 func TestGenerateStaticKey(t *testing.T) {
 	key := newTestStaticKey(t)
 	require.NotNil(t, key)
 
-	assert.Len(t, key.Private, KeySize)
-	assert.Len(t, key.Public, KeySize)
-
-	// Keys must not be all zeros
-	assert.False(t, bytes.Equal(key.Private, make([]byte, KeySize)),
-		"private key must not be zero")
-	assert.False(t, bytes.Equal(key.Public, make([]byte, KeySize)),
+	assert.Len(t, key.PublicBytes(), KeySize)
+	assert.False(t, bytes.Equal(key.PublicBytes(), make([]byte, KeySize)),
 		"public key must not be zero")
+
+	withScalar(t, key, func(priv []byte) {
+		assert.Len(t, priv, KeySize)
+		assert.False(t, bytes.Equal(priv, make([]byte, KeySize)),
+			"private key must not be zero")
+	})
 }
 
 func TestGenerateStaticKey_Uniqueness(t *testing.T) {
 	key1 := newTestStaticKey(t)
 	key2 := newTestStaticKey(t)
 
-	assert.False(t, bytes.Equal(key1.Private, key2.Private),
+	assert.False(t, sameScalar(t, key1, key2),
 		"two generated private keys must differ")
-	assert.False(t, bytes.Equal(key1.Public, key2.Public),
+	assert.False(t, bytes.Equal(key1.PublicBytes(), key2.PublicBytes()),
 		"two generated public keys must differ")
 }
 
@@ -49,97 +54,132 @@ func TestGenerateStaticKey_Uniqueness(t *testing.T) {
 func TestGenerateStaticKey_MatchesNoiseDerivation(t *testing.T) {
 	key := newTestStaticKey(t)
 
-	want, err := curve25519.X25519(key.Private, curve25519.Basepoint)
-	require.NoError(t, err)
-	assert.Equal(t, want, key.Public,
-		"public key must be the Curve25519 scalar base multiple of the private key")
-
 	peer, err := noise.DH25519.GenerateKeypair(rand.Reader)
 	require.NoError(t, err)
 
-	ours, err := noise.DH25519.DH(key.Private, peer.Public)
-	require.NoError(t, err)
-	theirs, err := noise.DH25519.DH(peer.Private, key.Public)
+	theirs, err := noise.DH25519.DH(peer.Private, key.PublicBytes())
 	require.NoError(t, err)
 
-	assert.Equal(t, ours, theirs,
-		"Diffie-Hellman with a flynn/noise keypair must agree")
+	withScalar(t, key, func(priv []byte) {
+		want, err := curve25519.X25519(priv, curve25519.Basepoint)
+		require.NoError(t, err)
+		assert.Equal(t, want, key.PublicBytes(),
+			"public key must be the Curve25519 scalar base multiple of the private key")
+
+		ours, err := noise.DH25519.DH(priv, peer.Public)
+		require.NoError(t, err)
+		assert.Equal(t, ours, theirs,
+			"Diffie-Hellman with a flynn/noise keypair must agree")
+	})
 }
 
 // TestGenerateStaticKey_PrivateKeyIsProtected checks the private scalar lives
-// in the key's memguard buffer rather than a separate heap allocation.
+// in the key's enclave, and that WithDHKey lends that enclave's pages rather
+// than a copy of them.
 func TestGenerateStaticKey_PrivateKeyIsProtected(t *testing.T) {
 	key := newTestStaticKey(t)
 
-	require.NotNil(t, key.priv)
-	assert.True(t, key.priv.IsAlive(), "the protected buffer must be alive")
-	assert.Equal(t, KeySize, key.priv.Size())
-	assert.Same(t, &key.priv.Bytes()[0], &key.Private[0],
-		"the private key must alias the protected buffer")
+	require.NotNil(t, key.private)
+	assert.True(t, key.private.IsAlive(), "the enclave must be alive")
+	assert.Equal(t, KeySize, key.private.Size())
+
+	require.NoError(t, key.WithDHKey(func(dh noise.DHKey) error {
+		return key.private.WithBytes(func(locked []byte) error {
+			assert.Same(t, &locked[0], &dh.Private[0],
+				"the lent private key must alias the enclave's pages")
+			return nil
+		})
+	}))
+}
+
+// TestGenerateStaticKey_ChargesProcessBudget checks the scalar is admitted
+// against the process's locked-memory budget, and returned to it on Destroy.
+func TestGenerateStaticKey_ChargesProcessBudget(t *testing.T) {
+	allocator := withTestAllocator(t, 1<<20)
+
+	key, err := GenerateStaticKey()
+	require.NoError(t, err)
+	assert.Positive(t, allocator.InUse(), "the scalar must be charged to the budget")
+
+	key.Destroy()
+	assert.Zero(t, allocator.InUse(), "Destroy must return the reservation")
 }
 
 func TestLoadStaticKey(t *testing.T) {
-	original := newTestStaticKey(t)
+	input := randomScalar(t)
 
-	loaded, err := LoadStaticKey(original.Private)
-	require.NoError(t, err)
-	require.NotNil(t, loaded)
-	defer loaded.Destroy()
+	require.NoError(t, input.WithBytes(func(raw []byte) error {
+		loaded, err := LoadStaticKey(raw)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		defer loaded.Destroy()
 
-	assert.Equal(t, original.Private, loaded.Private,
-		"loaded private key must match original")
-	assert.Equal(t, original.Public, loaded.Public,
-		"derived public key must match original")
+		withScalar(t, loaded, func(priv []byte) {
+			assert.True(t, bytes.Equal(raw, priv), "loaded private key must match its input")
+
+			want, err := curve25519.X25519(priv, curve25519.Basepoint)
+			require.NoError(t, err)
+			assert.Equal(t, want, loaded.PublicBytes(), "derived public key must match")
+		})
+		return nil
+	}))
 }
 
 func TestEncodeDecodeStaticKey(t *testing.T) {
 	key := newTestStaticKey(t)
 
-	encoded := encodeTestKey(t, key)
-	assert.Len(t, encoded, HexKeySize)
+	withEncoded(t, key, HexKeySize, func(encoded []byte) {
+		// All characters must be valid lowercase hex
+		for _, c := range encoded {
+			assert.True(t, (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
+				"encoded key must contain only lowercase hex characters")
+		}
 
-	// All characters must be valid lowercase hex
-	for _, c := range encoded {
-		assert.True(t, (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
-			"encoded key must contain only lowercase hex characters")
-	}
+		decoded, err := DecodeStaticKey(encoded)
+		require.NoError(t, err)
+		defer decoded.Destroy()
 
-	decoded, err := DecodeStaticKey(encoded)
-	require.NoError(t, err)
-	defer decoded.Destroy()
-
-	assert.Equal(t, key.Private, decoded.Private,
-		"round-trip private key must match")
-	assert.Equal(t, key.Public, decoded.Public,
-		"round-trip public key must match")
+		assert.True(t, sameScalar(t, key, decoded), "round-trip private key must match")
+		assert.Equal(t, key.PublicBytes(), decoded.PublicBytes(),
+			"round-trip public key must match")
+	})
 }
 
 // TestDecodeStaticKey_PreservesInput documents that the encoded form stays the
 // caller's to wipe: DecodeStaticKey copies out of it rather than clearing it.
 func TestDecodeStaticKey_PreservesInput(t *testing.T) {
 	key := newTestStaticKey(t)
-	encoded := encodeTestKey(t, key)
 
-	input := make([]byte, len(encoded))
-	copy(input, encoded)
+	withEncoded(t, key, HexKeySize, func(encoded []byte) {
+		decoded, err := DecodeStaticKey(encoded)
+		require.NoError(t, err)
+		defer decoded.Destroy()
 
-	decoded, err := DecodeStaticKey(input)
-	require.NoError(t, err)
-	defer decoded.Destroy()
-
-	assert.Equal(t, encoded, input, "DecodeStaticKey must not modify its input")
+		// The input is intact exactly when encoding the key again reproduces it.
+		withEncoded(t, key, HexKeySize, func(again []byte) {
+			assert.True(t, bytes.Equal(encoded, again), "DecodeStaticKey must not modify its input")
+		})
+	})
 }
 
 func TestEncodeStaticKey_LongerDestination(t *testing.T) {
 	key := newTestStaticKey(t)
 
-	dst := make([]byte, HexKeySize+1)
-	dst[HexKeySize] = '\n'
-	require.NoError(t, EncodeStaticKey(dst, key))
+	withEncoded(t, key, HexKeySize, func(want []byte) {
+		buf, err := enclave.NewMemoryEnclaveSized(HexKeySize + 1)
+		require.NoError(t, err)
+		defer buf.Destroy()
 
-	assert.Equal(t, encodeTestKey(t, key), dst[:HexKeySize])
-	assert.Equal(t, byte('\n'), dst[HexKeySize],
-		"encoding must not write past the hex output")
+		require.NoError(t, buf.WithBytes(func(dst []byte) error {
+			dst[HexKeySize] = '\n'
+			require.NoError(t, EncodeStaticKey(dst, key))
+
+			assert.True(t, bytes.Equal(want, dst[:HexKeySize]))
+			assert.Equal(t, byte('\n'), dst[HexKeySize],
+				"encoding must not write past the hex output")
+			return nil
+		}))
+	})
 }
 
 func TestEncodeStaticKey_DestinationTooSmall(t *testing.T) {
@@ -154,42 +194,57 @@ func TestEncodeStaticKey_DestroyedKey(t *testing.T) {
 	require.NoError(t, err)
 	key.Destroy()
 
-	assert.ErrorIs(t, EncodeStaticKey(make([]byte, HexKeySize), key), ErrInvalidKeySize)
+	err = EncodeStaticKey(make([]byte, HexKeySize), key)
+	assert.ErrorIs(t, err, ErrProtectedMemory)
+	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed)
 }
 
 func TestEncodeStaticKey_DeterministicOutput(t *testing.T) {
 	key := newTestStaticKey(t)
 
-	assert.Equal(t, encodeTestKey(t, key), encodeTestKey(t, key),
-		"encoding the same key must produce identical output")
+	withEncoded(t, key, HexKeySize, func(first []byte) {
+		withEncoded(t, key, HexKeySize, func(second []byte) {
+			assert.True(t, bytes.Equal(first, second),
+				"encoding the same key must produce identical output")
+		})
+	})
 }
 
 func TestEncodeStaticKey_LowercaseHex(t *testing.T) {
 	key := newTestStaticKey(t)
 
-	encoded := string(encodeTestKey(t, key))
-	assert.Equal(t, strings.ToLower(encoded), encoded,
-		"encoded key must use lowercase hex")
+	withEncoded(t, key, HexKeySize, func(encoded []byte) {
+		// Inspect each byte in place: bytes.ToLower would copy the encoded
+		// private key out of the enclave.
+		for i, c := range encoded {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+				t.Fatalf("encoded key byte %d is not lowercase hex", i)
+			}
+		}
+	})
 }
 
 func TestLoadStaticKey_PreservesInput(t *testing.T) {
-	original := newTestStaticKey(t)
+	// The input stays writable (never frozen) so the test can mutate it.
+	input := randomScalar(t)
 
-	// Copy the private key to detect mutations
-	inputCopy := make([]byte, len(original.Private))
-	copy(inputCopy, original.Private)
+	require.NoError(t, input.WithBytes(func(raw []byte) error {
+		loaded, err := LoadStaticKey(raw)
+		require.NoError(t, err)
+		defer loaded.Destroy()
 
-	loaded, err := LoadStaticKey(inputCopy)
-	require.NoError(t, err)
-	defer loaded.Destroy()
+		// Mutate the input to verify LoadStaticKey made a defensive copy
+		raw[0] ^= 0xFF
 
-	// Mutate the input to verify LoadStaticKey made a defensive copy
-	inputCopy[0] ^= 0xFF
-
-	assert.NotEqual(t, inputCopy[0], loaded.Private[0],
-		"LoadStaticKey must make a defensive copy of the input")
-	assert.Equal(t, original.Private, loaded.Private,
-		"loaded key must still match original after input mutation")
+		withScalar(t, loaded, func(priv []byte) {
+			assert.NotEqual(t, raw[0], priv[0],
+				"LoadStaticKey must make a defensive copy of the input")
+			raw[0] ^= 0xFF
+			assert.True(t, bytes.Equal(raw, priv),
+				"loaded key must still match the original input")
+		})
+		return nil
+	}))
 }
 
 func TestStaticKey_Destroy(t *testing.T) {
@@ -198,9 +253,17 @@ func TestStaticKey_Destroy(t *testing.T) {
 
 	key.Destroy()
 
-	assert.Nil(t, key.Private, "Destroy must clear the private key")
-	assert.Nil(t, key.Public, "Destroy must clear the public key")
-	assert.False(t, key.priv.IsAlive(), "Destroy must release the protected buffer")
+	assert.Nil(t, key.PublicBytes(), "Destroy must clear the public key")
+	assert.False(t, key.private.IsAlive(), "Destroy must release the enclave")
+
+	called := false
+	err = key.WithDHKey(func(noise.DHKey) error {
+		called = true
+		return nil
+	})
+	assert.False(t, called, "a destroyed key must not be lent")
+	assert.ErrorIs(t, err, ErrProtectedMemory)
+	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed)
 }
 
 func TestStaticKey_Destroy_Idempotent(t *testing.T) {
@@ -224,13 +287,62 @@ func newTestStaticKey(t *testing.T) *StaticKey {
 	return key
 }
 
-// encodeTestKey hex-encodes a static key into an ordinary buffer for
-// assertions that need to inspect the encoded form.
-func encodeTestKey(t *testing.T, key *StaticKey) []byte {
+// randomScalar returns an enclave holding KeySize random bytes generated in
+// place, so a test input for LoadStaticKey never exists on the heap. It is left
+// unfrozen so a test may mutate it, and destroyed when the test ends.
+func randomScalar(t *testing.T) *enclave.MemoryEnclave {
 	t.Helper()
 
-	encoded := make([]byte, HexKeySize)
-	require.NoError(t, EncodeStaticKey(encoded, key))
+	e, err := enclave.NewMemoryEnclaveSized(KeySize)
+	require.NoError(t, err)
+	t.Cleanup(e.Destroy)
 
-	return encoded
+	require.NoError(t, e.WithBytes(func(b []byte) error {
+		_, err := rand.Read(b)
+		return err
+	}))
+
+	return e
+}
+
+// withScalar runs fn over key's private scalar inside a borrow, so assertions
+// about it never copy it out of protected storage.
+func withScalar(t *testing.T, key *StaticKey, fn func(priv []byte)) {
+	t.Helper()
+
+	require.NoError(t, key.WithDHKey(func(dh noise.DHKey) error {
+		fn(dh.Private)
+		return nil
+	}))
+}
+
+// sameScalar reports whether two keys hold the same private scalar, comparing
+// inside nested borrows of the two enclaves.
+func sameScalar(t *testing.T, a, b *StaticKey) bool {
+	t.Helper()
+
+	var same bool
+	withScalar(t, a, func(pa []byte) {
+		withScalar(t, b, func(pb []byte) {
+			same = bytes.Equal(pa, pb)
+		})
+	})
+
+	return same
+}
+
+// withEncoded hex-encodes key into a locked buffer of n bytes and runs fn over
+// the buffer inside its borrow; the encoded form is as sensitive as the key.
+func withEncoded(t *testing.T, key *StaticKey, n int, fn func(encoded []byte)) {
+	t.Helper()
+
+	buf, err := enclave.NewMemoryEnclaveSized(n)
+	require.NoError(t, err)
+	defer buf.Destroy()
+
+	require.NoError(t, buf.WithBytes(func(encoded []byte) error {
+		require.NoError(t, EncodeStaticKey(encoded, key))
+		fn(encoded)
+		return nil
+	}))
 }

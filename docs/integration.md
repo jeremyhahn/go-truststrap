@@ -13,8 +13,8 @@ The module requires Go 1.27+ and has no CGO dependencies (`CGO_ENABLED=0` compat
 - `github.com/flynn/noise` -- Noise Protocol Framework
 - `github.com/miekg/dns` -- DNS resolution for DANE/TLSA
 - `golang.org/x/crypto` -- Curve25519 operations
-- `github.com/awnumar/memguard` -- protected memory for `pkg/noiseproto`
-- `github.com/jeremyhahn/go-enclave` -- protected memory for `pkg/p256proto`:
+- `github.com/jeremyhahn/go-enclave` -- protected memory for `pkg/p256proto`
+  and `pkg/noiseproto`:
   mlock'd, guard-paged, canaried regions whose every failure is a returned
   error. This is a **first-party module**, so it resolves from the internal
   Gitea in development and CI (`GOPRIVATE=github.com/jeremyhahn/*` plus git's
@@ -74,7 +74,7 @@ import "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 // grpcService implements BundleProvider via its CABundle() method
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
-    StaticKey:  &noiseKey.DHKey,
+    StaticKey:  noiseKey, // *noiseproto.StaticKey
     CABundler:  grpcService, // go-xkms's gRPC service
 })
 ```
@@ -110,7 +110,7 @@ func (f *FileBundler) CABundle() ([]byte, error) {
 // Use with the Noise bootstrap server
 server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":8445",
-    StaticKey:  &key.DHKey,
+    StaticKey:  key,
     CABundler:  &FileBundler{path: "/etc/ssl/ca-bundle.pem"},
 })
 ```
@@ -198,7 +198,7 @@ For Noise bootstrap tests, use `net.Listen("tcp", ":0")` (OS-assigned port) via 
 ```go
 server, _ := bootstrap.NewServer(&bootstrap.ServerConfig{
     ListenAddr: ":0", // OS assigns a free port
-    StaticKey:  &key.DHKey,
+    StaticKey:  key,
     CABundler:  bundler,
 })
 server.Start()

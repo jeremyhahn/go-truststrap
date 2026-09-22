@@ -240,7 +240,7 @@ failure is a typed handshake error, never a fallback.
 
 ## API shape
 
-`ServerConfig.StaticKey` is a `*noise.DHKey` today, a Noise type that cannot
+`ServerConfig.StaticKey` is a `*noiseproto.StaticKey`, a Noise type that cannot
 carry a P-256 key. Rather than widen it to `any`, the approved suite gets its
 own explicitly-typed field, so an invalid combination does not compile:
 
@@ -253,13 +253,14 @@ own explicitly-typed field, so an invalid combination does not compile:
 
 ### Protected memory: implemented, and what it does not reach
 
-Issue #7 is blocked on an owner ruling about holding **Noise** static private
-keys in `memguard`, and the thing blocking it is specific to `flynn/noise`:
-its API takes `noise.DHKey{Private []byte}` by value and `HandshakeState`
-retains that copy for the handshake's lifetime, so an enclave could only
-narrow the window, never close it.
+The **Noise** static key moved to go-enclave in #7, and what it could not reach
+there is specific to `flynn/noise`: its API takes `noise.DHKey{Private []byte}`
+and runs every X25519 operation through `x/crypto/curve25519`, which hands the
+scalar to `crypto/ecdh.NewPrivateKey` and so leaves one unwiped heap copy per
+key agreement. The enclave holds the key between operations; it cannot stop
+that copy. See [noise.md](noise.md#private-key-memory-protection).
 
-The approved suite does not have that problem. `crypto/ecdh` never asks the
+The approved suite does not have that problem to the same degree. `crypto/ecdh` never asks the
 caller for raw private bytes: a key is a `*ecdh.PrivateKey`, `ECDH` is a
 method on it, and `Bytes()` — the only way out — is something this package
 simply never calls. So the private scalar can be unsealed exactly once, at

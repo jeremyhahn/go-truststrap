@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 )
 
 func TestRateLimiter_AllowsBurst(t *testing.T) {
@@ -91,51 +91,18 @@ func TestRateLimiter_Cleanup(t *testing.T) {
 	}
 }
 
-func TestNewServer_InvalidKeySize(t *testing.T) {
-	tests := []struct {
-		name    string
-		private []byte
-		public  []byte
-	}{
-		{
-			name:    "short private key",
-			private: make([]byte, 16),
-			public:  make([]byte, 32),
-		},
-		{
-			name:    "short public key",
-			private: make([]byte, 32),
-			public:  make([]byte, 16),
-		},
-		{
-			name:    "empty keys",
-			private: []byte{},
-			public:  []byte{},
-		},
-		{
-			name:    "oversized private key",
-			private: make([]byte, 64),
-			public:  make([]byte, 32),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewServer(&ServerConfig{
-				ListenAddr: "127.0.0.1:0",
-				StaticKey: &noise.DHKey{
-					Private: tt.private,
-					Public:  tt.public,
-				},
-				CABundler: &mockCABundler{bundle: []byte{}},
-				Logger:    slog.Default(),
-			})
-			if err == nil {
-				t.Fatal("expected error for invalid key size")
-			}
-			if !errors.Is(err, ErrHandshakeFailed) {
-				t.Errorf("expected ErrHandshakeFailed, got: %v", err)
-			}
-		})
+// NewServer refuses a Noise key that is not a live key pair -- one not built by
+// noiseproto's constructors -- rather than accepting it and failing every Noise
+// handshake later. A destroyed key is covered in server_nofips_test.go, since
+// building one needs X25519.
+func TestNewServer_RejectsDeadNoiseKey(t *testing.T) {
+	_, err := NewServer(&ServerConfig{
+		ListenAddr: "127.0.0.1:0",
+		StaticKey:  &noiseproto.StaticKey{},
+		CABundler:  &mockCABundler{bundle: []byte{}},
+		Logger:     slog.Default(),
+	})
+	if !errors.Is(err, ErrHandshakeFailed) {
+		t.Fatalf("NewServer() error = %v, want ErrHandshakeFailed", err)
 	}
 }

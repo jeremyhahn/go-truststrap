@@ -6,9 +6,7 @@
 package main
 
 import (
-	"encoding/hex"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -67,9 +65,7 @@ func TestWriteStaticKeyFile_DirectorySyncErrors(t *testing.T) {
 			// The rename happens before the sync, so the key itself is on disk
 			// either way; a sync failure reports that its durability is not
 			// confirmed, not that the write was skipped.
-			data, err := os.ReadFile(keyPath)
-			require.NoError(t, err)
-			assert.Equal(t, hex.EncodeToString(key.Private)+"\n", string(data))
+			assertKeyFileHolds(t, keyPath, key, "the key must be on disk")
 		})
 	}
 }

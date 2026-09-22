@@ -17,73 +17,109 @@ func TestSession_Constants(t *testing.T) {
 
 // Benchmarks
 
+// benchSession constructs a session for a benchmark, failing it on error. The
+// caller destroys it, so every session-generated key returns its reservation
+// to the process's locked-memory budget within the iteration.
+func benchSession(b *testing.B, cfg *SessionConfig) *Session {
+	b.Helper()
+
+	s, err := NewSession(cfg)
+	if err != nil {
+		b.Fatalf("NewSession: %v", err)
+	}
+	return s
+}
+
+// benchHandshake drives a handshake between two initialised sessions to
+// completion, failing the benchmark on any error.
+func benchHandshake(b *testing.B, initiator, responder *Session) {
+	b.Helper()
+
+	if err := initiator.InitHandshake(); err != nil {
+		b.Fatalf("initiator InitHandshake: %v", err)
+	}
+	if err := responder.InitHandshake(); err != nil {
+		b.Fatalf("responder InitHandshake: %v", err)
+	}
+
+	// Deliver every message to the other peer until both sessions report
+	// completion. A step's done flag describes only the peer that took it:
+	// NK completes on the responder's write before the initiator has read
+	// message 2, and XX completes on the initiator's write before the
+	// responder has read message 3, so the loop runs on both peers' state.
+	// maxHandshakeTurns bounds the loop so a stuck handshake fails the
+	// benchmark instead of spinning.
+	const maxHandshakeTurns = 4
+	msg, _, err := initiator.HandshakeMessage(nil)
+	if err != nil {
+		b.Fatalf("initiator msg1: %v", err)
+	}
+	turn := responder
+	for i := 0; !initiator.IsHandshakeComplete() || !responder.IsHandshakeComplete(); i++ {
+		if i >= maxHandshakeTurns {
+			b.Fatalf("handshake incomplete after %d turns", maxHandshakeTurns)
+		}
+		if msg, _, err = turn.HandshakeMessage(msg); err != nil {
+			b.Fatalf("handshake turn %d: %v", i+1, err)
+		}
+		if turn == responder {
+			turn = initiator
+		} else {
+			turn = responder
+		}
+	}
+}
+
 func BenchmarkXXHandshake(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		initiator, _ := NewSession(&SessionConfig{
-			Pattern:     noise.HandshakeXX,
-			IsInitiator: true,
-		})
-		responder, _ := NewSession(&SessionConfig{
-			Pattern:     noise.HandshakeXX,
-			IsInitiator: false,
-		})
+		initiator := benchSession(b, &SessionConfig{Pattern: noise.HandshakeXX, IsInitiator: true})
+		responder := benchSession(b, &SessionConfig{Pattern: noise.HandshakeXX})
 
-		initiator.InitHandshake()
-		responder.InitHandshake()
+		benchHandshake(b, initiator, responder)
 
-		msg1, _, _ := initiator.HandshakeMessage(nil)
-		msg2, _, _ := responder.HandshakeMessage(msg1)
-		msg3, _, _ := initiator.HandshakeMessage(msg2)
-		responder.HandshakeMessage(msg3)
+		initiator.Destroy()
+		responder.Destroy()
 	}
 }
 
 func BenchmarkNKHandshake(b *testing.B) {
-	serverKey, _ := GenerateStaticKey()
+	serverKey, err := GenerateStaticKey()
+	if err != nil {
+		b.Fatalf("GenerateStaticKey: %v", err)
+	}
 	defer serverKey.Destroy()
 
 	for i := 0; i < b.N; i++ {
-		client, _ := NewSession(&SessionConfig{
+		client := benchSession(b, &SessionConfig{
 			Pattern:       noise.HandshakeNK,
 			IsInitiator:   true,
-			PeerStaticKey: serverKey.Public,
+			PeerStaticKey: serverKey.PublicBytes(),
 		})
-		server, _ := NewSession(&SessionConfig{
+		server := benchSession(b, &SessionConfig{
 			Pattern:        noise.HandshakeNK,
-			LocalStaticKey: &serverKey.DHKey,
-			IsInitiator:    false,
+			LocalStaticKey: serverKey,
 		})
 
-		client.InitHandshake()
-		server.InitHandshake()
+		benchHandshake(b, client, server)
 
-		msg1, _, _ := client.HandshakeMessage(nil)
-		msg2, _, _ := server.HandshakeMessage(msg1)
-		client.HandshakeMessage(msg2)
+		client.Destroy()
+		server.Destroy()
 	}
 }
 
 func BenchmarkEncrypt(b *testing.B) {
-	initiator, _ := NewSession(&SessionConfig{
-		Pattern:     noise.HandshakeXX,
-		IsInitiator: true,
-	})
-	responder, _ := NewSession(&SessionConfig{
-		Pattern:     noise.HandshakeXX,
-		IsInitiator: false,
-	})
+	initiator := benchSession(b, &SessionConfig{Pattern: noise.HandshakeXX, IsInitiator: true})
+	defer initiator.Destroy()
+	responder := benchSession(b, &SessionConfig{Pattern: noise.HandshakeXX})
+	defer responder.Destroy()
 
-	initiator.InitHandshake()
-	responder.InitHandshake()
-
-	msg1, _, _ := initiator.HandshakeMessage(nil)
-	msg2, _, _ := responder.HandshakeMessage(msg1)
-	msg3, _, _ := initiator.HandshakeMessage(msg2)
-	responder.HandshakeMessage(msg3)
+	benchHandshake(b, initiator, responder)
 
 	plaintext := make([]byte, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		initiator.Encrypt(plaintext)
+		if _, err := initiator.Encrypt(plaintext); err != nil {
+			b.Fatalf("Encrypt: %v", err)
+		}
 	}
 }

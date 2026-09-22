@@ -3,7 +3,6 @@ module github.com/jeremyhahn/go-truststrap
 go 1.27.0
 
 require (
-	github.com/awnumar/memguard v0.23.0
 	github.com/flynn/noise v1.1.0
 	github.com/jeremyhahn/go-enclave v0.6.0-alpha
 	github.com/miekg/dns v1.1.72

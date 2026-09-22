@@ -74,3 +74,19 @@ func TestErrors_Independence(t *testing.T) {
 		}
 	}
 }
+
+// configError reports the sentinel and the offending setting, and classifies
+// with errors.Is against its Kind.
+func TestConfigError(t *testing.T) {
+	err := configError{Kind: ErrMaxConnections, Detail: "max connections 9 exceeds upper bound 1"}
+
+	if got, want := err.Error(), ErrMaxConnections.Error()+": max connections 9 exceeds upper bound 1"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(err, ErrMaxConnections) {
+		t.Errorf("errors.Is(%v, ErrMaxConnections) = false", err)
+	}
+	if errors.Is(err, ErrHandshakeFailed) {
+		t.Errorf("errors.Is(%v, ErrHandshakeFailed) = true, want only its own Kind", err)
+	}
+}

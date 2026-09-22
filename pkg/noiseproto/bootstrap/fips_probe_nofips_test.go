@@ -84,13 +84,13 @@ func TestProbe_PermissiveRuntimeKeepsNoise(t *testing.T) {
 	srv, noiseKey, p256Pub := startDualServer(t, &mockCABundler{bundle: bundlePEM})
 
 	t.Run("Noise-only client completes", func(t *testing.T) {
-		fetch(t, &ClientConfig{ServerAddr: srv.Addr().String(), ServerStaticKey: noiseKey.Public})
+		fetch(t, &ClientConfig{ServerAddr: srv.Addr().String(), ServerStaticKey: noiseKey.PublicBytes()})
 	})
 
 	t.Run("both keys default to Noise", func(t *testing.T) {
 		cfg := &ClientConfig{
 			ServerAddr:          srv.Addr().String(),
-			ServerStaticKey:     noiseKey.Public,
+			ServerStaticKey:     noiseKey.PublicBytes(),
 			ServerP256StaticKey: p256Pub,
 		}
 		if suite, err := selectClientSuite(cfg); err != nil || suite != SuiteNoiseNK {

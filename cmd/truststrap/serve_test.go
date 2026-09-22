@@ -20,6 +20,7 @@ func TestLoadOrGenerateKey_InvalidHex(t *testing.T) {
 	_, err := loadOrGenerateKey(keyPath)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyLoad)
+	requireCommandError(t, err, "loadOrGenerateKey")
 }
 
 // A read failure that is not os.ErrNotExist must surface as ErrKeyLoad rather
@@ -35,6 +36,7 @@ func TestLoadOrGenerateKey_ReadError(t *testing.T) {
 	_, err := loadOrGenerateKey(filepath.Join(notADir, "test.key"))
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyLoad)
+	requireCommandError(t, err, "loadOrGenerateKey")
 }
 
 // The key file is absent, so generation runs, but the write cannot land. A
@@ -49,6 +51,7 @@ func TestLoadOrGenerateKey_WriteError(t *testing.T) {
 	_, err := loadOrGenerateKey(keyPath)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGeneration)
+	requireCommandError(t, err, "loadOrGenerateKey")
 }
 
 func TestRunServe_MissingBundleFile(t *testing.T) {
@@ -69,6 +72,7 @@ func TestRunServe_NonexistentBundleFile(t *testing.T) {
 	err := runServe(serveCmd, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBundleFileNotFound)
+	requireCommandError(t, err, "runServe")
 }
 
 func TestServeCmd_HasExpectedFlags(t *testing.T) {

@@ -71,4 +71,5 @@ func TestNoiseGenerate_WriteError(t *testing.T) {
 	err := runNoiseGenerate(cmd, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrFileOperation)
+	requireCommandError(t, err, "runNoiseGenerate")
 }

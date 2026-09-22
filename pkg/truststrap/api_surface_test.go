@@ -26,17 +26,19 @@ import (
 
 // pkg/noiseproto: keys, sessions and memory wiping.
 var (
-	_ func() (*noiseproto.StaticKey, error)       = noiseproto.GenerateStaticKey
-	_ func([]byte) (*noiseproto.StaticKey, error) = noiseproto.LoadStaticKey
-	_ func([]byte, *noiseproto.StaticKey) error   = noiseproto.EncodeStaticKey
-	_ func([]byte) (*noiseproto.StaticKey, error) = noiseproto.DecodeStaticKey
-	_ func(*noiseproto.StaticKey)                 = (*noiseproto.StaticKey).Destroy
-	_ func([]byte)                                = noiseproto.WipeBytes
-	_ func(*noise.DHKey)                          = noiseproto.WipeDHKey
+	_ func() (*noiseproto.StaticKey, error)                      = noiseproto.GenerateStaticKey
+	_ func([]byte) (*noiseproto.StaticKey, error)                = noiseproto.LoadStaticKey
+	_ func([]byte, *noiseproto.StaticKey) error                  = noiseproto.EncodeStaticKey
+	_ func([]byte) (*noiseproto.StaticKey, error)                = noiseproto.DecodeStaticKey
+	_ func(*noiseproto.StaticKey)                                = (*noiseproto.StaticKey).Destroy
+	_ func(*noiseproto.StaticKey) []byte                         = (*noiseproto.StaticKey).PublicBytes
+	_ func(*noiseproto.StaticKey, func(noise.DHKey) error) error = (*noiseproto.StaticKey).WithDHKey
+	_ func([]byte)                                               = noiseproto.WipeBytes
+	_ func(*noise.DHKey)                                         = noiseproto.WipeDHKey
 
 	_ func(*noiseproto.SessionConfig) (*noiseproto.Session, error) = noiseproto.NewSession
 	_ func(*noiseproto.Session) []byte                             = (*noiseproto.Session).LocalStaticPublicKey
-	_ func(*noiseproto.Session) []byte                             = (*noiseproto.Session).LocalStaticPrivateKey
+	_ func(*noiseproto.Session)                                    = (*noiseproto.Session).Destroy
 	_ func(*noiseproto.Session) []byte                             = (*noiseproto.Session).PeerStaticPublicKey
 	_ func(*noiseproto.Session) bool                               = (*noiseproto.Session).IsHandshakeComplete
 	_ func(*noiseproto.Session) ([]byte, error)                    = (*noiseproto.Session).ChannelBinding
@@ -50,6 +52,13 @@ var (
 	_       = noiseproto.HexKeySize
 	_       = noiseproto.MaxMessageSize
 	_ error = noiseproto.ErrFIPSUnsupported
+	_ error = noiseproto.ErrProtectedMemory
+	_ error = noiseproto.ErrSessionDestroyed
+
+	// Static keys cross the API only in their enclave-backed form, so an
+	// unprotected noise.DHKey cannot be configured (owner ruling 2026-09-22
+	// on #7).
+	_ = noiseproto.SessionConfig{LocalStaticKey: (*noiseproto.StaticKey)(nil)}
 )
 
 // pkg/noiseproto/bootstrap: the Noise_NK client and server.
@@ -63,6 +72,7 @@ var (
 	_ func(*nbootstrap.Server) error                             = (*nbootstrap.Server).Start
 	_ func(*nbootstrap.Server, context.Context) error            = (*nbootstrap.Server).Stop
 	_ func(*nbootstrap.Server) net.Addr                          = (*nbootstrap.Server).Addr
+	_                                                            = nbootstrap.ServerConfig{StaticKey: (*noiseproto.StaticKey)(nil)}
 
 	_ error = nbootstrap.ErrFIPSUnsupported
 	_ error = nbootstrap.ErrClientClosed

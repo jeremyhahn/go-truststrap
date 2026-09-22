@@ -137,7 +137,7 @@ func TestNoiseBootstrapper_FetchCABundle_WrongServerKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaticKey() error = %v", err)
 	}
-	wrongKeyHex := hex.EncodeToString(wrongKey.Public)
+	wrongKeyHex := hex.EncodeToString(wrongKey.PublicBytes())
 
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{
 		ServerAddr:       addr,
@@ -169,7 +169,7 @@ func TestNoiseBootstrapper_FetchCABundle_ServerNoBundler(t *testing.T) {
 
 	srv, err := noiseboot.NewServer(&noiseboot.ServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  &serverKey.DHKey,
+		StaticKey:  serverKey,
 		CABundler:  nil, // nil bundler triggers server error
 		Logger:     newTestLogger(),
 	})
@@ -182,7 +182,7 @@ func TestNoiseBootstrapper_FetchCABundle_ServerNoBundler(t *testing.T) {
 	defer srv.Stop(context.Background()) //nolint:errcheck
 
 	addr := srv.Addr().String()
-	keyHex := hex.EncodeToString(serverKey.Public)
+	keyHex := hex.EncodeToString(serverKey.PublicBytes())
 
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{
 		ServerAddr:       addr,
@@ -229,23 +229,10 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// Perform NK handshake as responder. The negotiated wire binds the
-		// version||suite header as the Noise prologue.
-		header := noiseboot.NoiseSuiteHeader()
-		cipherSuite := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
-		hs, hsErr := noise.NewHandshakeState(noise.Config{
-			CipherSuite:   cipherSuite,
-			Pattern:       noise.HandshakeNK,
-			Initiator:     false,
-			StaticKeypair: serverKey.DHKey,
-			Prologue:      header,
-		})
-		if hsErr != nil {
-			serverDone <- hsErr
-			return
-		}
-
 		// Read msg1 from client (header || body) and strip the suite header.
+		// The negotiated wire binds the version||suite header as the Noise
+		// prologue.
+		header := noiseboot.NoiseSuiteHeader()
 		deadline := time.Now().Add(5 * time.Second)
 		msg1, readErr := noiseboot.ReadFrame(conn, deadline)
 		if readErr != nil {
@@ -257,17 +244,29 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 			return
 		}
 
-		// Process msg1.
-		_, _, _, processErr := hs.ReadMessage(nil, msg1[len(header):])
-		if processErr != nil {
-			serverDone <- processErr
-			return
-		}
-
-		// Write msg2 (final handshake message).
-		msg2, _, _, writeErr := hs.WriteMessage(nil, nil)
-		if writeErr != nil {
-			serverDone <- writeErr
+		// Perform the NK handshake as responder, with the static key borrowed
+		// for exactly the key agreement.
+		var msg2 []byte
+		keyErr := serverKey.WithDHKey(func(key noise.DHKey) error {
+			hs, hsErr := noise.NewHandshakeState(noise.Config{
+				CipherSuite:   noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256),
+				Pattern:       noise.HandshakeNK,
+				Initiator:     false,
+				StaticKeypair: key,
+				Prologue:      header,
+			})
+			if hsErr != nil {
+				return hsErr
+			}
+			if _, _, _, err := hs.ReadMessage(nil, msg1[len(header):]); err != nil {
+				return err
+			}
+			var writeErr error
+			msg2, _, _, writeErr = hs.WriteMessage(nil, nil)
+			return writeErr
+		})
+		if keyErr != nil {
+			serverDone <- keyErr
 			return
 		}
 
@@ -280,7 +279,7 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 		serverDone <- nil
 	}()
 
-	keyHex := hex.EncodeToString(serverKey.Public)
+	keyHex := hex.EncodeToString(serverKey.PublicBytes())
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{
 		ServerAddr:       listener.Addr().String(),
 		ServerStaticKey:  keyHex,
@@ -427,7 +426,7 @@ func startTestNoiseServer(t *testing.T, bundlePEM []byte) (*noiseboot.Server, st
 
 	srv, err := noiseboot.NewServer(&noiseboot.ServerConfig{
 		ListenAddr: "127.0.0.1:0",
-		StaticKey:  &serverKey.DHKey,
+		StaticKey:  serverKey,
 		CABundler:  bundler,
 		Logger:     newTestLogger(),
 	})
@@ -440,7 +439,7 @@ func startTestNoiseServer(t *testing.T, bundlePEM []byte) (*noiseboot.Server, st
 	}
 
 	addr := srv.Addr().String()
-	keyHex := hex.EncodeToString(serverKey.Public)
+	keyHex := hex.EncodeToString(serverKey.PublicBytes())
 
 	return srv, keyHex, addr
 }

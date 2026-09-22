@@ -28,9 +28,10 @@ func TestLoadOrGenerateKey_GeneratesNew(t *testing.T) {
 
 	key, err := loadOrGenerateKey(keyPath)
 	require.NoError(t, err)
-	assert.NotNil(t, key)
-	assert.Len(t, key.Private, 32)
-	assert.Len(t, key.Public, 32)
+	require.NotNil(t, key)
+	t.Cleanup(key.Destroy)
+	assertKeyFileHolds(t, keyPath, key, "the generated key must be persisted")
+	assert.Len(t, key.PublicBytes(), 32)
 
 	// Verify the file was created.
 	_, err = os.Stat(keyPath)
@@ -48,7 +49,7 @@ func TestLoadOrGenerateKey_LoadsExisting(t *testing.T) {
 
 	loaded, err := loadOrGenerateKey(keyPath)
 	require.NoError(t, err)
-	assert.Equal(t, hex.EncodeToString(key.Public), hex.EncodeToString(loaded.Public))
+	assert.Equal(t, hex.EncodeToString(key.PublicBytes()), hex.EncodeToString(loaded.PublicBytes()))
 }
 
 func TestRunServe_ValidBundleAndKeyLoadsSuccessfully(t *testing.T) {

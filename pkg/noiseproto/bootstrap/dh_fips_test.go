@@ -13,26 +13,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flynn/noise"
-
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
 // Construction and listening involve no key agreement, so they must keep
 // working; the handshake is where a FIPS build refuses.
 func TestFIPS_ServerStartsButHandshakeRefused(t *testing.T) {
+	p256Static, err := p256proto.GenerateStaticKey()
+	if err != nil {
+		t.Fatalf("GenerateStaticKey() error = %v", err)
+	}
+	t.Cleanup(p256Static.Destroy)
+
 	srv, err := NewServer(&ServerConfig{
-		ListenAddr: "127.0.0.1:0",
-		StaticKey: &noise.DHKey{
-			Private: make([]byte, noiseproto.KeySize),
-			Public:  make([]byte, noiseproto.KeySize),
-		},
-		CABundler: &mockCABundler{bundle: []byte("bundle")},
-		Logger:    slog.Default(),
+		ListenAddr:    "127.0.0.1:0",
+		P256StaticKey: p256Static,
+		CABundler:     &mockCABundler{bundle: []byte("bundle")},
+		Logger:        slog.Default(),
 	})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v, want success", err)
 	}
+	// A FIPS build cannot construct a live Noise key, so the server holds a
+	// placeholder; see withNoisePlaceholder.
+	withNoisePlaceholder(srv)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start() error = %v, want success", err)
 	}

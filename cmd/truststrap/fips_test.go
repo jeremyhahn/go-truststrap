@@ -36,6 +36,7 @@ func TestFIPS_NoiseGenerate_Refused(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, noiseproto.ErrFIPSUnsupported)
 	assert.ErrorIs(t, err, ErrKeyOperation)
+	requireCommandError(t, err, "runNoiseGenerate")
 }
 
 // Reading an existing key file also derives a public key, so show refuses too,

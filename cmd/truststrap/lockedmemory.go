@@ -25,8 +25,7 @@ const (
 	// lockedMemoryBudgetNumerator and lockedMemoryBudgetDenominator are the
 	// share of the process's discovered RLIMIT_MEMLOCK handed to the allocator.
 	// The remaining quarter is headroom for locked memory taken OUTSIDE the
-	// allocator -- pkg/noiseproto's memguard buffers until #7 lands, and
-	// anything a future dependency locks for itself -- because the kernel's
+	// allocator -- anything a dependency locks for itself -- because the kernel's
 	// refusal is triggered by the whole process reaching the ceiling, not by
 	// the admitted share alone. go-enclave's own default deliberately leaves no
 	// headroom, since headroom is a sizing policy and sizing is this decision.

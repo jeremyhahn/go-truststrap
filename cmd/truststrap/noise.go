@@ -144,20 +144,22 @@ func runNoiseFetch(cmd *cobra.Command, args []string) error {
 // runNoiseGenerate generates a new Curve25519 static keypair and writes the
 // private key to a file.
 func runNoiseGenerate(cmd *cobra.Command, args []string) error {
+	const op = "runNoiseGenerate"
+
 	outputPath, _ := cmd.Flags().GetString("output")
 
 	slog.Debug("generating Curve25519 static keypair")
 
 	key, err := noiseproto.GenerateStaticKey()
 	if err != nil {
-		return fmt.Errorf("%w: generating keypair: %w", ErrKeyOperation, err)
+		return commandWrapDetail(op, ErrKeyOperation, "generating keypair", err)
 	}
 	defer key.Destroy()
 
-	publicHex := hex.EncodeToString(key.Public)
+	publicHex := hex.EncodeToString(key.PublicBytes())
 
 	if err := writeStaticKeyFile(outputPath, key); err != nil {
-		return fmt.Errorf("%w: writing key file %s: %w", ErrFileOperation, outputPath, err)
+		return commandWrapDetail(op, ErrFileOperation, "writing key file "+outputPath, err)
 	}
 
 	slog.Info("private key written", "path", outputPath)
@@ -167,10 +169,12 @@ func runNoiseGenerate(cmd *cobra.Command, args []string) error {
 
 // runNoiseShow reads a private key file and displays the corresponding public key.
 func runNoiseShow(cmd *cobra.Command, args []string) error {
+	const op = "runNoiseShow"
+
 	keyFile, _ := cmd.Flags().GetString("key-file")
 
 	if keyFile == "" {
-		return fmt.Errorf("%w: --key-file is required", ErrInvalidInput)
+		return commandFailure(op, ErrInvalidInput, "--key-file is required")
 	}
 
 	key, err := readStaticKeyFile(keyFile)
@@ -178,12 +182,12 @@ func runNoiseShow(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, noiseproto.ErrInvalidKeySize) ||
 			errors.Is(err, noiseproto.ErrFIPSUnsupported) ||
 			errors.Is(err, ErrKeyFileMalformed) {
-			return fmt.Errorf("%w: decoding key: %w", ErrKeyOperation, err)
+			return commandWrapDetail(op, ErrKeyOperation, "decoding key", err)
 		}
-		return fmt.Errorf("%w: reading key file %s: %w", ErrFileOperation, keyFile, err)
+		return commandWrapDetail(op, ErrFileOperation, "reading key file "+keyFile, err)
 	}
 	defer key.Destroy()
 
-	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.Public))
+	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.PublicBytes()))
 	return nil
 }

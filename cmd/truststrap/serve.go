@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -105,6 +104,8 @@ func init() {
 // the Noise static key, starts the bootstrap server, and waits for a
 // termination signal.
 func runServe(cmd *cobra.Command, args []string) error {
+	const op = "runServe"
+
 	// Validate --bundle-file is provided.
 	if serveBundleFile == "" {
 		return ErrBundleFileRequired
@@ -112,7 +113,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Validate the bundle file exists on disk.
 	if _, err := os.Stat(serveBundleFile); os.IsNotExist(err) {
-		return fmt.Errorf("%w: %s", ErrBundleFileNotFound, serveBundleFile)
+		return commandFailure(op, ErrBundleFileNotFound, serveBundleFile)
 	}
 
 	// Resolve the configuration: defaults, then file, then environment, with
@@ -138,13 +139,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	publicKeyHex := hex.EncodeToString(staticKey.Public)
+	publicKeyHex := hex.EncodeToString(staticKey.PublicBytes())
 	slog.Debug("server public key", "key", publicKeyHex)
 
 	// Build the server configuration.
 	cfg := &bootstrap.ServerConfig{
 		ListenAddr:     listenAddr,
-		StaticKey:      &staticKey.DHKey,
+		StaticKey:      staticKey,
 		CABundler:      &fileBundleProvider{path: serveBundleFile},
 		MaxConnections: serveMaxConnections,
 		Logger:         slog.Default(),
@@ -153,11 +154,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start the server.
 	server, err := bootstrap.NewServer(cfg)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrServerStart, err)
+		return commandWrap(op, ErrServerStart, err)
 	}
 
 	if err := server.Start(); err != nil {
-		return fmt.Errorf("%w: %w", ErrServerStart, err)
+		return commandWrap(op, ErrServerStart, err)
 	}
 
 	slog.Info("listening", "addr", listenAddr)
@@ -175,16 +176,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Stop reports the drain directly, so the deadline no longer has to be
 	// inferred from stopCtx: a nil error is the only proof that every handshake
-	// worker exited. On anything else a worker may still hold a copy of the key
-	// pair, so the locked pages stay mapped and process exit reclaims them.
+	// worker exited. On anything else a worker may still be using the key pair,
+	// so the locked pages stay mapped and process exit reclaims them.
 	if err := server.Stop(stopCtx); err != nil {
 		// Conservative on every non-nil outcome, not just the expected one: a
-		// nil return is the ONLY proof that no worker still holds the key pair,
+		// nil return is the ONLY proof that no worker still uses the key pair,
 		// so an unrecognised error retains the pages exactly like a known
 		// incomplete drain.
 		destroyKey = false
 		if !errors.Is(err, bootstrap.ErrShutdownIncomplete) {
-			return fmt.Errorf("%w: %w", ErrServerStop, err)
+			return commandWrap(op, ErrServerStop, err)
 		}
 		slog.Warn("shutdown incomplete, key material released at process exit")
 	}
@@ -199,6 +200,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 // is held in locked memory throughout; the caller owns the returned key and
 // must Destroy it.
 func loadOrGenerateKey(keyFile string) (*noiseproto.StaticKey, error) {
+	const op = "loadOrGenerateKey"
+
 	key, err := readStaticKeyFile(keyFile)
 	if err == nil {
 		slog.Info("loaded Noise static key", "path", keyFile)
@@ -206,7 +209,7 @@ func loadOrGenerateKey(keyFile string) (*noiseproto.StaticKey, error) {
 	}
 
 	if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%w: reading %s: %w", ErrKeyLoad, keyFile, err)
+		return nil, commandWrapDetail(op, ErrKeyLoad, "reading "+keyFile, err)
 	}
 
 	// File does not exist -- generate a new key.
@@ -214,16 +217,16 @@ func loadOrGenerateKey(keyFile string) (*noiseproto.StaticKey, error) {
 
 	key, err = noiseproto.GenerateStaticKey()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrKeyGeneration, err)
+		return nil, commandWrap(op, ErrKeyGeneration, err)
 	}
 
 	if err := writeStaticKeyFile(keyFile, key); err != nil {
 		key.Destroy()
-		return nil, fmt.Errorf("%w: writing %s: %w", ErrKeyGeneration, keyFile, err)
+		return nil, commandWrapDetail(op, ErrKeyGeneration, "writing "+keyFile, err)
 	}
 
 	slog.Info("key written", "path", keyFile)
-	slog.Debug("generated public key", "key", hex.EncodeToString(key.Public))
+	slog.Debug("generated public key", "key", hex.EncodeToString(key.PublicBytes()))
 
 	return key, nil
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,10 +26,14 @@ func TestNewSession_DefaultKey(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 	require.NotNil(t, session)
 
 	assert.Len(t, session.LocalStaticPublicKey(), KeySize)
-	assert.Len(t, session.LocalStaticPrivateKey(), KeySize)
+	require.NotNil(t, session.localStatic)
+	assert.True(t, session.ownsLocalStatic, "a generated key belongs to the session")
+	assert.True(t, session.localStatic.private.IsAlive(),
+		"the generated scalar must live in an enclave")
 	assert.False(t, bytes.Equal(session.LocalStaticPublicKey(), make([]byte, KeySize)),
 		"generated public key must not be zero")
 	assert.False(t, session.IsHandshakeComplete())
@@ -41,13 +46,200 @@ func TestNewSession_ProvidedKey(t *testing.T) {
 
 	session, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeXX,
-		LocalStaticKey: &key.DHKey,
+		LocalStaticKey: key,
 		IsInitiator:    true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
-	assert.Equal(t, key.Public, session.LocalStaticPublicKey())
-	assert.Equal(t, key.Private, session.LocalStaticPrivateKey())
+	assert.Equal(t, key.PublicBytes(), session.LocalStaticPublicKey())
+	assert.Same(t, key, session.localStatic, "a supplied key is borrowed, not copied")
+	assert.False(t, session.ownsLocalStatic)
+
+	// Destroying the session must leave the caller's key alone.
+	session.Destroy()
+	assert.True(t, key.private.IsAlive(), "Destroy must not free a caller-supplied key")
+	assert.Equal(t, KeySize, len(key.PublicBytes()))
+}
+
+// The NK initiator has no static key in the pattern, so none is generated: key
+// material the handshake would never use is not created at all.
+func TestNewSession_NKInitiatorGeneratesNoKey(t *testing.T) {
+	allocator := withTestAllocator(t, 1<<20)
+
+	session, err := NewSession(&SessionConfig{
+		Pattern:     noise.HandshakeNK,
+		IsInitiator: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
+
+	assert.Nil(t, session.localStatic)
+	assert.Nil(t, session.LocalStaticPublicKey())
+	assert.Zero(t, allocator.InUse(), "no locked memory may be taken for an unused key")
+}
+
+// usesLocalStatic must match what each pattern actually gives each side.
+func TestUsesLocalStatic(t *testing.T) {
+	tests := []struct {
+		name      string
+		pattern   noise.HandshakePattern
+		initiator bool
+		want      bool
+	}{
+		{"NK initiator", noise.HandshakeNK, true, false},
+		{"NK responder", noise.HandshakeNK, false, true},
+		{"XX initiator", noise.HandshakeXX, true, true},
+		{"XX responder", noise.HandshakeXX, false, true},
+		{"NN initiator", noise.HandshakeNN, true, false},
+		{"NN responder", noise.HandshakeNN, false, false},
+		{"KN initiator", noise.HandshakeKN, true, true},
+		{"KN responder", noise.HandshakeKN, false, false},
+		{"XN responder", noise.HandshakeXN, false, false},
+		{"NX responder", noise.HandshakeNX, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, usesLocalStatic(tt.pattern, tt.initiator))
+		})
+	}
+}
+
+// Destroy releases a key the session generated, and is idempotent.
+func TestSession_Destroy_ReleasesGeneratedKey(t *testing.T) {
+	allocator := withTestAllocator(t, 1<<20)
+
+	session, err := NewSession(&SessionConfig{
+		Pattern:     noise.HandshakeXX,
+		IsInitiator: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
+	require.Positive(t, allocator.InUse())
+
+	session.Destroy()
+	session.Destroy()
+
+	assert.Zero(t, allocator.InUse(), "Destroy must return the generated key's reservation")
+	assert.Nil(t, session.LocalStaticPublicKey())
+	assert.ErrorIs(t, session.InitHandshake(), ErrSessionDestroyed)
+}
+
+// Destroy is terminal whatever the session holds: a key it generated, a key it
+// borrows from the caller, or no key at all. Nothing can be restarted
+// afterwards, and a borrowed key is left alive for its owner.
+func TestSession_Destroy_IsTerminal(t *testing.T) {
+	borrowed := newTestStaticKey(t)
+
+	configs := map[string]*SessionConfig{
+		"generated key": {Pattern: noise.HandshakeXX, IsInitiator: true},
+		"borrowed key":  {Pattern: noise.HandshakeNK, LocalStaticKey: borrowed},
+		"keyless NK initiator": {
+			Pattern:       noise.HandshakeNK,
+			IsInitiator:   true,
+			PeerStaticKey: borrowed.PublicBytes(),
+		},
+	}
+
+	for name, cfg := range configs {
+		t.Run(name, func(t *testing.T) {
+			session, err := NewSession(cfg)
+			require.NoError(t, err)
+			t.Cleanup(session.Destroy)
+			require.NoError(t, session.InitHandshake(), "a live session must initialise")
+
+			session.Destroy()
+
+			assert.ErrorIs(t, session.InitHandshake(), ErrSessionDestroyed)
+			_, _, err = session.HandshakeMessage(nil)
+			assert.ErrorIs(t, err, ErrSessionDestroyed)
+			assert.False(t, session.IsHandshakeComplete())
+			_, err = session.Encrypt([]byte("x"))
+			assert.ErrorIs(t, err, ErrSessionNotReady)
+		})
+	}
+
+	withScalar(t, borrowed, func(priv []byte) {
+		assert.Len(t, priv, KeySize, "a borrowed key must survive the session's Destroy")
+	})
+}
+
+// Destroy after a completed handshake releases the transport too: the session
+// can neither encrypt, decrypt nor report a channel binding afterwards.
+func TestSession_Destroy_AfterHandshake(t *testing.T) {
+	initiator, responder := setupXXHandshake(t)
+
+	ciphertext, err := initiator.Encrypt([]byte("before"))
+	require.NoError(t, err)
+
+	responder.Destroy()
+
+	_, err = responder.Decrypt(ciphertext)
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+	_, err = responder.Encrypt([]byte("after"))
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+	_, err = responder.ChannelBinding()
+	assert.ErrorIs(t, err, ErrSessionNotReady)
+}
+
+func TestSession_Destroy_NilReceiver(t *testing.T) {
+	var session *Session
+	assert.NotPanics(t, session.Destroy)
+}
+
+// Destroy mid-handshake drops the handshake state, so the alias it held of the
+// key's pages cannot be read afterwards.
+func TestSession_Destroy_MidHandshake(t *testing.T) {
+	session, err := NewSession(&SessionConfig{
+		Pattern:     noise.HandshakeXX,
+		IsInitiator: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
+	require.NoError(t, session.InitHandshake())
+
+	session.Destroy()
+
+	_, _, err = session.HandshakeMessage(nil)
+	assert.ErrorIs(t, err, ErrSessionDestroyed)
+	assert.Nil(t, session.handshakeState, "the alias of the key's pages must be dropped")
+}
+
+// A caller-supplied key destroyed -- or wiped by a shutdown sweep -- between
+// handshake steps is reported as an error, never read through by flynn/noise.
+func TestSession_HandshakeMessage_KeyDestroyedMidHandshake(t *testing.T) {
+	serverKey, err := GenerateStaticKey()
+	require.NoError(t, err)
+
+	client, err := NewSession(&SessionConfig{
+		Pattern:       noise.HandshakeNK,
+		IsInitiator:   true,
+		PeerStaticKey: serverKey.PublicBytes(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(client.Destroy)
+	server, err := NewSession(&SessionConfig{
+		Pattern:        noise.HandshakeNK,
+		LocalStaticKey: serverKey,
+	})
+	require.NoError(t, err)
+	t.Cleanup(server.Destroy)
+
+	require.NoError(t, client.InitHandshake())
+	require.NoError(t, server.InitHandshake())
+
+	msg1, _, err := client.HandshakeMessage(nil)
+	require.NoError(t, err)
+
+	serverKey.Destroy()
+
+	_, done, err := server.HandshakeMessage(msg1)
+	assert.False(t, done)
+	assert.ErrorIs(t, err, ErrHandshakeFailed)
+	assert.ErrorIs(t, err, ErrProtectedMemory)
+	assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed)
+	assert.False(t, server.IsHandshakeComplete())
 }
 
 func TestSession_XXHandshake(t *testing.T) {
@@ -56,12 +248,14 @@ func TestSession_XXHandshake(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	responder, err := NewSession(&SessionConfig{
 		Pattern:     noise.HandshakeXX,
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	err = initiator.InitHandshake()
 	require.NoError(t, err)
@@ -128,17 +322,19 @@ func TestSession_NKHandshake(t *testing.T) {
 	client, err := NewSession(&SessionConfig{
 		Pattern:       noise.HandshakeNK,
 		IsInitiator:   true,
-		PeerStaticKey: serverKey.Public,
+		PeerStaticKey: serverKey.PublicBytes(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(client.Destroy)
 
 	// Server (responder) uses its known static key
 	server, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeNK,
-		LocalStaticKey: &serverKey.DHKey,
+		LocalStaticKey: serverKey,
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(server.Destroy)
 
 	err = client.InitHandshake()
 	require.NoError(t, err)
@@ -200,17 +396,19 @@ func TestSession_NKHandshake_WrongServerKey(t *testing.T) {
 	client, err := NewSession(&SessionConfig{
 		Pattern:       noise.HandshakeNK,
 		IsInitiator:   true,
-		PeerStaticKey: wrongServerKey.Public,
+		PeerStaticKey: wrongServerKey.PublicBytes(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(client.Destroy)
 
 	// Server actually uses realServerKey
 	server, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeNK,
-		LocalStaticKey: &realServerKey.DHKey,
+		LocalStaticKey: realServerKey,
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(server.Destroy)
 
 	err = client.InitHandshake()
 	require.NoError(t, err)
@@ -233,6 +431,7 @@ func TestSession_EncryptBeforeHandshake(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	_, err = session.Encrypt([]byte("test"))
 	assert.ErrorIs(t, err, ErrSessionNotReady)
@@ -244,6 +443,7 @@ func TestSession_DecryptBeforeHandshake(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	_, err = session.Decrypt([]byte("test"))
 	assert.ErrorIs(t, err, ErrSessionNotReady)
@@ -280,6 +480,7 @@ func TestSession_IsHandshakeComplete(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	assert.False(t, initiator.IsHandshakeComplete(),
 		"must be false before handshake")
@@ -289,6 +490,7 @@ func TestSession_IsHandshakeComplete(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	err = initiator.InitHandshake()
 	require.NoError(t, err)
@@ -322,6 +524,7 @@ func TestSession_PeerStaticPublicKey(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	// Before handshake, peer key is nil (XX pattern, no pre-shared key)
 	assert.Nil(t, initiator.PeerStaticPublicKey())
@@ -331,6 +534,7 @@ func TestSession_PeerStaticPublicKey(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	// Complete handshake
 	err = initiator.InitHandshake()
@@ -365,6 +569,7 @@ func TestSession_SetPrologue(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 	initiator.SetPrologue(prologue)
 
 	responder, err := NewSession(&SessionConfig{
@@ -372,6 +577,7 @@ func TestSession_SetPrologue(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 	responder.SetPrologue(prologue)
 
 	// Matching prologues: handshake succeeds
@@ -406,6 +612,7 @@ func TestSession_SetPrologue_Mismatch(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 	initiator.SetPrologue([]byte("prologue-A"))
 
 	responder, err := NewSession(&SessionConfig{
@@ -413,6 +620,7 @@ func TestSession_SetPrologue_Mismatch(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 	responder.SetPrologue([]byte("prologue-B"))
 
 	err = initiator.InitHandshake()
@@ -439,6 +647,7 @@ func TestSession_InitHandshake_NilState(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	// HandshakeMessage without InitHandshake: handshakeState is nil
 	_, _, err = session.HandshakeMessage(nil)
@@ -497,6 +706,7 @@ func TestSession_ResponderNilIncoming(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	err = session.InitHandshake()
 	require.NoError(t, err)
@@ -523,16 +733,18 @@ func TestSession_XXHandshake_WithExpectedPeerKey(t *testing.T) {
 	initiator, err := NewSession(&SessionConfig{
 		Pattern:       noise.HandshakeXX,
 		IsInitiator:   true,
-		PeerStaticKey: responderKey.Public,
+		PeerStaticKey: responderKey.PublicBytes(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	responder, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeXX,
-		LocalStaticKey: &responderKey.DHKey,
+		LocalStaticKey: responderKey,
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	err = initiator.InitHandshake()
 	require.NoError(t, err)
@@ -567,15 +779,17 @@ func TestSession_XXHandshake_PeerKeyMismatch(t *testing.T) {
 	initiator, err := NewSession(&SessionConfig{
 		Pattern:       noise.HandshakeXX,
 		IsInitiator:   true,
-		PeerStaticKey: wrongKey.Public,
+		PeerStaticKey: wrongKey.PublicBytes(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	responder, err := NewSession(&SessionConfig{
 		Pattern:     noise.HandshakeXX,
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	err = initiator.InitHandshake()
 	require.NoError(t, err)
@@ -646,6 +860,7 @@ func TestSession_NKHandshake_ServerNoStaticKeyConfig(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(serverSession.Destroy)
 
 	// Client must know the server's public key
 	clientSession, err := NewSession(&SessionConfig{
@@ -654,6 +869,7 @@ func TestSession_NKHandshake_ServerNoStaticKeyConfig(t *testing.T) {
 		PeerStaticKey: serverSession.LocalStaticPublicKey(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(clientSession.Destroy)
 
 	err = clientSession.InitHandshake()
 	require.NoError(t, err)
@@ -685,6 +901,7 @@ func TestSession_EncryptNilSendCipher(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	// Force handshakeDone=true without actually completing handshake
 	// (sendCipher remains nil).
@@ -700,6 +917,7 @@ func TestSession_DecryptNilRecvCipher(t *testing.T) {
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	// Force handshakeDone=true without actually completing handshake
 	// (recvCipher remains nil).
@@ -731,7 +949,7 @@ func TestSession_ChannelBinding_NKAgreesAcrossPeers(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(serverKey.Destroy)
 
-	client, server := setupNKHandshake(t, &serverKey.DHKey)
+	client, server := setupNKHandshake(t, serverKey)
 
 	clientBinding, err := client.ChannelBinding()
 	require.NoError(t, err)
@@ -757,8 +975,8 @@ func TestSession_ChannelBinding_DiffersPerSession(t *testing.T) {
 	t.Cleanup(responderKey.Destroy)
 
 	t.Run("XX", func(t *testing.T) {
-		first, _ := setupXXHandshakeWithKeys(t, &initiatorKey.DHKey, &responderKey.DHKey)
-		second, _ := setupXXHandshakeWithKeys(t, &initiatorKey.DHKey, &responderKey.DHKey)
+		first, _ := setupXXHandshakeWithKeys(t, initiatorKey, responderKey)
+		second, _ := setupXXHandshakeWithKeys(t, initiatorKey, responderKey)
 
 		firstBinding, err := first.ChannelBinding()
 		require.NoError(t, err)
@@ -770,8 +988,8 @@ func TestSession_ChannelBinding_DiffersPerSession(t *testing.T) {
 	})
 
 	t.Run("NK", func(t *testing.T) {
-		first, _ := setupNKHandshake(t, &responderKey.DHKey)
-		second, _ := setupNKHandshake(t, &responderKey.DHKey)
+		first, _ := setupNKHandshake(t, responderKey)
+		second, _ := setupNKHandshake(t, responderKey)
 
 		firstBinding, err := first.ChannelBinding()
 		require.NoError(t, err)
@@ -789,12 +1007,14 @@ func TestSession_ChannelBinding_BeforeHandshake(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	responder, err := NewSession(&SessionConfig{
 		Pattern:     noise.HandshakeXX,
 		IsInitiator: false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	// Before InitHandshake there is no handshake hash at all.
 	binding, err := initiator.ChannelBinding()
@@ -842,6 +1062,7 @@ func TestSession_ChannelBinding_NoBindingCaptured(t *testing.T) {
 		IsInitiator: true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(session.Destroy)
 
 	// Force handshakeDone=true without actually completing a handshake
 	// (channelBinding remains unset).
@@ -881,7 +1102,7 @@ func setupXXHandshake(t *testing.T) (*Session, *Session) {
 // setupXXHandshakeWithKeys creates and completes an XX handshake between two
 // sessions. A nil static key means the session generates its own; passing the
 // same keys to two calls runs two handshakes between one pair of identities.
-func setupXXHandshakeWithKeys(t *testing.T, initiatorKey, responderKey *noise.DHKey) (*Session, *Session) {
+func setupXXHandshakeWithKeys(t *testing.T, initiatorKey, responderKey *StaticKey) (*Session, *Session) {
 	t.Helper()
 
 	initiator, err := NewSession(&SessionConfig{
@@ -890,6 +1111,7 @@ func setupXXHandshakeWithKeys(t *testing.T, initiatorKey, responderKey *noise.DH
 		IsInitiator:    true,
 	})
 	require.NoError(t, err)
+	t.Cleanup(initiator.Destroy)
 
 	responder, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeXX,
@@ -897,6 +1119,7 @@ func setupXXHandshakeWithKeys(t *testing.T, initiatorKey, responderKey *noise.DH
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(responder.Destroy)
 
 	err = initiator.InitHandshake()
 	require.NoError(t, err)
@@ -917,15 +1140,16 @@ func setupXXHandshakeWithKeys(t *testing.T, initiatorKey, responderKey *noise.DH
 
 // setupNKHandshake creates and completes an NK handshake against the given
 // server static key, returning the client and server sessions.
-func setupNKHandshake(t *testing.T, serverKey *noise.DHKey) (*Session, *Session) {
+func setupNKHandshake(t *testing.T, serverKey *StaticKey) (*Session, *Session) {
 	t.Helper()
 
 	client, err := NewSession(&SessionConfig{
 		Pattern:       noise.HandshakeNK,
 		IsInitiator:   true,
-		PeerStaticKey: serverKey.Public,
+		PeerStaticKey: serverKey.PublicBytes(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(client.Destroy)
 
 	server, err := NewSession(&SessionConfig{
 		Pattern:        noise.HandshakeNK,
@@ -933,6 +1157,7 @@ func setupNKHandshake(t *testing.T, serverKey *noise.DHKey) (*Session, *Session)
 		IsInitiator:    false,
 	})
 	require.NoError(t, err)
+	t.Cleanup(server.Destroy)
 
 	err = client.InitHandshake()
 	require.NoError(t, err)

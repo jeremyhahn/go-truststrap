@@ -7,8 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/flynn/noise"
-
+	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
@@ -55,11 +54,18 @@ type ServerConfig struct {
 	ListenAddr string
 
 	// StaticKey is the server's Curve25519 static key pair for the Noise suite
-	// (0x01). Clients must know the public component to complete the NK
-	// handshake. May be nil in a P-256-only deployment; a connection that then
-	// selects the Noise suite is refused with ErrUnsupportedSuite (or
-	// ErrFIPSUnsupported under FIPS).
-	StaticKey *noise.DHKey
+	// (0x01), its private scalar held in protected memory. Clients must know
+	// the public component to complete the NK handshake. May be nil in a
+	// P-256-only deployment; a connection that then selects the Noise suite is
+	// refused with ErrUnsupportedSuite (or ErrFIPSUnsupported under FIPS).
+	//
+	// The server borrows the key for each handshake and never destroys it. The
+	// caller destroys it, and should do so only once Stop has reported a
+	// complete drain. If the key is destroyed or wiped while the server is
+	// still running, each Noise handshake from then on fails that one
+	// connection with an error wrapping enclave.ErrEnclaveDestroyed; the server
+	// keeps serving.
+	StaticKey *noiseproto.StaticKey
 
 	// P256StaticKey is the server's long-term P-256 responder key for the
 	// approved suite (0x02). Clients must be provisioned with its public

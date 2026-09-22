@@ -94,12 +94,10 @@ The FIPS boundary is **two files per package**, and nothing else:
 Every X25519 operation in the tree goes through one of those three helpers, so a
 FIPS build performs no non-approved key agreement.
 
-`nkCipherSuite` covers both the handshake and key generation: a session
-configured without a static key generates one from the cipher suite's embedded
-`DHFunc`, so there is no separate key-generation helper to keep in step.
-`derivePublicKey` covers `StaticKey`, whose private scalar is drawn straight
-into a memguard `LockedBuffer` and whose public key is derived by scalar base
-multiplication.
+`nkCipherSuite` covers the handshake, and is consulted before a session
+generates a static key its pattern needs but was not given. `derivePublicKey`
+covers `StaticKey`, whose private scalar is drawn straight into a go-enclave
+`MemoryEnclave` and whose public key is derived by scalar base multiplication.
 
 **No exported declaration is removed.** Every type, constructor, method and
 constant of every package exists in both builds; a FIPS build refuses at the
@@ -117,9 +115,9 @@ Refusal happens as early as the primitive is needed, and no earlier:
 | Call | Default build | `-tags fips` |
 |------|---------------|--------------|
 | `noiseproto.GenerateStaticKey`, `LoadStaticKey`, `DecodeStaticKey` | key | `ErrFIPSUnsupported` |
-| `noiseproto.EncodeStaticKey`, `StaticKey.Destroy`, `WipeBytes`, `WipeDHKey` | works | works — no key agreement involved |
-| `noiseproto.NewSession` (no `LocalStaticKey`) | session | `ErrFIPSUnsupported` — it must generate a key pair |
-| `noiseproto.NewSession` (caller supplies a key) | session | session; `InitHandshake` then refuses |
+| `noiseproto.EncodeStaticKey`, `StaticKey.Destroy`, `StaticKey.WithDHKey`, `StaticKey.PublicBytes`, `WipeBytes`, `WipeDHKey` | works | works — no key agreement involved (though no live `StaticKey` can be constructed) |
+| `noiseproto.NewSession` (no `LocalStaticKey`, pattern needs one — e.g. XX, NK responder) | session | `ErrFIPSUnsupported` — it must generate a key pair |
+| `noiseproto.NewSession` (NK initiator, or caller supplies a key) | session | session; `InitHandshake` then refuses |
 | `bootstrap.NewClient` / `NewServer` / `Start` / `Stop` / `Addr` | works | works — construction and listening need no key agreement |
 | `bootstrap.Client.Connect`, server handshake | handshake | `ErrFIPSUnsupported` |
 | `truststrap.NewNoiseBootstrapper` | bootstrapper | bootstrapper — availability is a property of the process, not of the configuration |

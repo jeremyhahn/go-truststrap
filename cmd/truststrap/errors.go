@@ -117,6 +117,12 @@ func commandWrap(op string, kind error, err error) error {
 	return &CommandError{Op: op, Kind: kind, Err: err}
 }
 
+// commandWrapDetail builds a CommandError around an underlying cause, with
+// human-readable detail. The detail never carries key material.
+func commandWrapDetail(op string, kind error, detail string, err error) error {
+	return &CommandError{Op: op, Kind: kind, Detail: detail, Err: err}
+}
+
 // sizeLimitDetail renders a "<path> exceeds N bytes" detail without fmt, which
 // errors.md section 2 bans here.
 func sizeLimitDetail(path string, limit int) string {

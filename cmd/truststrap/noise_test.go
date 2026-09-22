@@ -19,6 +19,7 @@ func TestNoiseShow_MissingKeyFile(t *testing.T) {
 	err := runNoiseShow(cmd, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidInput)
+	requireCommandError(t, err, "runNoiseShow")
 }
 
 func TestNoiseShow_NonexistentFile(t *testing.T) {
@@ -28,6 +29,7 @@ func TestNoiseShow_NonexistentFile(t *testing.T) {
 	err := runNoiseShow(cmd, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrFileOperation)
+	requireCommandError(t, err, "runNoiseShow")
 }
 
 func TestNoiseShow_InvalidHex(t *testing.T) {
@@ -41,6 +43,7 @@ func TestNoiseShow_InvalidHex(t *testing.T) {
 	err := runNoiseShow(cmd, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyOperation)
+	requireCommandError(t, err, "runNoiseShow")
 }
 
 func TestNoiseFetch_MissingServerAddr(t *testing.T) {

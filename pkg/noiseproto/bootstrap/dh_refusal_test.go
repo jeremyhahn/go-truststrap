@@ -41,12 +41,9 @@ func TestClient_HandshakeNoise_CipherSuiteRefused(t *testing.T) {
 func TestServer_HandshakeNoise_CipherSuiteRefused(t *testing.T) {
 	withRefusingCipherSuite(t)
 
-	s := &Server{config: &ServerConfig{
-		StaticKey: &noise.DHKey{
-			Private: make([]byte, noiseproto.KeySize),
-			Public:  make([]byte, noiseproto.KeySize),
-		},
-	}}
+	// The cipher suite is built before the key is borrowed, so a placeholder
+	// key is enough; a live one needs X25519, which a FIPS build refuses.
+	s := &Server{config: &ServerConfig{StaticKey: &noiseproto.StaticKey{}}}
 
 	frame1 := []byte{protocolVersion, SuiteNoiseNK}
 	if _, err := s.handshakeNoise(&net.TCPConn{}, frame1); !errors.Is(err, errInjected) {

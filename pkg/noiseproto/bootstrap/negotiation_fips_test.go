@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flynn/noise"
-
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
@@ -29,14 +27,8 @@ func TestFIPS_ServerRefusesNoiseDespiteKeyAndServesP256(t *testing.T) {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
 
-	// A structurally valid Noise key (NewServer checks only its length; no
-	// X25519 is performed here). Its presence is the point: the refusal is
-	// policy, not a missing key.
-	dummyNoise := &noise.DHKey{Private: make([]byte, 32), Public: make([]byte, 32)}
-
 	srv, err := NewServer(&ServerConfig{
 		ListenAddr:    "127.0.0.1:0",
-		StaticKey:     dummyNoise,
 		P256StaticKey: p256Static,
 		CABundler:     p256Bundler(t),
 		ReadTimeout:   5 * time.Second,
@@ -46,6 +38,10 @@ func TestFIPS_ServerRefusesNoiseDespiteKeyAndServesP256(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	// The server holds a Noise key: its presence is the point, since it makes
+	// the refusal policy rather than a missing key. A FIPS build cannot
+	// construct a live one, so it is a placeholder; see withNoisePlaceholder.
+	withNoisePlaceholder(srv)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -101,6 +97,10 @@ func TestFIPS_ClientDefaultSelectsP256(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	// The server holds a Noise key: its presence is the point, since it makes
+	// the refusal policy rather than a missing key. A FIPS build cannot
+	// construct a live one, so it is a placeholder; see withNoisePlaceholder.
+	withNoisePlaceholder(srv)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

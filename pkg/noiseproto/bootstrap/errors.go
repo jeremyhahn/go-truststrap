@@ -156,3 +156,24 @@ func (e handshakeError) Unwrap() []error {
 	}
 	return []error{e.Kind, e.Err}
 }
+
+// configError is returned by NewServer when a ServerConfig cannot be used. Kind
+// classifies it (ErrHandshakeFailed for a missing or dead static key,
+// ErrMaxConnections for an out-of-range limit) and Detail says what was wrong.
+// It is unexported because callers classify with errors.Is against Kind.
+type configError struct {
+	// Kind is the sentinel classifying the failure.
+	Kind error
+	// Detail describes the offending setting.
+	Detail string
+}
+
+// Error returns the sentinel's message and the detail.
+func (e configError) Error() string {
+	return e.Kind.Error() + ": " + e.Detail
+}
+
+// Unwrap returns the sentinel so it matches with errors.Is.
+func (e configError) Unwrap() error {
+	return e.Kind
+}

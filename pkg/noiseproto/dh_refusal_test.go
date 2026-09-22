@@ -45,12 +45,12 @@ func TestSession_InitHandshake_CipherSuiteRefused(t *testing.T) {
 	}
 }
 
-// A session configured without a static key generates one from the cipher
-// suite's DH function, so the refusal has to surface from construction too.
+// A session whose pattern needs a static key it was not given generates one, so
+// the refusal has to surface from construction too.
 func TestNewSession_CipherSuiteRefused(t *testing.T) {
 	withRefusingCipherSuite(t)
 
-	s, err := NewSession(&SessionConfig{Pattern: noise.HandshakeNK, IsInitiator: true})
+	s, err := NewSession(&SessionConfig{Pattern: noise.HandshakeXX, IsInitiator: true})
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("NewSession() error = %v, want the injected refusal", err)
 	}
@@ -64,7 +64,7 @@ func TestNewSession_CipherSuiteRefused(t *testing.T) {
 func TestNewSession_SuppliedKeySurvivesRefusal(t *testing.T) {
 	withRefusingCipherSuite(t)
 
-	key := &noise.DHKey{Private: make([]byte, KeySize), Public: make([]byte, KeySize)}
+	key := lockedTestKey(t, make([]byte, KeySize), make([]byte, KeySize))
 	if _, err := NewSession(&SessionConfig{Pattern: noise.HandshakeNK, LocalStaticKey: key}); err != nil {
 		t.Fatalf("NewSession() error = %v, want success with a supplied static key", err)
 	}
@@ -109,6 +109,21 @@ func TestStaticKey_FIPSRefusalNotWrapped(t *testing.T) {
 	}
 	if errors.Is(err, ErrInvalidKeySize) {
 		t.Errorf("GenerateStaticKey() error = %v, want it not to claim an invalid key size", err)
+	}
+}
+
+// The NK initiator has no static key, so construction generates none and does
+// not consult the cipher suite: the refusal belongs to InitHandshake.
+func TestNewSession_NKInitiatorSurvivesRefusal(t *testing.T) {
+	withRefusingCipherSuite(t)
+
+	s, err := NewSession(&SessionConfig{Pattern: noise.HandshakeNK, IsInitiator: true})
+	if err != nil {
+		t.Fatalf("NewSession() error = %v, want success: the NK initiator needs no key", err)
+	}
+	t.Cleanup(s.Destroy)
+	if err := s.InitHandshake(); !errors.Is(err, errInjected) {
+		t.Fatalf("InitHandshake() error = %v, want the injected refusal", err)
 	}
 }
 

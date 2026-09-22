@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/flynn/noise"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
@@ -66,14 +68,17 @@ type Server struct {
 }
 
 // NewServer creates a new bootstrap server with the given configuration.
-// The ServerConfig must include a non-nil StaticKey for the NK handshake.
+// The ServerConfig must include a StaticKey, a P256StaticKey, or both.
 func NewServer(cfg *ServerConfig) (*Server, error) {
 	if cfg.StaticKey == nil && cfg.P256StaticKey == nil {
-		return nil, fmt.Errorf("%w: a Noise (StaticKey) or P-256 (P256StaticKey) static key is required",
-			ErrHandshakeFailed)
+		return nil, configError{Kind: ErrHandshakeFailed,
+			Detail: "a Noise (StaticKey) or P-256 (P256StaticKey) static key is required"}
 	}
-	if cfg.StaticKey != nil && (len(cfg.StaticKey.Private) != 32 || len(cfg.StaticKey.Public) != 32) {
-		return nil, fmt.Errorf("%w: Noise static key must be 32 bytes", ErrHandshakeFailed)
+	// A StaticKey not built by noiseproto's constructors, or one already
+	// destroyed, carries no public key.
+	if cfg.StaticKey != nil && len(cfg.StaticKey.PublicBytes()) != noiseproto.KeySize {
+		return nil, configError{Kind: ErrHandshakeFailed,
+			Detail: "Noise static key is not a live " + strconv.Itoa(noiseproto.KeySize) + "-byte key pair"}
 	}
 
 	if cfg.ListenAddr == "" {
@@ -83,8 +88,9 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 		cfg.MaxConnections = DefaultMaxConnections
 	}
 	if cfg.MaxConnections > MaxMaxConnections {
-		return nil, fmt.Errorf("%w: max connections %d exceeds upper bound %d",
-			ErrMaxConnections, cfg.MaxConnections, MaxMaxConnections)
+		return nil, configError{Kind: ErrMaxConnections,
+			Detail: "max connections " + strconv.Itoa(cfg.MaxConnections) +
+				" exceeds upper bound " + strconv.Itoa(MaxMaxConnections)}
 	}
 	if cfg.ReadTimeout <= 0 {
 		cfg.ReadTimeout = DefaultReadTimeout
@@ -455,7 +461,7 @@ func (s *Server) handshakeP256(conn net.Conn, msg1 []byte) (secureSession, error
 //   - Message 2 (server -> client): [e, ee]
 func (s *Server) handshakeNoise(conn net.Conn, frame1 []byte) (secureSession, error) {
 	if s.config.StaticKey == nil {
-		return nil, fmt.Errorf("%w: 0x01 not configured on this server", ErrUnsupportedSuite)
+		return nil, handshakeError{Stage: "0x01 not configured on this server", Kind: ErrUnsupportedSuite}
 	}
 
 	cipherSuite, err := nkCipherSuite()
@@ -463,41 +469,72 @@ func (s *Server) handshakeNoise(conn net.Conn, frame1 []byte) (secureSession, er
 		return nil, err
 	}
 
-	hs, err := noise.NewHandshakeState(noise.Config{
-		CipherSuite:   cipherSuite,
-		Pattern:       noise.HandshakeNK,
-		Initiator:     false,
-		StaticKeypair: *s.config.StaticKey,
-		Prologue:      frame1[:suiteHeaderSize],
+	// Both responder steps are pure computation, so the whole key agreement
+	// runs inside one borrow of the static key and the handshake state -- the
+	// only holder of an alias to its locked pages -- is dropped before the
+	// borrow ends. No network I/O happens under the borrow. If the key has
+	// been destroyed or wiped by a shutdown sweep, the borrow refuses before
+	// flynn/noise runs and THIS connection fails; nothing else is touched.
+	var (
+		msg2     []byte
+		cs1, cs2 *noise.CipherState
+		inner    error
+	)
+
+	err = s.config.StaticKey.WithDHKey(func(key noise.DHKey) error {
+		msg2, cs1, cs2, inner = respondNK(cipherSuite, key, frame1)
+		return inner
 	})
-	if err != nil {
-		return nil, fmt.Errorf("%w: init handshake state: %w", ErrHandshakeFailed, err)
+	if inner != nil {
+		return nil, inner
 	}
-
-	// Process msg1 (ReadMessage) - responder reads first. The suite header is
-	// consumed by the prologue, so only the body is fed to Noise.
-	if _, _, _, err = hs.ReadMessage(nil, frame1[suiteHeaderSize:]); err != nil {
-		return nil, fmt.Errorf("%w: process msg1: %w", ErrHandshakeFailed, err)
-	}
-
-	// Write msg2 to the client: [e, ee] - this is the final message.
-	msg2, cs1, cs2, err := hs.WriteMessage(nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: generate msg2: %w", ErrHandshakeFailed, err)
+		return nil, handshakeError{Stage: "borrow static key", Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	writeDeadline := time.Now().Add(s.config.WriteTimeout)
 	if err := WriteFrame(conn, msg2, writeDeadline); err != nil {
-		return nil, fmt.Errorf("%w: send msg2: %w", ErrHandshakeFailed, err)
+		return nil, handshakeError{Stage: "send msg2", Kind: ErrHandshakeFailed, Err: err}
 	}
 
 	if cs1 == nil || cs2 == nil {
-		return nil, fmt.Errorf("%w: handshake did not complete", ErrHandshakeFailed)
+		return nil, handshakeError{Stage: "handshake did not complete", Kind: ErrHandshakeFailed}
 	}
 
 	// For the responder: cs1 is the initiator's send cipher (our receive),
 	// cs2 is the responder's send cipher (our send).
 	return &noiseSession{send: cs2, recv: cs1}, nil
+}
+
+// respondNK runs the responder's half of the Noise_NK key agreement over
+// frame1 and returns msg2 with the resulting cipher states. key must be
+// borrowed for the duration of the call; the handshake state that retains it
+// does not outlive the call.
+func respondNK(suite noise.CipherSuite, key noise.DHKey, frame1 []byte) ([]byte, *noise.CipherState, *noise.CipherState, error) {
+	hs, err := noise.NewHandshakeState(noise.Config{
+		CipherSuite:   suite,
+		Pattern:       noise.HandshakeNK,
+		Initiator:     false,
+		StaticKeypair: key,
+		Prologue:      frame1[:suiteHeaderSize],
+	})
+	if err != nil {
+		return nil, nil, nil, handshakeError{Stage: "init handshake state", Kind: ErrHandshakeFailed, Err: err}
+	}
+
+	// Process msg1 (ReadMessage) - responder reads first. The suite header is
+	// consumed by the prologue, so only the body is fed to Noise.
+	if _, _, _, err = hs.ReadMessage(nil, frame1[suiteHeaderSize:]); err != nil {
+		return nil, nil, nil, handshakeError{Stage: "process msg1", Kind: ErrHandshakeFailed, Err: err}
+	}
+
+	// Write msg2 to the client: [e, ee] - this is the final message.
+	msg2, cs1, cs2, err := hs.WriteMessage(nil, nil)
+	if err != nil {
+		return nil, nil, nil, handshakeError{Stage: "generate msg2", Kind: ErrHandshakeFailed, Err: err}
+	}
+
+	return msg2, cs1, cs2, nil
 }
 
 // sendErrorResponse encodes and sends an error response over the encrypted
