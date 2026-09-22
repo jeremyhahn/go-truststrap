@@ -1,6 +1,87 @@
 # go-truststrap Makefile
 # PKI trust bootstrap library
 
+# ---- release wiring for the vendored fleet template (#24) ----
+#
+# make/release-alpha.mk (included at the end of this file) IS the company
+# template `software/templates/make/release-alpha.mk`, vendored BYTE-FOR-BYTE.
+# Nothing in that file is edited here and nothing should be: adopting a newer
+# revision has to stay a file swap, and local edits are what turned one shared
+# recipe into sixteen divergent ones. Everything this repository has to say
+# about its own release is said through the four variables it reads, below.
+#
+# It lives at the TOP of the Makefile for one measured reason. A variable set
+# on the make COMMAND LINE is auto-exported into every subprocess environment,
+# and BUILDING that environment expands it — so a `$(shell ...)` payload in one
+# runs without the Makefile ever naming the variable. The template closes that
+# with `unexport`, but a directive cannot protect what ran BEFORE the file
+# carrying it was included, and this Makefile evaluates `$(shell ...)` while
+# parsing (BUILD_VERSION, the tool versions, AGENT_GIT itself). With the
+# `unexport` only inside the include — hundreds of lines down — `make version
+# 'RELEASE_REMOTE=$(shell id >&2)x'` executed the payload at the first such
+# expansion (measured here on GNU Make 4.4.1; the template's own measurement
+# used a minimal Makefile with no parse-time `$(shell)`, where the include's
+# copy is enough). This is the ADOPTER's half of that guard, not a deviation:
+# the template keeps its own copy, which is the one the recipe relies on.
+#
+# Both name families are listed — the public inputs an operator sets, and the
+# internal REL_* aliases, which are just as settable from a command line.
+unexport VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT
+unexport REL_VERSION REL_REMOTE REL_REPO REL_AGENT_GIT
+
+# `:=`, never `?=`, and the order matters: `unexport` on an UNDEFINED variable
+# DEFINES it, empty, with origin `file` (measured, GNU Make 4.4.1), after which
+# `?=` is a no-op and every value below would silently be the empty string —
+# REPO_NAME empty enough to trip the template's own guard, which is the good
+# outcome, and RELEASE_REMOTE empty enough to trip a different one. An operator
+# value given on the command line still outranks a `:=` assignment here, which
+# is the override path the template documents.
+#
+# REPO_NAME — the literal repo name, spelled out. Not `$(PROJECT)`: the recipe
+# reads each input through `$(value ...)`, the variable's RAW text, so a
+# reference to another variable would arrive at agent-git.sh as the ten
+# characters `$(PROJECT)` and sign as a repository by that name. And never
+# `$(notdir $(CURDIR))`, which derives the signing IDENTITY from the checkout
+# directory — a worktree or CI workspace named anything else then signs and
+# attributes the release as the wrong agent. This repo's releases are cut from
+# per-task worktrees whose directory names are chosen for the task.
+REPO_NAME := go-truststrap
+
+# RELEASE_REMOTE — the Gitea remote the release is published to. `dev`:
+# version-control.md §2 (owner ruling 2026-09-01) names the Gitea remote `dev`
+# in every repository and forbids `origin` outright, which supersedes the
+# template header's 2026-08-27 `origin` measurement. The template keeps this a
+# VARIABLE rather than a constant for exactly that rollout, so adopting the
+# ruling costs this one line. A checkout that still names its remote otherwise
+# releases with `make release-alpha RELEASE_REMOTE=<name> VERSION=...`; the
+# recipe asserts the remote resolves before it trusts the answer to its
+# duplicate-tag question.
+RELEASE_REMOTE := dev
+
+# AGENT_GIT — the signing/identity wrapper that every git WRITE in the recipe
+# goes through; it supplies this repository's agent principal and SSH signing,
+# which `main` requires. Resolved FROM PATH, never a baked absolute path: a
+# literal path publishes a login name and one machine's directory layout out of
+# a repository that is mirrored publicly (template v2.3.6 a). Simply-expanded
+# so that `$(value AGENT_GIT)` yields a PATH — a recursive assignment would
+# hand the guard the unexpanded text `$(shell ...)`, which is not executable,
+# turning a working setup into a confusing refusal. Resolved only when the
+# operator supplied nothing; `unexport` above leaves a command-line or
+# environment value and its origin intact, so this tests what it means to.
+# Unresolvable means empty, and the template's `test -x` guard then fails
+# CLOSED before VERSION is written: never a silent unsigned release.
+ifeq ($(filter command line environment,$(origin AGENT_GIT)),)
+AGENT_GIT := $(shell command -v agent-git.sh 2>/dev/null)
+endif
+#
+# The rest of the template's adopter checklist, worked here:
+#   - `grep -n '^VERSION' Makefile` -> nothing. The build version is
+#     BUILD_VERSION (below), renamed precisely so that a Makefile default
+#     cannot shadow `make release-alpha VERSION=vX.Y.Z-alpha` and make the
+#     "state the version explicitly" guard unreachable (template v2.3.6 b).
+#   - No nested module here (one go.mod, at the root), so there is no lockstep
+#     check to keep as a prerequisite of release-alpha.
+
 # Colors
 CYAN    := \033[36m
 GREEN   := \033[32m
@@ -11,7 +92,13 @@ NC      := \033[0m
 # Project
 PROJECT     := go-truststrap
 MODULE      := github.com/jeremyhahn/go-truststrap
-VERSION     := $(shell cat VERSION 2>/dev/null || echo "0.0.0-dev")
+# BUILD_VERSION is the UNPREFIXED version in the VERSION file
+# (release-versioning.md §2), injected into local builds. It is deliberately
+# NOT named VERSION: `make release-alpha VERSION=vX.Y.Z-alpha` takes the
+# release version as an argument, and a Makefile-level default would make the
+# "state the version explicitly" guard unreachable — a mistyped argument would
+# silently cut a release named after whatever the file already held.
+BUILD_VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.0-dev")
 BUILD_DIR   := bin
 CLI_BINARY  := $(BUILD_DIR)/truststrap
 COVERAGE_DIR := coverage
@@ -23,7 +110,7 @@ GO          := go
 # in the environment (a common setting, e.g. -mod=mod) make handed go the value
 # below and every build died with `parsing $GOFLAGS: non-flag "CGO_ENABLED=0"`.
 GO_ENV      := CGO_ENABLED=0
-LDFLAGS     := -ldflags="-s -w -X main.version=$(VERSION)"
+LDFLAGS     := -ldflags="-s -w -X main.version=$(BUILD_VERSION)"
 GOTEST      := $(GO) test -count=1 -race
 GOBENCH     := $(GO) test -bench=. -benchmem -count=1
 
@@ -47,7 +134,7 @@ GOLANGCI_LINT_VERSION := v2.13.2
 # Docker
 DOCKER            := docker
 DOCKER_IMAGE      := $(PROJECT)
-DOCKER_TAG        := $(VERSION)
+DOCKER_TAG        := $(BUILD_VERSION)
 INTEGRATION_IMAGE := $(PROJECT)-integration:latest
 
 # Packages
@@ -427,7 +514,7 @@ check: fmt-check vet lint security ## Run all code quality and security checks
 ## CI Pipeline
 ## ============================================================================
 
-ci-local: deps fmt-check vet lint security build test coverage ## Run full CI pipeline locally
+ci-local: deps fmt-check vet lint security build test test-release-alpha coverage ## Run full CI pipeline locally
 	@printf "$(GREEN)CI pipeline complete$(NC)\n"
 
 ci: ci-local ## Run CI pipeline (alias for ci-local)
@@ -495,28 +582,28 @@ docker-run: ## Run Docker container
 ## ============================================================================
 
 version: ## Display current version
-	@printf "$(CYAN)Version: $(VERSION)$(NC)\n"
+	@printf "$(CYAN)Version: $(BUILD_VERSION)$(NC)\n"
 
 bump-major: ## Bump major version
 	@printf "$(CYAN)Bumping major version...$(NC)\n"
-	@MAJOR=$$(echo $(VERSION) | cut -d. -f1); \
+	@MAJOR=$$(echo $(BUILD_VERSION) | cut -d. -f1); \
 	NEW_MAJOR=$$(($$MAJOR + 1)); \
 	echo "$$NEW_MAJOR.0.0" > VERSION; \
 	printf "$(GREEN)Version bumped to $$(cat VERSION)$(NC)\n"
 
 bump-minor: ## Bump minor version
 	@printf "$(CYAN)Bumping minor version...$(NC)\n"
-	@MAJOR=$$(echo $(VERSION) | cut -d. -f1); \
-	MINOR=$$(echo $(VERSION) | cut -d. -f2); \
+	@MAJOR=$$(echo $(BUILD_VERSION) | cut -d. -f1); \
+	MINOR=$$(echo $(BUILD_VERSION) | cut -d. -f2); \
 	NEW_MINOR=$$(($$MINOR + 1)); \
 	echo "$$MAJOR.$$NEW_MINOR.0" > VERSION; \
 	printf "$(GREEN)Version bumped to $$(cat VERSION)$(NC)\n"
 
 bump-patch: ## Bump patch version
 	@printf "$(CYAN)Bumping patch version...$(NC)\n"
-	@MAJOR=$$(echo $(VERSION) | cut -d. -f1); \
-	MINOR=$$(echo $(VERSION) | cut -d. -f2); \
-	PATCH=$$(echo $(VERSION) | cut -d. -f3 | cut -d- -f1); \
+	@MAJOR=$$(echo $(BUILD_VERSION) | cut -d. -f1); \
+	MINOR=$$(echo $(BUILD_VERSION) | cut -d. -f2); \
+	PATCH=$$(echo $(BUILD_VERSION) | cut -d. -f3 | cut -d- -f1); \
 	NEW_PATCH=$$(($$PATCH + 1)); \
 	echo "$$MAJOR.$$MINOR.$$NEW_PATCH" > VERSION; \
 	printf "$(GREEN)Version bumped to $$(cat VERSION)$(NC)\n"
@@ -526,7 +613,7 @@ bump-patch: ## Bump patch version
 ## ============================================================================
 
 release: check test build-cli ## Create a release (run checks, tests, build)
-	@printf "$(GREEN)Release $(VERSION) ready$(NC)\n"
+	@printf "$(GREEN)Release $(BUILD_VERSION) ready$(NC)\n"
 
 release-binaries: ## Build release binaries for all platforms
 	@printf "$(CYAN)Building release binaries...$(NC)\n"
@@ -544,32 +631,54 @@ release-binaries: ## Build release binaries for all platforms
 ## ============================================================================
 
 help: ## Show this help message
-	@printf "$(CYAN)$(PROJECT) v$(VERSION)$(NC)\n"
+	@printf "$(CYAN)$(PROJECT) v$(BUILD_VERSION)$(NC)\n"
 	@printf "$(CYAN)=============================$(NC)\n"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+	@# -h: MAKEFILE_LIST holds more than one file since the release recipe
+	@# moved to make/release-alpha.mk, and grep would prefix each match with
+	@# the filename, which the awk below would then print as the target name.
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "$(CYAN)%-28s$(NC) %s\n", $$1, $$2}'
 
-SUBMODULE_TAGS := 
 # Builds never resolve through a workspace: modules come from Gitea tags
 # (dependency-resolution.md §2). Immunizes against stray go.work files.
 export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
-# (release-versioning.md P2). deps-latest runs before compiling in a
-# consumer repo; release-alpha publishes this repo's next -alpha tag to dev.
+# deps-latest runs before compiling in a consumer repo; release-alpha publishes
+# this repo's next -alpha tag to the dev remote.
 # deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
 # 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
+#
+# The SUBMODULE_TAGS list is gone: this repository is a SINGLE module (one
+# go.mod, at the root), so the lockstep tag loop the old recipe ran was always
+# over an empty list — a thing to maintain and to misread, not a feature. A
+# repo that grows a nested module adds its lockstep check back as a
+# PREREQUISITE of release-alpha, where a failure aborts before any tag exists.
 
-.PHONY: release-alpha deps-latest
+.PHONY: deps-latest test-release-alpha
 
-release-alpha:
-	@V=$$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0-alpha); \
-	NEXT=$$(echo $$V | awk -F'[.-]' '{printf "v%s.%s.%d-alpha", substr($$1,2), $$2, $$3+1}'); \
-	echo $${NEXT#v} > VERSION && git add VERSION && git commit -q -m "chore(release): $$NEXT" || true; \
-	git tag $$NEXT; \
-	for s in $(SUBMODULE_TAGS); do git tag "$$s/$$NEXT"; done; \
-	git push dev HEAD --tags && echo "Tagged $$NEXT"
+# The release path is the one part of this build whose failure mode is a
+# PUBLISHED tag, and a published tag is immutable (release-versioning.md §3) —
+# so it is tested rather than trusted, and what it tests is the VENDORED recipe
+# as included and wired above, reached through this Makefile. A test of a
+# re-authored copy would prove nothing about the file that actually runs. The
+# suite is hermetic: throwaway repositories, a local bare repo standing in for
+# the remote, and a fake AGENT_GIT wrapper. No network, no Gitea, no signing
+# key, and no dependence on the caller having a `dev` remote.
+test-release-alpha: ## Test the vendored release-alpha recipe as included (hermetic)
+	@./scripts/check-release-alpha_test.sh
+
+# `include`, not `-include`: a missing recipe must break the build loudly
+# rather than leave a Makefile with no release target and no explanation. It
+# comes after the wiring at the top of this file because the template's
+# target-specific assignments are simply-expanded, and read those values as
+# this line is parsed.
+#
+# `release-alpha` does not appear in `make help`: the template carries no `##`
+# description and adding one would be an edit to vendored text. Its usage is
+# `make release-alpha VERSION=vX.Y.Z-alpha`, and the recipe's own first guard
+# says so.
+include make/release-alpha.mk
 
 deps-latest:
 	@GOWORK=off sh -c ' \

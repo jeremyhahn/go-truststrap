@@ -631,6 +631,16 @@ jobs:
             exit 1
           fi
 
+      # CUSTOMIZE (repo-specific, #24): the release recipe is Makefile and
+      # shell, so `go test` cannot see it, and the target it guards publishes
+      # IMMUTABLE tags — release-versioning.md §3, a published tag is never
+      # moved or deleted. This suite runs the vendored recipe as this Makefile
+      # includes and wires it, against throwaway repositories with a local bare
+      # repo standing in for the remote and a fake signing wrapper: no network,
+      # no Gitea, no key, seconds to run.
+      - name: Release recipe tests (vendored release-alpha template)
+        run: make test-release-alpha
+
   # CUSTOMIZE (repo-specific gate, kept deliberately through the v1.11 sync —
   # operator ruling on issue #39: a drift sync never deletes working
   # verification). The suite drives a real CoreDNS serving the TLSA records the
