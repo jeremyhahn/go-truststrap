@@ -92,6 +92,26 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A FIPS 140-only refusal of X25519 is no longer reported as an invalid key
+  size** (#62, filed from go-qrdb#485). `noiseproto`'s `StaticKey` constructors
+  wrapped every public-key derivation failure in `ErrInvalidKeySize` unless it
+  was already `ErrFIPSUnsupported`, which only the `-tags fips` build produces.
+  In the **untagged** build under `GODEBUG=fips140=only` the primitive is
+  compiled in and the Go Cryptographic Module refuses it at run time instead, so
+  `GenerateStaticKey`, `LoadStaticKey` and `DecodeStaticKey` returned
+  `noise: invalid key size: crypto/ecdh: use of X25519 is not allowed in FIPS
+  140-only mode` — the leading clause, the one an operator acts on, sending them
+  after a key-length bug that does not exist. Both configurations now report
+  `ErrFIPSUnsupported`. For the runtime refusal the classifier consults
+  `crypto/fips140.Enabled()` only after derivation has failed, and never matches
+  the module's message. `Enabled()` alone does not mean X25519 is refused:
+  `fips140=on` still permits it. Outside FIPS mode the
+  classification is unchanged. Both classifications are the package's existing
+  typed error naming the failing constructor, so `errors.Is` matches the
+  sentinel **and** the module's own refusal. `ErrFIPSUnsupported`'s own text
+  says "under FIPS" rather than "in FIPS build" now that a non-`fips` build can
+  return it; the sentinel's identity, and every `errors.Is` against it, is unchanged.
+
 - **Shell quoting in the workflows, newly caught by the armed `shellcheck`**
   (#39 review round 2). `release.yml` now runs `sha256sum -- *` so an artifact
   named with a leading dash is hashed rather than parsed as an option (SC2035;

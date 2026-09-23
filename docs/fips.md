@@ -132,6 +132,42 @@ layer where the suite is chosen and the refusal is decided; the facade only adds
 `ErrFetchFailed`. It was `noiseproto.ErrFIPSUnsupported` before #51, when the
 facade drove a `noiseproto.Session` of its own.
 
+### The untagged build under `fips140=only` refuses too, and says so
+
+`-tags fips` is not the only configuration that refuses X25519. An **untagged**
+binary — the default build — has the primitive compiled in, and under
+`GODEBUG=fips140=only` the module rejects it at the point of use instead, with an
+error of its own:
+
+```
+crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode
+```
+
+`noiseproto`'s three `StaticKey` constructors classify that runtime rejection as
+`ErrFIPSUnsupported` as well, wrapping the module's message rather than reporting
+an invalid key size: the key is fine, the binary is not permitted to use it, and
+`noise: invalid key size: …` sent an operator after a key-length bug that does
+not exist (#62, filed from go-qrdb#485). The classifier consults
+`crypto/fips140.Enabled()` only **after derivation has failed**, not a match on
+the module's message, which is not part of any contract. `Enabled()` alone does
+not mean X25519 is refused — it is also true under `GODEBUG=fips140=on`, which
+still permits X25519 — so it is never used to predict availability; it only
+says what an observed failure means. This differs from
+`bootstrap.fipsEnforced`, which decides *before* selecting a suite by probing
+whether X25519 actually works in this process.
+
+The refusal names the constructor that failed and unwraps to the sentinel and
+the module's own message together, so `errors.Is` matches either:
+
+```
+noise: GenerateStaticKey: X25519 is unavailable under FIPS: crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode
+```
+
+The two configurations stay distinct in what they guarantee: `-tags fips`
+compiles the primitive out, which is what the gate proves; `fips140=only` alone
+leaves it linked and relies on the module to refuse. Only the error vocabulary is
+shared.
+
 `AutoBootstrapper` needs no FIPS-specific handling: a configured Noise method
 that cannot offer an available suite records the refusal as an ordinary attempt
 failure in `AggregateError.Attempts` and the run continues to the next method in
@@ -186,7 +222,14 @@ reduces what runs under FIPS, never what is tested.
 in both builds, so the untagged `dh_refusal_test.go` in each package can inject
 the refusal and exercise the callers' error paths in the default build too.
 Without that, those branches would be reachable only under `-tags fips` and
-would read as dead code in the coverage report.
+would read as dead code in the coverage report. `noiseproto`'s `fipsEnforced` is
+a variable for the same reason.
+
+An injected error cannot stand in for the runtime refusal above, because
+`GODEBUG` is read once at process start: `noiseproto/dh_refusal_test.go`
+re-executes the test binary with `GODEBUG=fips140=only` set and asserts on the
+child, so the untagged-under-`fips140=only` classification is measured against
+the real module rather than a stub.
 
 ## What this gate does and does not prove
 

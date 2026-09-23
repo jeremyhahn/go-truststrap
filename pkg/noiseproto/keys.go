@@ -4,6 +4,7 @@
 package noiseproto
 
 import (
+	"crypto/fips140"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -172,10 +173,7 @@ func newStaticKey(op string, priv *enclave.MemoryEnclave) (*StaticKey, error) {
 	err := borrow(op, priv, func(b []byte) error {
 		derived, deriveErr := derivePublicKey(b)
 		if deriveErr != nil {
-			if errors.Is(deriveErr, ErrFIPSUnsupported) {
-				return deriveErr
-			}
-			return wrap(op, ErrInvalidKeySize, deriveErr)
+			return classifyDerivationFailure(op, deriveErr)
 		}
 		pub = derived
 		return nil
@@ -186,6 +184,52 @@ func newStaticKey(op string, priv *enclave.MemoryEnclave) (*StaticKey, error) {
 	}
 
 	return &StaticKey{private: priv, public: pub}, nil
+}
+
+// fipsEnforced reports whether the Go Cryptographic Module is running in FIPS
+// 140-3 mode (GODEBUG=fips140=on or =only). That alone does not mean X25519 is
+// refused: fips140=on still permits non-approved algorithms, and only
+// fips140=only rejects X25519 at the point of use. It is therefore consulted
+// only AFTER derivation has already failed, to say what that failure means; it
+// is never used to decide in advance whether X25519 is available. (Contrast
+// pkg/noiseproto/bootstrap's fipsEnforced, which probes availability before a
+// suite is chosen.) It is a variable so that a test can drive the
+// classification below in an ordinary build, mirroring nkCipherSuite and
+// derivePublicKey in dh.go.
+var fipsEnforced = fips140.Enabled
+
+// classifyDerivationFailure says what a failed public-key derivation means in
+// this package's error vocabulary. X25519 is refused in two distinct
+// configurations, and both are a FIPS refusal rather than a malformed key:
+//
+//   - a "fips" build, where derivePublicKey is dh_fips.go's static refusal and
+//     the error already is ErrFIPSUnsupported;
+//   - any build -- the default, untagged one included -- running under
+//     GODEBUG=fips140=only, where X25519 is compiled in but the Go
+//     Cryptographic Module rejects it at run time ("crypto/ecdh: use of X25519
+//     is not allowed in FIPS 140-only mode").
+//
+// The second is recognised by consulting fips140.Enabled() once derivation has
+// failed, rather than by matching the module's message, which is not part of
+// any contract. Enabled() is true under fips140=on as well, but there X25519
+// is permitted and derivation of a KeySize scalar -- all any caller here
+// passes -- does not fail, so a failure seen while FIPS mode is on is the
+// fips140=only refusal. Reporting it as ErrInvalidKeySize sends an operator
+// after a key-length bug that does not exist; the key is fine, the binary is
+// not permitted to use it. Anything else keeps its long-standing meaning: a
+// scalar this curve will not accept.
+//
+// Either classification is a noiseError for op, so the sentinel and the
+// module's own refusal both stay matchable with errors.Is.
+func classifyDerivationFailure(op string, err error) error {
+	if errors.Is(err, ErrFIPSUnsupported) {
+		return err
+	}
+	if fipsEnforced() {
+		return wrap(op, ErrFIPSUnsupported, err)
+	}
+
+	return wrap(op, ErrInvalidKeySize, err)
 }
 
 // PublicBytes returns a copy of the Curve25519 public key, or nil for a nil or

@@ -42,10 +42,14 @@ var (
 	ErrInvalidBufferSize = errors.New("noise: invalid buffer size")
 
 	// ErrFIPSUnsupported indicates the operation needs X25519 key agreement,
-	// which this binary was built to refuse. It is returned by every entry
-	// point of this package that performs key agreement in a "fips" build.
-	// See docs/fips.md.
-	ErrFIPSUnsupported = errors.New("noise: X25519 is unavailable in FIPS build")
+	// which is refused whenever FIPS is enforced: a "fips" build, where the
+	// primitive is not compiled in at all (dh_fips.go), or any build running
+	// under GODEBUG=fips140=only, where the Go Cryptographic Module rejects
+	// X25519 at run time. Every entry point of this package that performs key
+	// agreement returns it in a "fips" build; the StaticKey constructors return
+	// it under fips140=only too, wrapping the module's own refusal. See
+	// docs/fips.md.
+	ErrFIPSUnsupported = errors.New("noise: X25519 is unavailable under FIPS")
 
 	// ErrProtectedMemory indicates a static key's private scalar could not be
 	// placed in, or read from, locked memory. It always wraps the go-enclave
