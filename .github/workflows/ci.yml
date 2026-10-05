@@ -26,7 +26,7 @@
 # at once, so a run takes as long as its slowest job. security, test and any
 # CUSTOMIZE integration job no longer wait on lint + build; CI Gate, the one
 # required check, still needs every job and fails closed on any result but
-# success. (v1.14 also ran push on 'merge-train/**' for automerge.yml v6's
+# success. (v1.14 also ran push on merge-train/* for automerge.yml v6's
 # trains; v1.15 drops that.) Owner, 2026-10-04: "yes
 # lets batch the merges. make sure we are doing things efficiently!" and "use
 # merge trains where possible if that helps!". Supersedes v1.9's staged
