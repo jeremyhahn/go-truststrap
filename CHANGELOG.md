@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0-alpha] - 2026-10-07
+
+**Breaking API change:** `p256proto` and `noiseproto` static keys are held in go-enclave
+(`*enclave.MemoryEnclave`) instead of memguard, so `p256proto.NewStaticKey`,
+`EncodeStaticKey` and `DecodeStaticKey` take enclave buffers. Consumers that ban
+memguard (go-qrdb) can now persist a P-256 responder key. Wire formats are unchanged.
+
 ### Added
 
 - **`noiseproto.Session.ChannelBinding()` exposes the Noise handshake hash**
