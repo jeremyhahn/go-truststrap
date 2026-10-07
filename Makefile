@@ -129,7 +129,7 @@ GOBENCH     := $(GO) test -bench=. -benchmem -count=1
 # lives since v2.0.0. The old unpinned line asked for @latest on the v1 path,
 # which resolves to v1.64.8 — so `install-tools` was not merely unpinned, it
 # could only ever fetch a linter a major version behind the gate.
-GOLANGCI_LINT_VERSION := v2.13.2
+GOLANGCI_LINT_VERSION := v2.14.0
 
 # Docker
 DOCKER            := docker
@@ -625,9 +625,9 @@ install-govulncheck: ## Install govulncheck vulnerability scanner
 # actually run (without shellcheck on PATH actionlint silently disables them).
 TRIVY_INSTALL_DIR      ?= $(shell $(GO) env GOPATH)/bin
 SHELLCHECK_INSTALL_DIR ?= $(shell $(GO) env GOPATH)/bin
-SHELLCHECK_VERSION     := 0.10.0
-SHELLCHECK_SHA256_x86_64  := 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
-SHELLCHECK_SHA256_aarch64 := 324a7e89de8fa2aed0d0c28f3dab59cf84c6d74264022c00c22af665ed1a09bb
+SHELLCHECK_VERSION     := 0.11.0
+SHELLCHECK_SHA256_x86_64  := 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+SHELLCHECK_SHA256_aarch64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
 
 install-trivy: ## Install Trivy vulnerability scanner (pinned, checksum-verified)
 	@printf "$(CYAN)Installing trivy...$(NC)\n"
@@ -637,7 +637,7 @@ install-trivy: ## Install Trivy vulnerability scanner (pinned, checksum-verified
 	test -f .trivy-version || { echo "error: .trivy-version is missing" >&2; exit 1; }; \
 	version=$$(tr -d ' \t\n\r' < .trivy-version); \
 	printf '%s' "$$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
-		echo "error: trivy version '$$version' is not a bare semver (expected e.g. 0.74.0)" >&2; exit 1; }; \
+		echo "error: trivy version '$$version' is not a bare semver (expected e.g. 0.75.0)" >&2; exit 1; }; \
 	for tool in curl tar sha256sum; do \
 		command -v "$$tool" >/dev/null 2>&1 || { echo "error: $$tool is required and was not found" >&2; exit 1; }; \
 	done; \

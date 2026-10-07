@@ -231,7 +231,7 @@ permissions:
   security-events: write
 
 env:
-  GO_VERSION: "1.27.0"        # latest stable, raised from 1.26.7 in the portfolio-wide Go 1.27 wave (#14; devops.md §9 — latest stable, adopted portfolio-wide in one pass, never piecemeal). The block this line used to record is GONE: cockroachdb/swiss compiles under 1.27 as of v0.0.0-20260820225851-333444432258, and this module never depended on it. A PATCH, never `1.27` or `stable` (devops.md §9a — a floating tag is an unpinned toolchain). Keep in lockstep with go.mod, nightly.yml's GO_VERSION, and the golang: bases in Dockerfile, .devcontainer/Dockerfile and test/integration/Dockerfile
+  GO_VERSION: "1.27.1"        # latest stable, raised from 1.26.7 in the portfolio-wide Go 1.27 wave (#14; devops.md §9 — latest stable, adopted portfolio-wide in one pass, never piecemeal). The block this line used to record is GONE: cockroachdb/swiss compiles under 1.27 as of v0.0.0-20260820225851-333444432258, and this module never depended on it. A PATCH, never `1.27` or `stable` (devops.md §9a — a floating tag is an unpinned toolchain). Keep in lockstep with go.mod, nightly.yml's GO_VERSION, and the golang: bases in Dockerfile, .devcontainer/Dockerfile and test/integration/Dockerfile
   COVERAGE_THRESHOLD: 90      # CUSTOMIZE: matches COVERAGE_THRESHOLD in the Makefile (testing-guidelines.md)
 
 jobs:
@@ -352,7 +352,7 @@ jobs:
       #
       # One difference worth stating: this step fetched `@latest`, so the image
       # does not merely spare it a network call, it PINS it — the image carries
-      # actionlint v1.7.7. `@latest` is what makes a tool's output
+      # actionlint v1.7.12. `@latest` is what makes a tool's output
       # unattributable to a version (the reproducibility complaint in
       # go-luks2#21), and the version report above now names the actionlint
       # that actually ran. Bumping it is agent-company's reviewed image change,

@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-truststrap
 
-go 1.27.0
+go 1.27.1
 
 require (
 	github.com/flynn/noise v1.1.0

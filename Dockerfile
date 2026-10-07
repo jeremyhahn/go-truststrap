@@ -2,7 +2,7 @@
 # The syntax directive pins the BuildKit frontend that provides the secret
 # mount below. Without it an older frontend rejects the RUN as a parse error
 # rather than building without the secret.
-FROM --platform=$BUILDPLATFORM golang:1.27.0-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=0.0.0-dev
