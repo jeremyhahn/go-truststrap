@@ -191,7 +191,7 @@ Downstream projects should back the `PinStore` interface with replicated, durabl
 
 ## Architecture
 
-The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`, with the packaging, tooling and release directories `configs/`, `init/`, `scripts/`, `changelog.d/`, `docs/` and `assets/` beside them.
+The layout follows [golang-standards/project-layout](https://github.com/golang-standards/project-layout): the CLI in `cmd/`, the library in `pkg/`, the Kotlin client SDK in `sdk/`, and the build-tagged integration suite in `test/`, with the packaging, tooling and release directories `configs/`, `init/`, `internal/`, `changelog.d/`, `docs/` and `assets/` beside them.
 
 ```
 cmd/truststrap/              CLI built on cobra: fetch, dane, noise, spki, serve, version
@@ -267,7 +267,7 @@ pkg/spkipin/                 SPKI pin computation and verification
   client.go                  HTTPS client with SPKI verification
   errors.go                  Package doc and sentinel errors
 
-sdk/kotlin/                  Kotlin/JVM client SDK, Gradle build
+sdk/kotlin/                  Kotlin/JVM client SDK; `make test-sdk-kotlin` builds and tests it
   src/main/kotlin/com/automatethethings/truststrap/
     TrustStrapClient.kt      Method dispatch: DANE, Noise, SPKI, direct HTTPS
     NoiseNKSession.kt        Noise_NK handshake and transport encryption
@@ -278,20 +278,21 @@ sdk/kotlin/                  Kotlin/JVM client SDK, Gradle build
 
 test/integration/            Integration suite, guarded by the integration build tag
   integration_test.go        End-to-end CLI flows over Noise, DANE and SPKI
-  Dockerfile                 Test image with coredns and openssl baked in
-  testdata/gen.sh            Generates the test PKI, Noise key and CoreDNS zone
+  fixtures_test.go           Generates the test PKI, Noise key and CoreDNS zone per run
+  Dockerfile                 Test image with coredns baked in
 
 configs/                     Configuration templates
   truststrap.yaml.example    Sample serve config; file, TRUSTSTRAP_* env and flag precedence
 
 init/                        Service-manager integration for truststrap serve
   truststrap.service         systemd unit
-  truststrap.rc              SysV/LSB init script
-  truststrap.env             EnvironmentFile read by both
+  truststrap.env             EnvironmentFile read by the unit
 
-scripts/                     Pinned, checksum-verified tool installers
-  install-shellcheck.sh      shellcheck, installed by the CI lint job
-  install-trivy.sh           trivy, installed by make install-trivy
+internal/                    Repository tooling; not importable by consumers
+  labstrings/                Public-releasability gate, run by make test
+  releasealpha/              Tests for the vendored release-alpha recipe
+  gitearelease/              Publishes a release and its assets to Gitea
+  cmd/gitea-release/         The release workflow's entry point for it
 
 changelog.d/                 One <issue>-<slug>.md fragment per PR, assembled at release
 docs/                        Package documentation, indexed by docs/README.md

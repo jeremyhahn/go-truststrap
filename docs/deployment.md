@@ -54,23 +54,17 @@ sudo systemctl restart truststrap
 sudo journalctl -u truststrap -f
 ```
 
-## RC Init Script
+## Hosts without systemd
 
-For systems without systemd:
-
-```bash
-sudo cp init/truststrap.rc /etc/init.d/truststrap
-sudo chmod 755 /etc/init.d/truststrap
-sudo cp init/truststrap.env /etc/default/truststrap
-
-# Enable at boot
-sudo update-rc.d truststrap defaults    # Debian/Ubuntu
-sudo chkconfig truststrap on            # RHEL/CentOS
-
-# Manage
-sudo /etc/init.d/truststrap start
-sudo /etc/init.d/truststrap status
-```
+The repository ships no init script: it carries no shell scripts (#75), and the
+SysV script it once shipped was one. `truststrap serve` needs no wrapper to run
+as a service -- it stays in the foreground, logs to standard error, and shuts
+down cleanly on `SIGTERM` -- so run it under whatever supervisor the host
+already has (OpenRC's `supervise-daemon`, runit, s6, daemontools), as the
+`truststrap` user, with the same flags the systemd unit's `ExecStart` line
+passes. Instead of flags, the supervisor can export the `TRUSTSTRAP_SERVE_*`
+variables or point at `/etc/truststrap/truststrap.yaml`; see
+[cli.md](cli.md#configuration-sources) for the precedence.
 
 ## Docker
 

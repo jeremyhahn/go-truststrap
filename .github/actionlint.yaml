@@ -12,7 +12,7 @@
 # only, not policy.
 #
 # v2 (2026-09-05, go-truststrap #46): add `code-review-qwen`, the label of
-# Gitea runner `gpu-host-code-review` (id 48), introduced with the label-driven
+# Gitea runner id 48, introduced with the label-driven
 # qwen review pilot. The runner was live and completing jobs while this
 # allowlist still omitted it, so actionlint correctly reported an unknown
 # runner and took `Lint` — and with it the whole staged gate — red on main.

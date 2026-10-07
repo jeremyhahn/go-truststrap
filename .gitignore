@@ -30,20 +30,23 @@ Thumbs.db
 # Build artifacts
 dist/
 
-# Integration test generated artifacts
-test/integration/testdata/*.pem
-test/integration/testdata/*.key
-test/integration/testdata/*.csr
-test/integration/testdata/*.cnf
-test/integration/testdata/*.srl
-test/integration/testdata/*.env
-test/integration/testdata/*.txt
-test/integration/testdata/db.*
-test/integration/testdata/Corefile
-test/integration/testdata/K*
-
 go.work
 go.work.sum
 
 # Real configuration; the .example sibling is committed
 configs/truststrap.yaml
+
+# Kept out of the published tree (#75). The public GitHub commit is
+# byte-identical to the Gitea tag's tree (version-control.md section 5a), so
+# anything tracked here is published. Agent context and working notes live in
+# the local checkout only; internal/labstrings fails the build if any of these
+# is tracked again.
+CLAUDE.md
+.claude/
+.serena/
+
+# Kotlin SDK build output. Gradle's test reports record the building machine's
+# hostname, so a tracked copy publishes it (#75).
+sdk/kotlin/build/
+sdk/kotlin/.gradle/
+sdk/kotlin/.kotlin/

@@ -46,7 +46,7 @@ var (
 
 // TestMain orchestrates integration test infrastructure:
 // 1. Locate project root and CLI binary
-// 2. Generate testdata if missing
+// 2. Generate fresh fixtures into a temporary directory
 // 3. Load metadata and CA bundle
 // 4. Start CoreDNS
 // 5. Run tests
@@ -61,7 +61,6 @@ func TestMain(m *testing.M) {
 	}
 
 	cliBinary = filepath.Join(projectRoot, "bin", "truststrap")
-	testdataDir = filepath.Join(projectRoot, "test", "integration", "testdata")
 
 	// Build CLI if not present.
 	if _, err := os.Stat(cliBinary); os.IsNotExist(err) {
@@ -76,31 +75,33 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// Generate testdata if not present.
-	caFile := filepath.Join(testdataDir, "ca.pem")
-	if _, err := os.Stat(caFile); os.IsNotExist(err) {
-		fmt.Println("==> Generating testdata...")
-		cmd := exec.Command("bash", filepath.Join(testdataDir, "gen.sh"))
-		cmd.Dir = testdataDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: gen.sh failed: %v\n", err)
-			os.Exit(1)
-		}
+	// Generate a fresh PKI, Noise key and DNS zone for this run, in a
+	// directory nobody else writes to (fixtures_test.go).
+	testdataDir, err = os.MkdirTemp("", "truststrap-integration-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: creating the fixture directory: %v\n", err)
+		os.Exit(1)
 	}
+	fail := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "ERROR: "+format+"\n", args...)
+		os.RemoveAll(testdataDir) //nolint:errcheck
+		os.Exit(1)
+	}
+	fmt.Println("==> Generating fixtures in", testdataDir)
+	if err := generateFixtures(testdataDir, cliBinary); err != nil {
+		fail("generating fixtures: %v", err)
+	}
+	caFile := filepath.Join(testdataDir, "ca.pem")
 
 	// Load metadata.
 	if err := loadMetadata(filepath.Join(testdataDir, "metadata.env")); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: loading metadata: %v\n", err)
-		os.Exit(1)
+		fail("loading metadata: %v", err)
 	}
 
 	// Load the expected CA bundle once.
 	expectedCABundle, err = os.ReadFile(caFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: reading CA bundle: %v\n", err)
-		os.Exit(1)
+		fail("reading CA bundle: %v", err)
 	}
 
 	// The suite needs a real CoreDNS to serve the TLSA records the DANE
@@ -113,6 +114,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "  The integration suite drives a real CoreDNS instance.")
 		fmt.Fprintln(os.Stderr, "  Run `make integration-test`, which builds and runs the")
 		fmt.Fprintln(os.Stderr, "  containerised suite (test/integration/Dockerfile) with it baked in.")
+		os.RemoveAll(testdataDir) //nolint:errcheck
 		os.Exit(1)
 	}
 
@@ -123,16 +125,14 @@ func TestMain(m *testing.M) {
 	corednsCmd.Stdout = os.Stdout
 	corednsCmd.Stderr = os.Stderr
 	if err := corednsCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: starting CoreDNS: %v\n", err)
-		os.Exit(1)
+		fail("starting CoreDNS: %v", err)
 	}
 
 	// Wait for CoreDNS to be ready.
 	dnsAddr := "127.0.0.1:" + metaDNSPort
 	if err := waitForPort(dnsAddr, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: CoreDNS not ready: %v\n", err)
 		corednsCmd.Process.Kill() //nolint:errcheck
-		os.Exit(1)
+		fail("CoreDNS not ready: %v", err)
 	}
 	fmt.Println("==> CoreDNS ready on", dnsAddr)
 
@@ -143,6 +143,7 @@ func TestMain(m *testing.M) {
 	fmt.Println("==> Stopping CoreDNS...")
 	corednsCmd.Process.Kill() //nolint:errcheck
 	corednsCmd.Wait()         //nolint:errcheck
+	os.RemoveAll(testdataDir) //nolint:errcheck
 
 	os.Exit(code)
 }
@@ -277,7 +278,7 @@ func TestDANEShow(t *testing.T) {
 		t.Errorf("expected exactly 2 records in dane show output:\n%s", stdout)
 	}
 
-	// Verify the exact hash data matches what gen.sh produced.
+	// Verify the exact hash data matches what the fixtures computed.
 	if !strings.Contains(stdout, metaDANEEEHash) {
 		t.Errorf("dane show output missing DANE-EE hash %s:\n%s", metaDANEEEHash, stdout)
 	}
@@ -498,7 +499,7 @@ func TestSPKIShow(t *testing.T) {
 
 	stdout := runCLIMustSucceed(t, "spki", "show", "--cert-file", serverCert)
 
-	// Verify the pin matches the value computed by gen.sh.
+	// Verify the pin matches the value the fixtures computed independently.
 	pin := extractValue(t, stdout, "SPKI SHA-256: ")
 	if pin != metaSPKIPin {
 		t.Fatalf("SPKI pin mismatch:\n  got:  %s\n  want: %s", pin, metaSPKIPin)

@@ -100,14 +100,19 @@ jobs:
       #
       # AGENT_TOKEN, not GITHUB_TOKEN: the only Actions secrets that exist
       # portfolio-wide are AGENT_TOKEN and AGENT_SIGNING_KEY, and AGENT_TOKEN is
-      # this repo's own agent identity. It is also the credential the script was
-      # actually proven with — see the release job's verification note.
+      # this repo's own agent identity. It is also the credential the publisher
+      # was actually proven with — see the release job's verification note.
+      #
+      # The publisher is Go (internal/gitearelease) since #75, which removed
+      # every shell script from this repository; it replaced
+      # .github/scripts/gitea-release.sh with the same API calls. setup-go ran
+      # above, so `go run` needs nothing else on the runner.
       - name: Create Gitea Release
         if: github.server_url != 'https://github.com'
         env:
           GITEA_TOKEN: ${{ secrets.AGENT_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: bash .github/scripts/gitea-release.sh
+        run: go run ./internal/cmd/gitea-release
 
   docker:
     needs: [validate]

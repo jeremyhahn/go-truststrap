@@ -1,0 +1,9 @@
+# Tracked files the public-releasability gate (internal/labstrings) cannot
+# vouch for as text -- binary (a NUL byte in the first 8 KiB) or larger than
+# 1 MiB -- and that are published anyway. Such a file FAILS the gate unless it
+# is listed here, one per line:
+#
+#   <repository-relative path> <one-line reason>
+#
+# An entry with no reason, a duplicate, or an entry naming a file that is not
+# tracked binary/oversize content also fails the gate. The list is empty today.

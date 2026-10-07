@@ -34,10 +34,16 @@
 # shortest wall-clock to a green gate, which is what a train waits on.
 #
 # v1.11 (2026-08-28, go-blockstore #22): the lint job installs a PINNED,
-# checksum-verified shellcheck (install-shellcheck.sh, ships beside this file)
-# so actionlint's SC* rules actually run — without shellcheck on PATH actionlint
-# silently disables them and exits 0, and a real SC2046 reached main that way.
-# SHIPS-WITH gains install-shellcheck.sh (chmod +x, copy to scripts/).
+# checksum-verified shellcheck so actionlint's SC* rules actually run — without
+# shellcheck on PATH actionlint silently disables them and exits 0, and a real
+# SC2046 reached main that way.
+#
+# LOCAL DEVIATION (2026-09-25, #75): this repository carries no shell scripts
+# (owner ruling on #75), so the template's install-shellcheck.sh is replaced by
+# the `make install-shellcheck` recipe — same pinned version, same in-repo
+# SHA-256 pin, same refusal on mismatch. Do not let a template sync re-add the
+# script; the public-releasability gate (internal/labstrings) fails the build on
+# any tracked *.sh.
 #
 # v1.10 (2026-08-27, go-blockstore #7 Codex review):
 #   - actionlint runs in the lint job. devops.md §4 lists actionlint in
@@ -358,11 +364,11 @@ jobs:
       # real SC2046 word-split reached go-blockstore main this way, 2026-08-28,
       # because dev boxes lacked shellcheck while the runner had it). Install a
       # PINNED, checksum-verified shellcheck so the SC rules actually run.
-      # Ships with install-shellcheck.sh in this template directory — copy it to
-      # scripts/ with the workflow. GOPATH/bin is already on PATH via setup-go,
-      # so actionlint finds shellcheck by name.
+      # The installer is the `make install-shellcheck` recipe (#75: this
+      # repository tracks no shell scripts). GOPATH/bin is already on PATH via
+      # setup-go, so actionlint finds shellcheck by name.
       - name: Install shellcheck
-        run: ./scripts/install-shellcheck.sh "$(go env GOPATH)/bin"
+        run: make install-shellcheck SHELLCHECK_INSTALL_DIR="$(go env GOPATH)/bin"
 
       - name: actionlint
         run: actionlint
@@ -372,7 +378,7 @@ jobs:
     runs-on: ubuntu-latest
     # No `needs` (v1.14): starts with lint and build, not after them.
     # THE GO TOOLCHAIN IS CGROUP-UNAWARE. Inside a job container capped at
-    # --memory=16g on gpu-host, `nproc` still reports 24 and /proc/meminfo still
+    # --memory=16g on a runner host, `nproc` still reports 24 and /proc/meminfo still
     # reports 94 GB, because both come from the HOST. Consequences, measured on
     # 2026-08-18 against a live gosec run (cgroup memory.stat):
     #   - gosec defaults its worker count to NumCPU, so it ran 24 concurrent
@@ -408,8 +414,8 @@ jobs:
       # template sync does not silently re-add what this change removed.
       #
       # The `ubuntu-latest` label resolves to the company runner image
-      # (198.51.100.91:3001/jeremyhahn/ci-runner:latest — vstation-guests.md),
-      # which BAKES gosec and govulncheck at pinned versions. Installing them
+      # (ci-runner:latest, served by the internal forge's registry), which
+      # BAKES gosec and govulncheck at pinned versions. Installing them
       # again at job time fetched tools the container already had, and did it
       # over a network path that intermittently fails: IPv6 ENETUNREACH to
       # sum.golang.org, measured on both runner hosts (#29). That flake is what
@@ -642,9 +648,10 @@ jobs:
           fi
 
       # CUSTOMIZE (repo-specific, #24): the release recipe is Makefile and
-      # shell, so `go test` cannot see it, and the target it guards publishes
-      # IMMUTABLE tags — release-versioning.md §3, a published tag is never
-      # moved or deleted. This suite runs the vendored recipe as this Makefile
+      # shell, so a unit test of Go code cannot see it, and the target it
+      # guards publishes IMMUTABLE tags — release-versioning.md §3, a published
+      # tag is never moved or deleted. This suite (a Go test since #75,
+      # internal/releasealpha) runs the vendored recipe as this Makefile
       # includes and wires it, against throwaway repositories with a local bare
       # repo standing in for the remote and a fake signing wrapper: no network,
       # no Gitea, no key, seconds to run.

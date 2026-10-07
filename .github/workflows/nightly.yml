@@ -41,6 +41,13 @@
 #   install-trivy.sh → scripts/    — chmod +x; also what `make install-tools`
 #                                    runs, so CI's trivy and a developer's
 #                                    cannot drift
+#
+# LOCAL DEVIATION (2026-09-25, #75): this repository carries no shell scripts
+# (owner ruling on #75). install-trivy.sh is replaced by the `make install-trivy`
+# recipe, which reads the same .trivy-version and applies the same published
+# SHA-256 check; the Gitea path below calls it. Do not let a template sync
+# re-add the script: the public-releasability gate (internal/labstrings) fails
+# the build on any tracked *.sh.
 # A repo that copies this workflow without them has a Trivy job that either
 # never scans or installs an unverified scanner.
 #
@@ -218,14 +225,15 @@ jobs:
       # Through v1.3 this piped contrib/install.sh from a MUTABLE ref straight
       # into sh, which is arbitrary code execution on this runner for anyone who
       # can change that file — pulling the security scanner itself through an
-      # unverified channel. scripts/install-trivy.sh (ships with this template)
-      # downloads the pinned release artifact and verifies its published SHA-256
-      # before anything executes, and it is the SAME script `make install-tools`
-      # runs, so a developer's trivy and this one cannot drift. See the script's
-      # header for what the checksum does and does NOT prove.
+      # unverified channel. `make install-trivy` (the #75 replacement for the
+      # template's install-trivy.sh) downloads the pinned release artifact and
+      # verifies its published SHA-256 before anything executes, and it is the
+      # SAME recipe `make install-tools` runs, so a developer's trivy and this
+      # one cannot drift. See the recipe's comment in the Makefile for what the
+      # checksum does and does NOT prove.
       - name: Install Trivy (Gitea)
         if: github.server_url != 'https://github.com'
-        run: ./scripts/install-trivy.sh /usr/local/bin
+        run: make install-trivy TRIVY_INSTALL_DIR=/usr/local/bin
 
       - name: Trivy gate (Gitea)
         if: github.server_url != 'https://github.com'

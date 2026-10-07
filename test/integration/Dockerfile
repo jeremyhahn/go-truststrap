@@ -15,11 +15,11 @@
 # developer's filesystem (infra/gitea lessons.md, "the daemon's world").
 FROM golang:1.27.0-bookworm
 
-# openssl mints the test PKI in testdata/gen.sh; make drives build-cli, which
-# gen.sh needs before it can generate the Noise static key.
+# make drives build-cli, which the suite needs before it can generate the
+# Noise static key. The test PKI is minted in Go by the suite itself
+# (fixtures_test.go) -- openssl and testdata/gen.sh went in #75.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        openssl \
         make \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*

@@ -167,9 +167,9 @@ GOSEC_EXCLUDE := G115,G304,G402
 	bench-dane bench-noiseproto bench-p256proto bench-spkipin bench-truststrap \
 	integration-test integration-test-host integration-test-bootstrap \
 	fmt fmt-check vet lint gosec vuln mod-verify trivy trivy-image security \
-	check check-insecure-tls \
+	check check-insecure-tls check-releasability \
 	ci ci-local \
-	install-tools install-gosec install-govulncheck install-trivy \
+	install-tools install-gosec install-govulncheck install-trivy install-shellcheck \
 	docker-build docker-run \
 	version bump-major bump-minor bump-patch \
 	release release-binaries help
@@ -446,6 +446,29 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist (fails on unapproved
 	fi
 	@printf "$(GREEN)InsecureSkipVerify allowlist check passed$(NC)\n"
 
+# The Kotlin SDK is built with the host's Gradle rather than a checked-in
+# wrapper: the wrapper is a pair of shell scripts, and this repository carries
+# none (#75). The wrapper pinned Gradle 9.1.0; the recipe refuses an older
+# major so a stale distro package fails loudly instead of half-building.
+GRADLE ?= gradle
+GRADLE_MIN_MAJOR := 9
+
+test-sdk-kotlin: ## Build and test the Kotlin SDK with the host's Gradle (>= 9)
+	@command -v $(GRADLE) >/dev/null 2>&1 || { \
+		printf "$(RED)$(GRADLE) not found: install Gradle $(GRADLE_MIN_MAJOR)+ and a JDK 17+$(NC)\n"; exit 1; }
+	@major=$$($(GRADLE) --version 2>/dev/null | awk '/^Gradle /{split($$2, v, "."); print v[1]; exit}'); \
+	if [ -z "$$major" ] || [ "$$major" -lt $(GRADLE_MIN_MAJOR) ]; then \
+		printf "$(RED)Gradle $(GRADLE_MIN_MAJOR)+ required, found '%s'$(NC)\n" "$$major"; exit 1; \
+	fi
+	@$(GRADLE) --project-dir sdk/kotlin --no-daemon test
+
+# The public-releasability gate (docs/release/public-releasability.md). `make
+# test` already runs it as part of ./...; this target runs it alone, which is
+# what to reach for before a release candidate is cut.
+check-releasability: ## Fail on lab values or internal-only files in the tracked tree
+	@printf "$(CYAN)Checking the tracked tree is publicly releasable...$(NC)\n"
+	@$(GO) test -count=1 ./internal/labstrings/
+	@printf "$(GREEN)Public-releasability gate passed$(NC)\n"
 
 vet: ## Run go vet
 	@printf "$(CYAN)Running go vet...$(NC)\n"
@@ -564,18 +587,127 @@ install-govulncheck: ## Install govulncheck vulnerability scanner
 		printf "$(GREEN)govulncheck already installed$(NC)\n"; \
 	fi
 
-# scripts/install-trivy.sh is the ONE trivy installer (nightly-template v1.4):
-# the Gitea path of .github/workflows/nightly.yml runs the same script against
-# the same .trivy-version, so CI's scanner and a developer's cannot drift. It
-# replaces `curl .../contrib/install.sh | sh`, which fetched a script from a
-# MUTABLE ref and executed it unread — pulling the security scanner itself
-# through an unverified channel. The script is idempotent: it compares against
-# the pinned version, so a box carrying a different trivy is reinstalled.
+# ---- pinned, checksum-verified tool installers (#75) ----
+#
+# These two recipes were scripts/install-trivy.sh and
+# scripts/install-shellcheck.sh until #75, when this repository stopped
+# carrying shell scripts (owner ruling). The behaviour moved over unchanged:
+#
+#   - The version is PINNED. A box carrying a different version is
+#     reinstalled; "some copy exists" is not the question.
+#   - The bytes are checked against a SHA-256 BEFORE anything is executed,
+#     and nothing from a download is ever run as a script. They replace
+#     `curl .../contrib/install.sh | sh`, which fetched a script from a MUTABLE
+#     ref and ran it unread -- pulling the security scanner itself through an
+#     unverified channel.
+#   - A checksum MISMATCH is refused with a supply-chain warning. Do not work
+#     around it: re-run, and if it persists, escalate before installing.
+#
+# What each checksum proves is different, and is stated rather than implied:
+#
+#   trivy       The expected SHA-256 comes from upstream's published
+#               checksums file, fetched from the same origin as the tarball.
+#               That catches corruption and tampering in transit; it is NOT a
+#               signature and does not survive a compromised release that
+#               rewrites both. Upstream's sigstore bundle
+#               (trivy_<ver>_checksums.txt.sigstore.json) is the next step and
+#               needs cosign on the runners first.
+#   shellcheck  Upstream publishes no checksums, so the SHA-256 is PINNED HERE,
+#               under review. A compromised release cannot also rewrite the
+#               expectation without a reviewed commit to this file -- which is
+#               why bumping SHELLCHECK_VERSION requires updating both hashes in
+#               the same commit; a version with no pinned hash is refused.
+#
+# The ONE trivy version declaration is .trivy-version, read here and by
+# nightly.yml's trivy-action `version:` input, so CI's trivy and a developer's
+# cannot drift. The Gitea path of nightly.yml runs `make install-trivy`, and
+# ci.yml's lint job runs `make install-shellcheck` so actionlint's SC* rules
+# actually run (without shellcheck on PATH actionlint silently disables them).
+TRIVY_INSTALL_DIR      ?= $(shell $(GO) env GOPATH)/bin
+SHELLCHECK_INSTALL_DIR ?= $(shell $(GO) env GOPATH)/bin
+SHELLCHECK_VERSION     := 0.10.0
+SHELLCHECK_SHA256_x86_64  := 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+SHELLCHECK_SHA256_aarch64 := 324a7e89de8fa2aed0d0c28f3dab59cf84c6d74264022c00c22af665ed1a09bb
+
 install-trivy: ## Install Trivy vulnerability scanner (pinned, checksum-verified)
 	@printf "$(CYAN)Installing trivy...$(NC)\n"
-	@./scripts/install-trivy.sh $$($(GO) env GOPATH)/bin
+	@set -eu; \
+	install_dir='$(TRIVY_INSTALL_DIR)'; \
+	test -n "$$install_dir" || { echo "error: TRIVY_INSTALL_DIR is empty" >&2; exit 2; }; \
+	test -f .trivy-version || { echo "error: .trivy-version is missing" >&2; exit 1; }; \
+	version=$$(tr -d ' \t\n\r' < .trivy-version); \
+	printf '%s' "$$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
+		echo "error: trivy version '$$version' is not a bare semver (expected e.g. 0.74.0)" >&2; exit 1; }; \
+	for tool in curl tar sha256sum; do \
+		command -v "$$tool" >/dev/null 2>&1 || { echo "error: $$tool is required and was not found" >&2; exit 1; }; \
+	done; \
+	case "$$(uname -s):$$(uname -m)" in \
+		Linux:x86_64)               artifact="trivy_$${version}_Linux-64bit.tar.gz" ;; \
+		Linux:aarch64|Linux:arm64)  artifact="trivy_$${version}_Linux-ARM64.tar.gz" ;; \
+		*) echo "error: unsupported platform $$(uname -s)/$$(uname -m) -- add its artifact name here" >&2; exit 1 ;; \
+	esac; \
+	if [ -x "$$install_dir/trivy" ]; then \
+		current=$$("$$install_dir/trivy" --version 2>/dev/null | head -1 | sed -n 's/^Version: \([0-9.]*\).*/\1/p'); \
+		if [ "$$current" = "$$version" ]; then echo "trivy $$version already installed at $$install_dir/trivy"; exit 0; fi; \
+	fi; \
+	base="https://github.com/aquasecurity/trivy/releases/download/v$$version"; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	echo "-> downloading trivy $$version ($$artifact)"; \
+	curl -sSfL --proto '=https' --tlsv1.2 -o "$$tmp/$$artifact" "$$base/$$artifact"; \
+	curl -sSfL --proto '=https' --tlsv1.2 -o "$$tmp/checksums.txt" "$$base/trivy_$${version}_checksums.txt"; \
+	echo "-> verifying SHA-256"; \
+	grep -F " $$artifact" "$$tmp/checksums.txt" > "$$tmp/expected.sha256" || { \
+		echo "error: $$artifact is not listed in the published checksums file" >&2; exit 1; }; \
+	[ "$$(wc -l < "$$tmp/expected.sha256")" -eq 1 ] || { \
+		echo "error: expected exactly one checksum line for $$artifact" >&2; exit 1; }; \
+	(cd "$$tmp" && sha256sum -c expected.sha256) || { \
+		echo "error: CHECKSUM MISMATCH for $$artifact -- refusing to install" >&2; \
+		echo "       Do not work around this. Re-run; if it persists, treat it as a" >&2; \
+		echo "       supply-chain event and escalate before installing anything." >&2; exit 1; }; \
+	mkdir -p "$$install_dir"; \
+	tar -xzf "$$tmp/$$artifact" -C "$$tmp" trivy; \
+	install -m 0755 "$$tmp/trivy" "$$install_dir/trivy"; \
+	"$$install_dir/trivy" --version | head -1; \
+	echo "trivy $$version installed at $$install_dir/trivy"
 
-install-tools: install-gosec install-govulncheck install-trivy ## Install all development/security tools
+install-shellcheck: ## Install shellcheck for actionlint's SC* rules (pinned, checksum-verified)
+	@printf "$(CYAN)Installing shellcheck...$(NC)\n"
+	@set -eu; \
+	install_dir='$(SHELLCHECK_INSTALL_DIR)'; \
+	version='$(SHELLCHECK_VERSION)'; \
+	test -n "$$install_dir" || { echo "error: SHELLCHECK_INSTALL_DIR is empty" >&2; exit 2; }; \
+	for tool in curl tar xz sha256sum; do \
+		command -v "$$tool" >/dev/null 2>&1 || { echo "error: $$tool is required and was not found" >&2; exit 1; }; \
+	done; \
+	case "$$(uname -s):$$(uname -m)" in \
+		Linux:x86_64)               arch=x86_64;  expected='$(SHELLCHECK_SHA256_x86_64)' ;; \
+		Linux:aarch64|Linux:arm64)  arch=aarch64; expected='$(SHELLCHECK_SHA256_aarch64)' ;; \
+		*) echo "error: unsupported platform $$(uname -s)/$$(uname -m) -- add its artifact name and checksum here" >&2; exit 1 ;; \
+	esac; \
+	artifact="shellcheck-v$$version.linux.$$arch.tar.xz"; \
+	if [ -x "$$install_dir/shellcheck" ]; then \
+		current=$$("$$install_dir/shellcheck" --version 2>/dev/null | sed -n 's/^version: \([0-9.]*\).*/\1/p'); \
+		if [ "$$current" = "$$version" ]; then echo "shellcheck $$version already installed at $$install_dir/shellcheck"; exit 0; fi; \
+	fi; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	echo "-> downloading shellcheck $$version ($$artifact)"; \
+	curl -sSfL --proto '=https' --tlsv1.2 -o "$$tmp/$$artifact" \
+		"https://github.com/koalaman/shellcheck/releases/download/v$$version/$$artifact"; \
+	echo "-> verifying SHA-256 (pinned in this Makefile)"; \
+	printf '%s  %s\n' "$$expected" "$$artifact" > "$$tmp/expected.sha256"; \
+	(cd "$$tmp" && sha256sum -c expected.sha256) || { \
+		echo "error: CHECKSUM MISMATCH for $$artifact -- refusing to install" >&2; \
+		echo "       Do not work around this. Re-run; if it persists, treat it as a" >&2; \
+		echo "       supply-chain event and escalate before installing anything." >&2; exit 1; }; \
+	mkdir -p "$$install_dir"; \
+	tar -xJf "$$tmp/$$artifact" -C "$$tmp" "shellcheck-v$$version/shellcheck"; \
+	install -m 0755 "$$tmp/shellcheck-v$$version/shellcheck" "$$install_dir/shellcheck"; \
+	"$$install_dir/shellcheck" --version | sed -n '2p'; \
+	echo "shellcheck $$version installed at $$install_dir/shellcheck"
+
+install-tools: install-gosec install-govulncheck install-trivy install-shellcheck ## Install all development/security tools
 	@printf "$(CYAN)Installing golangci-lint...$(NC)\n"
 	@if ! command -v golangci-lint >/dev/null 2>&1 && ! [ -x "$$HOME/go/bin/golangci-lint" ]; then \
 		$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
@@ -678,7 +810,7 @@ export GOWORK=off
 # repo that grows a nested module adds its lockstep check back as a
 # PREREQUISITE of release-alpha, where a failure aborts before any tag exists.
 
-.PHONY: deps-latest test-release-alpha
+.PHONY: deps-latest test-release-alpha test-sdk-kotlin
 
 # The release path is the one part of this build whose failure mode is a
 # PUBLISHED tag, and a published tag is immutable (release-versioning.md §3) —
@@ -688,8 +820,12 @@ export GOWORK=off
 # suite is hermetic: throwaway repositories, a local bare repo standing in for
 # the remote, and a fake AGENT_GIT wrapper. No network, no Gitea, no signing
 # key, and no dependence on the caller having a `dev` remote.
+#
+# It is a Go test (internal/releasealpha) since #75, when this repository
+# stopped carrying shell scripts; the fake wrapper is the test binary itself.
+# `make test` runs it too, as part of ./...; this target runs it alone.
 test-release-alpha: ## Test the vendored release-alpha recipe as included (hermetic)
-	@./scripts/check-release-alpha_test.sh
+	@$(GO) test -count=1 ./internal/releasealpha/
 
 # `include`, not `-include`: a missing recipe must break the build loudly
 # rather than leave a Makefile with no release target and no explanation. It
