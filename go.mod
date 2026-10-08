@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/flynn/noise v1.1.0
-	github.com/jeremyhahn/go-enclave v0.6.0-alpha
+	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/miekg/dns v1.1.72
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0

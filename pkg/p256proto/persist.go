@@ -55,7 +55,7 @@ func EncodeStaticKey(dst *enclave.MemoryEnclave, key *StaticKey) error {
 // returned to the process budget) on every return path via defer, so it does not
 // linger; the only lasting copy is the one crypto/ecdh keeps internally (see
 // StaticKey). encoded stays the caller's to Destroy.
-func DecodeStaticKey(encoded *enclave.MemoryEnclave) (*StaticKey, error) {
+func DecodeStaticKey(encoded *enclave.MemoryEnclave) (key *StaticKey, err error) {
 	const op = "DecodeStaticKey"
 
 	if encoded == nil || !encoded.IsAlive() {
@@ -69,7 +69,7 @@ func DecodeStaticKey(encoded *enclave.MemoryEnclave) (*StaticKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer scalar.Destroy()
+	defer joinDestroy(&err, scalar)
 
 	// The decode runs inside both borrows, so the plaintext scalar goes from one
 	// set of locked pages to the other with no heap intermediate. The borrows

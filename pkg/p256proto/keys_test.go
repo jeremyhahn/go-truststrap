@@ -28,7 +28,7 @@ func lockedScalar(t *testing.T, raw []byte) *enclave.MemoryEnclave {
 	}); err != nil {
 		t.Fatalf("filling a protected buffer: %v", err)
 	}
-	t.Cleanup(buf.Destroy)
+	destroyOnCleanup(t, buf)
 
 	return buf
 }

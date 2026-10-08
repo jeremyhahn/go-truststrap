@@ -3,7 +3,11 @@
 
 package p256proto
 
-import "github.com/jeremyhahn/go-enclave"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-enclave"
+)
 
 // Protected memory: where this package's locked pages come from, and how an
 // exhausted budget fails.
@@ -133,4 +137,25 @@ func freeze(op string, e *enclave.MemoryEnclave) error {
 	}
 
 	return nil
+}
+
+// destroyAfter destroys e on a failure path and returns err. A Destroy failure
+// is an independent cleanup failure, so it is joined to err rather than
+// replacing it: the original error and enclave.ErrEnclaveCorrupted or
+// enclave.ErrLockedMemoryUnavailable all stay matchable with errors.Is.
+func destroyAfter(err error, e *enclave.MemoryEnclave) error {
+	if destroyErr := e.Destroy(); destroyErr != nil {
+		return errors.Join(err, destroyErr)
+	}
+
+	return err
+}
+
+// joinDestroy destroys e and joins a Destroy failure to *errp. It is for a
+// deferred release on a function with a named error result, so a release that
+// fails after the work succeeded is reported rather than lost.
+func joinDestroy(errp *error, e *enclave.MemoryEnclave) {
+	if destroyErr := e.Destroy(); destroyErr != nil {
+		*errp = errors.Join(*errp, destroyErr)
+	}
 }

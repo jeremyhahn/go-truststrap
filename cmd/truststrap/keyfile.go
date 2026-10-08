@@ -61,7 +61,7 @@ func lockedBuffer(op string, n int) (*enclave.MemoryEnclave, error) {
 // The file contents are read into protected memory and wiped before returning,
 // so the private key never lands on the Go heap or in an immutable string.
 // A missing file is reported as an error wrapping os.ErrNotExist.
-func readStaticKeyFile(path string) (*noiseproto.StaticKey, error) {
+func readStaticKeyFile(path string) (key *noiseproto.StaticKey, err error) {
 	const op = "readStaticKeyFile"
 
 	f, err := os.Open(path)
@@ -74,9 +74,15 @@ func readStaticKeyFile(path string) (*noiseproto.StaticKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer buf.Destroy()
-
-	var key *noiseproto.StaticKey
+	defer func() {
+		// A buffer that cannot be released cleanly is a failure of the read:
+		// the key is not handed out alongside it.
+		if destroyErr := buf.Destroy(); destroyErr != nil {
+			key.Destroy()
+			key = nil
+			err = errors.Join(err, destroyErr)
+		}
+	}()
 
 	// The read, the trim and the decode all happen inside the borrow, so the
 	// hex form never leaves the locked pages. The borrow also holds the
@@ -113,14 +119,18 @@ func readStaticKeyFile(path string) (*noiseproto.StaticKey, error) {
 // the closing directory sync can fail with the new key already in place; that
 // error is still returned, because at that point the key on disk is the one
 // the caller asked for but its survival of a crash is unconfirmed.
-func writeStaticKeyFile(path string, key *noiseproto.StaticKey) error {
+func writeStaticKeyFile(path string, key *noiseproto.StaticKey) (err error) {
 	const op = "writeStaticKeyFile"
 
 	buf, err := lockedBuffer(op, noiseproto.HexKeySize+1)
 	if err != nil {
 		return err
 	}
-	defer buf.Destroy()
+	defer func() {
+		if destroyErr := buf.Destroy(); destroyErr != nil {
+			err = errors.Join(err, destroyErr)
+		}
+	}()
 
 	return buf.WithBytes(func(encoded []byte) error {
 		if err := noiseproto.EncodeStaticKey(encoded, key); err != nil {

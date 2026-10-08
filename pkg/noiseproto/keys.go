@@ -129,18 +129,28 @@ func lockedScalar(op string, fill func([]byte) error) (*enclave.MemoryEnclave, e
 	}
 
 	if err := borrow(op, priv, fill); err != nil {
-		priv.Destroy()
-		return nil, err
+		return nil, destroyAfter(err, priv)
 	}
 
 	// A refused Freeze leaves the pages WRITABLE, so fault-on-write holds only
 	// because this error is checked.
 	if err := priv.Freeze(); err != nil {
-		priv.Destroy()
-		return nil, wrap(op, ErrProtectedMemory, err)
+		return nil, destroyAfter(wrap(op, ErrProtectedMemory, err), priv)
 	}
 
 	return priv, nil
+}
+
+// destroyAfter destroys e on a failure path and returns err. A Destroy failure
+// is an independent cleanup failure, so it is joined to err rather than
+// replacing it: the original error and enclave.ErrEnclaveCorrupted or
+// enclave.ErrLockedMemoryUnavailable all stay matchable with errors.Is.
+func destroyAfter(err error, e *enclave.MemoryEnclave) error {
+	if destroyErr := e.Destroy(); destroyErr != nil {
+		return errors.Join(err, destroyErr)
+	}
+
+	return err
 }
 
 // borrow runs fn over e's protected bytes under the enclave's read lock. An
@@ -179,8 +189,7 @@ func newStaticKey(op string, priv *enclave.MemoryEnclave) (*StaticKey, error) {
 		return nil
 	})
 	if err != nil {
-		priv.Destroy()
-		return nil, err
+		return nil, destroyAfter(err, priv)
 	}
 
 	return &StaticKey{private: priv, public: pub}, nil
@@ -271,12 +280,17 @@ func (k *StaticKey) WithDHKey(fn func(noise.DHKey) error) error {
 // idempotent and safe to call on a nil receiver. It waits for any in-flight
 // WithDHKey borrow to return; it must not run concurrently with PublicBytes, or
 // while a Session is mid-handshake with this key (see StaticKey).
+//
+// The enclave's own Destroy error is not returned: the scalar is wiped and its
+// pages released before the enclave reports corruption, and the next
+// enclave.WipeAll reports every corruption Destroy detected in its SweepError,
+// where the shutdown sweep logs it.
 func (k *StaticKey) Destroy() {
 	if k == nil {
 		return
 	}
 
-	k.private.Destroy()
+	_ = k.private.Destroy()
 	WipeBytes(k.public)
 	k.public = nil
 }

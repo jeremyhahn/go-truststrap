@@ -680,18 +680,30 @@ func sizedEnclave(t *testing.T, n int) *enclave.MemoryEnclave {
 	return e
 }
 
+// destroyOnCleanup destroys e when the test ends and fails the test if the
+// enclave reports corruption, so a discarded Destroy error cannot hide it.
+func destroyOnCleanup(t *testing.T, e *enclave.MemoryEnclave) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if err := e.Destroy(); err != nil {
+			t.Errorf("enclave Destroy: %v", err)
+		}
+	})
+}
+
 // enclaveHolds reports whether e holds exactly want, comparing in constant time
 // UNDER the enclave's read lock -- so the material is never copied into
 // ordinary heap memory for a test to look at.
 //
-// It uses EqualToErr rather than EqualTo because EqualTo answers false for a
-// destroyed enclave as well as for a mismatch, which would let an assertion
-// like "these two keys differ" pass for a buffer that was released instead of
-// for one that holds different bytes. A released enclave fails the test here.
+// EqualTo returns ErrEnclaveDestroyed for a destroyed enclave rather than a bare
+// false, so an assertion like "these two keys differ" cannot pass for a buffer
+// that was released instead of for one that holds different bytes. A released
+// enclave fails the test here.
 func enclaveHolds(t *testing.T, e *enclave.MemoryEnclave, want []byte) bool {
 	t.Helper()
 
-	same, err := e.EqualToErr(want)
+	same, err := e.EqualTo(want)
 	if err != nil {
 		t.Fatalf("comparing protected memory: %v", err)
 	}
@@ -718,7 +730,7 @@ func enclavesHoldTheSame(t *testing.T, a, b *enclave.MemoryEnclave) bool {
 
 	if err := a.WithBytes(func(view []byte) error {
 		var cmpErr error
-		same, cmpErr = b.EqualToErr(view)
+		same, cmpErr = b.EqualTo(view)
 
 		return cmpErr
 	}); err != nil {

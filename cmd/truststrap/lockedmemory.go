@@ -4,7 +4,9 @@
 package main
 
 import (
+	"context"
 	"log/slog"
+	"time"
 
 	"github.com/jeremyhahn/go-enclave"
 )
@@ -96,8 +98,14 @@ func lockedMemoryBudget(limit enclave.LockedMemoryLimit) int64 {
 // just a read that outlasted the sweep's retry budget -- and the error says
 // something wrote into memory it did not own, which must not vanish behind a
 // successful-looking exit.
+// wipeLockedMemoryTimeout bounds how long the shutdown sweep waits for a
+// borrow or another sweep before it skips the enclave and counts it as held.
+const wipeLockedMemoryTimeout = 2 * time.Second
+
 func wipeLockedMemory() {
-	held, err := enclave.WipeAll()
+	ctx, cancel := context.WithTimeout(context.Background(), wipeLockedMemoryTimeout)
+	defer cancel()
+	held, err := enclave.WipeAll(ctx)
 	if err != nil {
 		slog.Error("protected memory corruption detected during shutdown", "error", err)
 	}

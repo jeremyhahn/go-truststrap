@@ -161,13 +161,11 @@ func GenerateStaticKey() (*StaticKey, error) {
 			// rejection test.
 		}
 	}); err != nil {
-		scalar.Destroy()
-		return nil, err
+		return nil, destroyAfter(err, scalar)
 	}
 
 	if err := freeze(op, scalar); err != nil {
-		scalar.Destroy()
-		return nil, err
+		return nil, destroyAfter(err, scalar)
 	}
 
 	return &StaticKey{priv: priv, scalar: scalar, pub: priv.PublicKey().Bytes()}, nil
@@ -215,13 +213,11 @@ func NewStaticKey(scalar *enclave.MemoryEnclave) (*StaticKey, error) {
 			return nil
 		})
 	}); err != nil {
-		owned.Destroy()
-		return nil, err
+		return nil, destroyAfter(err, owned)
 	}
 
 	if err := freeze(op, owned); err != nil {
-		owned.Destroy()
-		return nil, err
+		return nil, destroyAfter(err, owned)
 	}
 
 	return &StaticKey{priv: priv, scalar: owned, pub: priv.PublicKey().Bytes()}, nil
@@ -235,12 +231,17 @@ func NewStaticKey(scalar *enclave.MemoryEnclave) (*StaticKey, error) {
 // The public identity (PublicBytes) survives, since it is not secret. Destroy is
 // idempotent and safe on a nil receiver; any handshake still holding this key
 // must complete first.
+//
+// The enclave's own Destroy error is not returned: the scalar is wiped and its
+// pages released before the enclave reports corruption, and the next
+// enclave.WipeAll reports every corruption Destroy detected in its SweepError,
+// where the shutdown sweep logs it.
 func (k *StaticKey) Destroy() {
 	if k == nil {
 		return
 	}
 	if k.scalar != nil {
-		k.scalar.Destroy()
+		_ = k.scalar.Destroy()
 		k.scalar = nil
 	}
 	// Drop crypto/ecdh's retained private key. Its internal heap copy of the

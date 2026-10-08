@@ -94,8 +94,7 @@ func (s *symmetricState) lockSchedule(op string) error {
 		copy(b[:hashSize], seed[:])
 		return nil
 	}); err != nil {
-		schedule.Destroy()
-		return err
+		return destroyAfter(err, schedule)
 	}
 
 	s.schedule = schedule
@@ -131,12 +130,15 @@ func newSymmetricState(op string) (*symmetricState, error) {
 // idempotent and safe on a nil receiver, and safe before the schedule has been
 // locked -- MemoryEnclave.Destroy tolerates a nil enclave. Nothing may read the
 // schedule afterwards.
+//
+// The enclave's Destroy error is not returned: the next enclave.WipeAll
+// reports every corruption Destroy detected.
 func (s *symmetricState) Destroy() {
 	if s == nil {
 		return
 	}
 
-	s.schedule.Destroy()
+	_ = s.schedule.Destroy()
 	s.hasKey = false
 }
 
@@ -324,10 +326,7 @@ func (s *symmetricState) split(op string) (initToResp, respToInit *enclave.Memor
 	}); err != nil {
 		// Release whatever was taken before the failure, so a refusal costs the
 		// budget nothing.
-		initToResp.Destroy()
-		respToInit.Destroy()
-
-		return nil, nil, err
+		return nil, nil, destroyAfter(destroyAfter(err, initToResp), respToInit)
 	}
 
 	return initToResp, respToInit, nil

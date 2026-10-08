@@ -295,7 +295,7 @@ func randomScalar(t *testing.T) *enclave.MemoryEnclave {
 
 	e, err := enclave.NewMemoryEnclaveSized(KeySize)
 	require.NoError(t, err)
-	t.Cleanup(e.Destroy)
+	t.Cleanup(func() { require.NoError(t, e.Destroy()) })
 
 	require.NoError(t, e.WithBytes(func(b []byte) error {
 		_, err := rand.Read(b)

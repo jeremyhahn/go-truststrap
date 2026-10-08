@@ -179,8 +179,8 @@ func TestSymmetricState_SplitMatchesTheSpecifiedSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
-	t.Cleanup(initToResp.Destroy)
-	t.Cleanup(respToInit.Destroy)
+	destroyOnCleanup(t, initToResp)
+	destroyOnCleanup(t, respToInit)
 
 	// The chaining key is already a pseudo-random key, so split expands it
 	// directly. Re-extracting it with an empty secret -- Noise's shape -- is
@@ -215,8 +215,8 @@ func TestSymmetricState_MixKeyAndSplitUseDistinctInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
-	t.Cleanup(initToResp.Destroy)
-	t.Cleanup(respToInit.Destroy)
+	destroyOnCleanup(t, initToResp)
+	destroyOnCleanup(t, respToInit)
 
 	// Reaching the same chaining key by another route must not produce the
 	// split's bytes. A second mixKey is that route; its secret is 32 bytes
@@ -258,8 +258,8 @@ func TestSymmetricState_KnownAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
-	t.Cleanup(initToResp.Destroy)
-	t.Cleanup(respToInit.Destroy)
+	destroyOnCleanup(t, initToResp)
+	destroyOnCleanup(t, respToInit)
 
 	const (
 		wantH          = "2de608459de6bb291ecc2c50b6110298dd401a4dcd17b860b6c3603b6094aec5"

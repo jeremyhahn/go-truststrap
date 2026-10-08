@@ -41,9 +41,9 @@ type Transport struct {
 // window. Destroying them also returns their reservations to the process's
 // locked-memory budget, on every path including the failing ones. See the note
 // on Transport's residual exposure in doc.go.
-func newTransport(sendKey, recvKey *enclave.MemoryEnclave) (*Transport, error) {
-	defer sendKey.Destroy()
-	defer recvKey.Destroy()
+func newTransport(sendKey, recvKey *enclave.MemoryEnclave) (t *Transport, err error) {
+	defer joinDestroy(&err, sendKey)
+	defer joinDestroy(&err, recvKey)
 
 	var send, recv cipher.AEAD
 

@@ -17,7 +17,7 @@ func lockedKey(t *testing.T) *enclave.MemoryEnclave {
 	t.Helper()
 
 	key := sizedEnclave(t, hashSize)
-	t.Cleanup(key.Destroy)
+	destroyOnCleanup(t, key)
 
 	return key
 }
