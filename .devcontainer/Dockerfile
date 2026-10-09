@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Automate The Things, LLC
 # SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 
-FROM golang:1.27.1-bookworm
+FROM golang:1.27.2-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gdb jq tree git vim curl wget ca-certificates openssl bind9-dnsutils \
