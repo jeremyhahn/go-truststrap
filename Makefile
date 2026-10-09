@@ -475,7 +475,7 @@ vet: ## Run go vet
 	@$(GO) vet ./...
 	@printf "$(GREEN)go vet passed$(NC)\n"
 
-lint: ## Run golangci-lint
+lint: ## Run golangci-lint and actionlint
 	@printf "$(CYAN)Running linter...$(NC)\n"
 	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
 	if [ -x "$$GOLANGCI_LINT_BIN" ]; then \
@@ -490,6 +490,20 @@ lint: ## Run golangci-lint
 		printf "$(YELLOW)  Install with: make install-tools$(NC)\n"; \
 		exit 1; \
 	fi
+	@# devops.md §4: `make lint` also lints the workflows, with the runner
+	@# labels declared in .github/actionlint.yaml. shellcheck is required too:
+	@# without it on PATH actionlint silently disables its SC* rules and exits 0.
+	@printf "$(CYAN)Running actionlint...$(NC)\n"
+	@command -v actionlint >/dev/null 2>&1 || { \
+		printf "$(RED)actionlint is required but not on PATH$(NC)\n"; \
+		printf "$(YELLOW)  Install with: go install github.com/rhysd/actionlint/cmd/actionlint@latest$(NC)\n"; \
+		exit 1; }
+	@command -v shellcheck >/dev/null 2>&1 || { \
+		printf "$(RED)shellcheck is required by actionlint but not on PATH$(NC)\n"; \
+		printf "$(YELLOW)  Install the pinned version with: make install-shellcheck$(NC)\n"; \
+		exit 1; }
+	@actionlint -config-file .github/actionlint.yaml && \
+	printf "$(GREEN)actionlint passed$(NC)\n"
 
 gosec: ## Run gosec security scanner (fails on medium+ severity)
 	@printf "$(CYAN)Running security scanner...$(NC)\n"
@@ -514,7 +528,7 @@ vuln: ## Run govulncheck vulnerability scanner
 	@printf "$(CYAN)Running vulnerability scanner...$(NC)\n"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./...; \
+		$$GOVULNCHECK_BIN ./... && \
 		printf "$(GREEN)Vulnerability scan passed$(NC)\n"; \
 	else \
 		printf "$(RED)govulncheck is required but not installed$(NC)\n"; \
@@ -527,6 +541,16 @@ mod-verify: ## Verify module integrity against go.sum
 	@$(GO) mod verify
 	@printf "$(GREEN)Module integrity verified$(NC)\n"
 
+# Both trivy targets FAIL CLOSED (#94). Until #94 they printed "skipping" and
+# exited 0 when trivy was not on PATH, so `make security` reported a passing
+# suite on any box without the scanner — a gate that passes vacuously, which
+# devops.md counts as worse than no gate. A missing scanner is now an error
+# with the install hint; with trivy present the scanners, severities and exit
+# codes are unchanged.
+TRIVY_MISSING_HINT = printf "$(RED)trivy is required but not on PATH$(NC)\n"; \
+	printf "$(YELLOW)  Install the pinned version with: make install-trivy (installs to $(TRIVY_INSTALL_DIR); put that directory on PATH)$(NC)\n"; \
+	exit 1
+
 trivy: ## Run Trivy filesystem scan (dependency CVEs + leaked secrets)
 	@printf "$(CYAN)Running Trivy filesystem scan...$(NC)\n"
 	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
@@ -534,7 +558,7 @@ trivy: ## Run Trivy filesystem scan (dependency CVEs + leaked secrets)
 		$$TRIVY_BIN fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 . && \
 		printf "$(GREEN)Trivy scan passed - no critical/high findings$(NC)\n"; \
 	else \
-		printf "$(YELLOW)trivy not found - skipping (install with: make install-trivy)$(NC)\n"; \
+		$(TRIVY_MISSING_HINT); \
 	fi
 
 trivy-image: ## Scan the built container image (devops.md §8 — every image is scanned)
@@ -544,7 +568,7 @@ trivy-image: ## Scan the built container image (devops.md §8 — every image is
 		$$TRIVY_BIN image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 $(DOCKER_IMAGE):$(DOCKER_TAG) && \
 		printf "$(GREEN)Trivy image scan passed$(NC)\n"; \
 	else \
-		printf "$(YELLOW)trivy not found - skipping (install with: make install-trivy)$(NC)\n"; \
+		$(TRIVY_MISSING_HINT); \
 	fi
 
 # devops.md §8 — the mandatory security-analysis suite. CI calls this target so
