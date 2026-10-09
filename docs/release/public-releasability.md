@@ -1,14 +1,9 @@
 # Public releasability
 
-go-truststrap ships publicly. The public GitHub commit for a release is
-byte-identical to the Gitea tag's tree (handbook `version-control.md` §5a), so
-the Go module zip, the source tarball and the browsable repository are all
-exactly what is tracked here. Everything tracked is published, and nothing can
-be scrubbed at publication time without breaking that content identity. This
-page is the rule that keeps the tree publishable, and the gate that enforces it.
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
 
-The model is go-quicbaas's `docs/release/public-releasability.md`; the gate is a
-port of its `pkg/labstrings`.
+go-truststrap ships publicly. The public commit for a release is byte-identical to the release tag's tree, so the Go module zip, the source tarball and the browsable repository are exactly what is tracked here. Everything tracked is published, and nothing can be scrubbed at publication time without breaking that identity. This page is the rule that keeps the tree publishable, and the gate that enforces it.
 
 ## The rule
 
@@ -32,8 +27,8 @@ whatever they contain today. `DefaultForbidden` in
 
 | Path | Why |
 |---|---|
-| `CLAUDE.md`, `.claude/**`, `.serena/**` | Agent context, configuration and working notes (owner ruling on #75). Kept in the local checkout and in `.gitignore` |
-| `**/*.sh`, `**/*.bat`, `**/*.cmd` | This repository carries no shell scripts (#75). Tooling is Go, or a Makefile recipe |
+| `CLAUDE.md`, `.claude/**`, `.serena/**` | Agent context, configuration and working notes. Kept in the local checkout and in `.gitignore` |
+| `**/*.sh`, `**/*.bat`, `**/*.cmd` | This repository carries no shell scripts. Tooling is Go, or a Makefile recipe |
 | `sdk/*/build/**` | SDK build output. Gradle's test reports record the building machine's hostname |
 | `sdk/*/.gradle/**` | Gradle's per-checkout cache: generated state, not source |
 | `.github/workflows/task-worker.yml` | The retired label-driven fabric's internal-only workflow |
@@ -91,9 +86,10 @@ outlive what it was written for. The list is empty today; the file itself must
 exist.
 
 `TestThePlantedViolationIsCaught`, `TestThePlantedForbiddenFileIsCaught` and
-`TestThePlantedShellScriptIsCaught` prove the gate can fail: each plants one violation of every kind and asserts it
-comes back. `TestTheGateWouldHaveCaughtIssue75` pins the values the #75 audit
-found, in the kind of file each was found in.
+`TestThePlantedShellScriptIsCaught` prove the gate can fail: each plants one
+violation of every kind and asserts it comes back.
+`TestTheGateWouldHaveCaughtIssue75` pins the values a past audit found, in the
+kind of file each was found in.
 
 ### Accepting a line
 
@@ -115,26 +111,14 @@ than widening it. Today the only entry is the gate's own test fixtures.
 A forbidden file has no waiver: untrack it (`git rm --cached`) and, if it is
 still wanted locally, add it to `.gitignore`.
 
-## What #75 removed
+## Replacements for removed tooling
 
-- **Agent files**, untracked and ignored: `CLAUDE.md`, `.claude/` and
-  `.serena/`. They carried the forge address and owner checkout paths.
-- **Kotlin SDK build output**, untracked and ignored: `sdk/kotlin/build/` and
-  Gradle's cache, `sdk/kotlin/.gradle/`. The JUnit reports recorded a fleet
-  hostname.
-- **Every shell script**, replaced:
-
-  | Was | Now |
-  |---|---|
-  | `scripts/install-trivy.sh` | `make install-trivy` |
-  | `scripts/install-shellcheck.sh` | `make install-shellcheck` |
-  | `scripts/check-release-alpha_test.sh` | `internal/releasealpha` (Go test; `make test-release-alpha`) |
-  | `.github/scripts/gitea-release.sh` | `internal/gitearelease` (`go run ./internal/cmd/gitea-release`) |
-  | `test/integration/testdata/gen.sh` | `test/integration/fixtures_test.go` |
-  | `.devcontainer/scripts/post-create.sh`, `post-start.sh` | Nothing: no configuration referenced them |
-  | `sdk/kotlin/gradlew`, `gradlew.bat` (the Gradle wrapper) | `make test-sdk-kotlin`, with the host's Gradle 9+ |
-  | `init/truststrap.rc` (SysV init script) | Nothing in the tree: `truststrap serve` runs in the foreground under any supervisor ([deployment.md](../deployment.md#hosts-without-systemd)) |
-
-- **Lab values in shipping files**: the runner host and the runner image's
-  registry address in comments in `.github/workflows/ci.yml`, and a runner name
-  in `.github/actionlint.yaml`.
+| Need | Use |
+|---|---|
+| Install Trivy | `make install-trivy` |
+| Install shellcheck | `make install-shellcheck` |
+| Release-alpha recipe test | `internal/releasealpha` (Go test; `make test-release-alpha`) |
+| Gitea release upload | `internal/gitearelease` (`go run ./internal/cmd/gitea-release`) |
+| Integration test fixtures | `test/integration/fixtures_test.go` |
+| Kotlin SDK tests | `make test-sdk-kotlin`, with the host's Gradle 9+ |
+| Init script | None: `truststrap serve` runs in the foreground under any supervisor ([deployment.md](../deployment.md#hosts-without-systemd)) |

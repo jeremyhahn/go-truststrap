@@ -1,5 +1,8 @@
 # SPKI Pinning Bootstrap
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 SPKI (Subject Public Key Info) pinning verifies the server's identity by comparing a SHA-256 hash of its SubjectPublicKeyInfo against a known pin, instead of relying on a CA chain. This breaks the PKI bootstrap dependency: the client does not need the CA certificate to verify TLS -- it only needs a 64-character hex pin distributed out-of-band.
@@ -46,6 +49,7 @@ type ClientConfig struct {
     SPKIPinSHA256  string        // Hex-encoded SHA-256 of server's SPKI (64 chars)
     ConnectTimeout time.Duration // HTTP request timeout (default: 10s)
     Logger         *slog.Logger  // Structured logger (optional)
+    BundlePath     string        // API path (default: CABundlePath)
 }
 ```
 

@@ -1,5 +1,8 @@
 # Direct HTTPS Bootstrap
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 The Direct HTTPS bootstrapper fetches the CA bundle using standard HTTPS with the system trust store. This is a **last-resort fallback** that relies on the OS having relevant CA certificates already installed. It provides no additional verification beyond what standard TLS offers.
@@ -30,14 +33,16 @@ type CABundleRequest struct {
 }
 ```
 
-The server URL and any timeouts are provided at construction time.
+`DirectConfig` carries `ServerURL` (required), `BundlePath` (default `/v1/ca/bootstrap`), `ConnectTimeout` (default 10s) and `Logger`.
 
 ## Go API
 
 ```go
 import "github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 
-bootstrapper, err := truststrap.NewDirectBootstrapper("https://kms.example.com:8443")
+bootstrapper, err := truststrap.NewDirectBootstrapper(&truststrap.DirectConfig{
+    ServerURL: "https://kms.example.com:8443",
+})
 if err != nil {
     return err
 }

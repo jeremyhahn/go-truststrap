@@ -1,5 +1,8 @@
 # DANE/TLSA Bootstrap
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 DANE (DNS-Based Authentication of Named Entities) uses TLSA DNS records to associate TLS server certificates with domain names, as defined in [RFC 6698](https://www.rfc-editor.org/rfc/rfc6698). go-truststrap uses DANE-TA (Usage 2) records to verify CA bundles retrieved over HTTPS, providing the strongest bootstrap verification through DNSSEC-signed DNS infrastructure.
@@ -37,11 +40,11 @@ closes this hole.
 
 ## DNSSEC Requirement
 
-DANE requires DNSSEC. Without DNSSEC validation (AD flag), a DNS attacker could forge TLSA records and direct the client to a malicious CA. The resolver enforces this by default:
+DANE requires DNSSEC. Without DNSSEC validation (AD flag), a DNS attacker could forge TLSA records and direct the client to a malicious CA. `dane.Resolver` enforces the AD flag only when asked:
 
-- `RequireAD: true` (default) -- DNS responses must carry the AD flag
-- The resolver sets the DNSSEC OK (DO) bit in EDNS0 to signal DNSSEC support
-- If the AD flag is absent, `ErrDNSSECRequired` is returned
+- `RequireAD: true` -- DNS responses must carry the AD flag. `ResolverConfig.RequireAD` is a plain `bool`: its zero value does not require AD, so set it explicitly
+- If the AD flag is absent while `RequireAD` is set, `ErrDNSSECRequired` is returned
+- `truststrap.DANEBootstrapper` builds its resolver from `DNSServer`, `DNSOverTLS` and `DNSTLSServerName` only (`pkg/truststrap/dane.go:150`), so it does not set `RequireAD`. Use a DNSSEC-validating resolver, or pass a `Resolver` built with `RequireAD: true`
 
 ## TLSA Record Format
 
@@ -71,7 +74,7 @@ type ResolverConfig struct {
     Server        string        // DNS server address (e.g., "8.8.8.8:53"), empty = system resolver
     UseTLS        bool          // Enable DNS-over-TLS (port 853)
     TLSServerName string        // SNI for DoT connections
-    RequireAD     bool          // Require DNSSEC AD flag (default: true)
+    RequireAD     bool          // Require DNSSEC AD flag (zero value: not required)
     Timeout       time.Duration // DNS query timeout (default: 5s)
 }
 ```

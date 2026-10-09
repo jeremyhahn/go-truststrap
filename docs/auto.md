@@ -1,5 +1,8 @@
 # AutoBootstrapper
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 The AutoBootstrapper tries multiple bootstrap methods in priority order and returns the first successful result. This provides resilience: if the preferred method fails (e.g., DNSSEC is misconfigured), the next method is attempted automatically.
@@ -25,12 +28,23 @@ type AutoConfig struct {
     SPKI   *SPKIConfig
     Direct *DirectConfig
 
-    // Order overrides the default priority order.
-    // Each string must be one of: "dane", "noise", "spki", "direct".
-    // If nil, the default order is used.
-    Order []string
+    // TOFU is opt-in: used only when MethodTOFU is also in MethodOrder.
+    TOFU *TOFUConfig
+
+    // MethodOrder overrides the priority order. Default: DefaultMethodOrder.
+    // Each element is one of MethodDANE, MethodNoise, MethodSPKI,
+    // MethodDirect, MethodTOFU ("dane", "noise", "spki", "direct", "tofu").
+    MethodOrder []Method
+
+    // PerMethodTimeout bounds each attempt. Default: 15s.
+    PerMethodTimeout time.Duration
+
+    // Logger defaults to slog.Default().
+    Logger *slog.Logger
 }
 ```
+
+`MethodTOFU` is not in `DefaultMethodOrder`. A TOFU config alone never makes the AutoBootstrapper fall back to trust-on-first-use.
 
 The Noise arm is the same `NoiseConfig` the standalone bootstrapper takes, so it
 inherits that method's suite selection: pin `ServerP256StaticKey` and the arm
@@ -45,12 +59,13 @@ import "github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 
 resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
     DANE: &truststrap.DANEConfig{
-        Hostname: "kms.example.com",
-        Port:     443,
+        ServerURL: "https://kms.example.com:8443",
+        Hostname:  "kms.example.com",
+        Port:      443,
     },
     Noise: &truststrap.NoiseConfig{
         ServerAddr:      "kms.example.com:8445",
-        ServerStaticKey: serverPubKey,
+        ServerStaticKey: serverPubKeyHex, // hex-encoded 32-byte key
     },
     SPKI: &truststrap.SPKIConfig{
         ServerURL:     "https://kms.example.com:8443",
@@ -59,7 +74,9 @@ resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
     Direct: &truststrap.DirectConfig{
         ServerURL: "https://kms.example.com:8443",
     },
-}, nil) // nil request = fetch all certificates
+})
+// AutoFetch fetches all certificates. To filter, build the bootstrapper with
+// NewAutoBootstrapper and call FetchCABundle with a CABundleRequest.
 
 if err != nil {
     // err may be an AggregateError containing each method's failure
@@ -75,10 +92,10 @@ fmt.Printf("Fetched %d bytes via auto-bootstrap\n", len(resp.BundlePEM))
 import "github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 
 resp, err := truststrap.AutoFetch(ctx, &truststrap.AutoConfig{
-    Noise: &truststrap.NoiseConfig{...},
-    SPKI:  &truststrap.SPKIConfig{...},
-    Order: []string{"spki", "noise"}, // Try SPKI first
-}, nil)
+    Noise:       &truststrap.NoiseConfig{...},
+    SPKI:        &truststrap.SPKIConfig{...},
+    MethodOrder: []truststrap.Method{truststrap.MethodSPKI, truststrap.MethodNoise}, // Try SPKI first
+})
 ```
 
 ## Error Aggregation

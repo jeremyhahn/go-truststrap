@@ -1,5 +1,8 @@
 # FIPS 140-3 Mode
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Summary
 
 go-truststrap is verified under the Go Cryptographic Module in **FIPS 140-3
@@ -12,10 +15,8 @@ GOFIPS140=latest GODEBUG=fips140=only go test  -tags fips -count=1 ./...
 
 `make test-fips` runs exactly that, and the `fips` job in
 `.github/workflows/nightly.yml` runs it nightly and on demand
-(`workflow_dispatch`). It moved off the push path with ci-template v1.9 (owner
-ruling 2026-08-20: jobs that verify a slow-moving property do not run per push),
-so it is no longer part of the required merge gate — the mandate itself is
-unchanged, and a failure here is still the finding described below.
+(`workflow_dispatch`). It is not on the push path and not part of the required
+merge gate; a failure there is still a finding.
 
 `GODEBUG=fips140=on` is deliberately **not** used. It loads the module but still
 permits non-approved algorithms, so a regulated path could use prohibited
@@ -29,8 +30,8 @@ test binary under that `GODEBUG` and runs a real handshake.
 ## The finding
 
 Under `fips140=only` and no build tag, the build is unaffected — `GODEBUG` is a
-runtime setting — but **90 tests across four of six packages fail**, all with a
-single error:
+runtime setting — but every test that performs a Noise_NK key agreement fails,
+all with a single error:
 
 ```
 crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode
@@ -186,20 +187,20 @@ cannot pass without the primitive. They are excluded **individually**, not by
 file: each affected file keeps its FIPS-compatible tests and the rest move to a
 sibling `*_nofips_test.go` carrying `//go:build !fips`.
 
-| Package | `!fips` file | Tests moved |
-|---------|--------------|-------------|
-| `pkg/noiseproto` | `keys_nofips_test.go` | 15 of 22 |
-| `pkg/noiseproto` | `session_nofips_test.go` | 25 of 26 |
-| `pkg/noiseproto/bootstrap` | `server_nofips_test.go` | 25 of 35 |
-| `pkg/noiseproto/bootstrap` | `ratelimit_nofips_test.go` | 1 of 6 |
-| `pkg/truststrap` | `noise_nofips_test.go` | 9 of 39 |
-| `cmd/truststrap` | `noise_nofips_test.go` | 3 of 16 |
-| `cmd/truststrap` | `serve_nofips_test.go` | 5 of 16 |
-| `cmd/truststrap` | `keyfile_nofips_test.go` | 8 of 12 |
-| `cmd/truststrap` | `keyfile_sync_unix_nofips_test.go` | 1 of 2 |
+| Package | `!fips` file |
+|---------|--------------|
+| `pkg/noiseproto` | `keys_nofips_test.go` |
+| `pkg/noiseproto` | `session_nofips_test.go` |
+| `pkg/noiseproto/bootstrap` | `server_nofips_test.go` |
+| `pkg/noiseproto/bootstrap` | `ratelimit_nofips_test.go` |
+| `pkg/truststrap` | `noise_nofips_test.go` |
+| `cmd/truststrap` | `noise_nofips_test.go` |
+| `cmd/truststrap` | `serve_nofips_test.go` |
+| `cmd/truststrap` | `keyfile_nofips_test.go` |
+| `cmd/truststrap` | `keyfile_sync_unix_nofips_test.go` |
 
-Splitting per test rather than per file keeps roughly seventy tests under the
-FIPS gate that whole-file exclusion would have dropped -- they exercise framing,
+Splitting per test rather than per file keeps the FIPS-compatible tests under
+the FIPS gate that whole-file exclusion would drop -- they exercise framing,
 configuration, request handling, rate limiting, key-file permissions and error
 paths that have nothing to do with key agreement.
 
@@ -214,8 +215,8 @@ FIPS-built client. That is what proves the facade can bootstrap under FIPS,
 rather than merely compile there.
 
 Every other test -- including all four remaining bootstrap methods -- runs under
-the FIPS gate unchanged. The untagged `test` job continues to build and test
-every file, Noise_NK included, at the 90% coverage threshold: the exemption
+the FIPS gate unchanged. The untagged build continues to build and test
+every file, Noise_NK included, and `make coverage` enforces its 90% per-package threshold: the exemption
 reduces what runs under FIPS, never what is tested.
 
 `nkCipherSuite` and `derivePublicKey` are variables rather than plain functions

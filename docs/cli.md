@@ -1,5 +1,8 @@
 # CLI Reference
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Installation
 
 ### From source
@@ -14,7 +17,7 @@ Download from the [releases page](https://github.com/jeremyhahn/go-truststrap/re
 
 - `linux/amd64`, `linux/arm64`
 - `darwin/amd64`, `darwin/arm64`
-- `windows/amd64`
+- `windows/amd64`, `windows/arm64`
 
 ### Build from source
 
@@ -98,7 +101,7 @@ value.
 | Flag | `--listen` | `truststrap serve --listen 127.0.0.1:8445` |
 | Environment | `TRUSTSTRAP_SERVE_LISTEN` | `TRUSTSTRAP_SERVE_LISTEN=127.0.0.1:8445` |
 | File | `serve.listen` | see [`configs/truststrap.yaml.example`](../configs/truststrap.yaml.example) |
-| Default | `:8445` | the library's `bootstrap.DefaultListenAddr` |
+| Default | `:8445` | `bootstrap.DefaultListenAddr` in `pkg/noiseproto/bootstrap/config.go` |
 
 Without `--config`, `truststrap.yaml` is searched for in the working
 directory, `$HOME/.truststrap` and `/etc/truststrap`, in that order. The file

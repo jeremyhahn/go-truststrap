@@ -1,5 +1,8 @@
 # Noise_NK Bootstrap
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 The Noise bootstrap method uses the [Noise Protocol Framework](https://noiseprotocol.org/) NK handshake pattern to establish an authenticated, encrypted channel over raw TCP. The client needs only the server's 32-byte Curve25519 static public key (distributed out-of-band) to authenticate the server. No TLS or PKI is required.
@@ -51,13 +54,18 @@ The key is a hex-encoded 64-character string. Only the public key is distributed
 type ServerConfig struct {
     ListenAddr     string                // TCP bind address (default: ":8445")
     StaticKey      *noiseproto.StaticKey // Curve25519 key pair, scalar in protected memory
+    P256StaticKey  *p256proto.StaticKey // P-256 responder key for the approved suite
     CABundler      BundleProvider        // Provides the CA certificate bundle
     MaxConnections int                   // Concurrent connection limit (default: 100)
     ReadTimeout    time.Duration         // Per-frame read deadline (default: 10s)
     WriteTimeout   time.Duration         // Per-frame write deadline (default: 10s)
+    RateLimit      float64               // Per-IP requests per second (default: 10)
+    RateBurst      int                   // Per-IP burst size (default: 20)
     Logger         *slog.Logger          // Structured logger (optional)
 }
 ```
+
+At least one of `StaticKey` and `P256StaticKey` is required.
 
 ### Client
 
@@ -68,7 +76,7 @@ type ClientConfig struct {
     ServerP256StaticKey []byte        // Server's 65-byte uncompressed P-256 point (approved suite)
     Suite               byte          // 0x01 / 0x02; zero selects per policy
     ConnectTimeout      time.Duration // TCP connect deadline (default: 10s)
-    OperationTimeout    time.Duration // Request/response deadline (default: 10s)
+    OperationTimeout    time.Duration // Request/response deadline after the handshake (default: 10s)
     Logger              *slog.Logger  // Structured logger (optional)
 }
 ```
@@ -160,7 +168,7 @@ if err := server.Start(); err != nil {
 }
 
 // Distribute the public key to clients:
-fmt.Printf("Server public key: %x\n", key.Public)
+fmt.Printf("Server public key: %x\n", key.PublicBytes())
 
 // ... serve until shutdown ...
 
@@ -295,7 +303,7 @@ Every secret the Noise path touches, and where it lives:
 So the Noise static key is held in locked memory **between** operations, but it
 is **not** true that it never reaches the heap: each key agreement leaves one
 unwiped heap copy behind. That is the residual of the `flynn/noise` path, which
-this repository does not replace (never hand-roll cryptography, 2026-08-25); the
+this repository does not replace (never hand-roll cryptography); the
 approved suite in `pkg/p256proto` keeps its scalar in a single long-lived
 `crypto/ecdh` key instead of making a copy per handshake -- see
 [approved-handshake.md](approved-handshake.md).
@@ -399,6 +407,8 @@ The Noise bootstrap protocol uses length-prefixed framing over TCP:
     "content_type": "application/pem-certificate-chain"
 }
 ```
+
+A failed request carries the reason in an `error` field instead.
 
 ## Security Considerations
 

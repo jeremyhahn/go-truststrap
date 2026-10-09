@@ -1,6 +1,9 @@
 # go-truststrap Documentation
 
-go-truststrap is a standalone Go library for PKI trust bootstrapping. It provides five methods to retrieve CA certificate bundles before TLS trust is established.
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
+go-truststrap is a standalone Go library for PKI trust bootstrapping. It provides six methods to retrieve CA certificate bundles before TLS trust is established: DANE, Noise, SPKI pinning, Direct HTTPS, TOFU and Embedded.
 
 ## Contents
 
@@ -11,6 +14,8 @@ go-truststrap is a standalone Go library for PKI trust bootstrapping. It provide
 | [SPKI Pinning Bootstrap](spki.md) | TLS with SHA-256 SubjectPublicKeyInfo pin verification |
 | [Direct HTTPS Bootstrap](direct.md) | System trust store fallback (standard TLS) |
 | [AutoBootstrapper](auto.md) | Tries multiple methods in priority order |
+| [Approved Handshake](approved-handshake.md) | The FIPS-approved `TSBOOT1_P256_AESGCM_SHA256` handshake |
+| [Suite Negotiation](bootstrap-negotiation.md) | How the Noise server and client choose between the two suites |
 | [CLI Reference](cli.md) | Command-line tool usage and reference |
 | [Integration Guide](integration.md) | Using go-truststrap in your project |
 | [Deployment Guide](deployment.md) | Running truststrap as a service (systemd, Docker) |
@@ -55,4 +60,5 @@ Choose the method that matches your infrastructure:
 - **Noise_NK** -- Use when you can distribute a 32-byte Curve25519 public key out-of-band. No PKI dependency.
 - **SPKI Pinning** -- Use when you can distribute a SHA-256 pin hash out-of-band. Simpler than Noise but requires TLS.
 - **Direct HTTPS** -- Use as a last resort when the system already has relevant CA certificates installed.
+- **TOFU** -- Use when no out-of-band pin exists and a first-use risk is acceptable. Never part of the default `AutoBootstrapper` order.
 - **Embedded** -- Use when the key management system runs in the same process. No network required.

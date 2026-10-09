@@ -1,5 +1,8 @@
 # Deployment Guide
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## systemd Service
 
 ### Installation
@@ -126,7 +129,7 @@ journalctl -u truststrap -o json
 ## Security Hardening
 
 - Run as a dedicated non-root user (`truststrap`)
-- The systemd unit includes: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `MemoryDenyWriteExecute`
+- The systemd unit includes: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `RestrictAddressFamilies`, `MemoryDenyWriteExecute`, an empty `CapabilityBoundingSet`
 - Key file permissions: `0600` (owner read/write only)
 - Bundle file permissions: `0644` (world readable)
 - Restrict network access with firewall rules to only allow bootstrap clients

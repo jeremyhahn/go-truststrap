@@ -1,5 +1,8 @@
 # Integration Guide
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Adding go-truststrap to Your Project
 
 ```bash
@@ -44,7 +47,13 @@ func main() {
     if err := enclave.SetAllocator(budget); err != nil {
         log.Fatal(err)
     }
-    defer enclave.WipeAll()
+    defer func() {
+        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+        defer cancel()
+        if held, err := enclave.WipeAll(ctx); err != nil || held > 0 {
+            log.Printf("protected memory sweep: held=%d err=%v", held, err)
+        }
+    }()
     // ... construct the bootstrap client or server ...
 }
 ```
@@ -178,17 +187,17 @@ volumes:
 For integration tests that need DANE/TLSA resolution, use a local DNS server or the `TLSAResolver` interface for test doubles:
 
 ```go
-// go-truststrap's resolver interface
+// truststrap.TLSAResolver, set as DANEConfig.Resolver
 type TLSAResolver interface {
-    LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*TLSARecord, error)
+    LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*dane.TLSARecord, error)
 }
 
 // Test implementation
 type mockResolver struct {
-    records []*truststrap.TLSARecord
+    records []*dane.TLSARecord
 }
 
-func (m *mockResolver) LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*truststrap.TLSARecord, error) {
+func (m *mockResolver) LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*dane.TLSARecord, error) {
     return m.records, nil
 }
 ```

@@ -1,5 +1,8 @@
 # Bootstrap suite negotiation
 
+> **Status: NORMATIVE** · Scope: go-truststrap · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 `pkg/noiseproto/bootstrap` speaks two trust-bootstrap handshakes over one TCP
 listener, chosen per connection:
 
@@ -14,10 +17,7 @@ onto the bootstrap wire rather than minting its own. The p256proto **core**
 still speaks exactly one suite with no negotiation — the choice of which core to
 run is made one layer up, here, and is what "negotiation" means in this package.
 
-This wires the deferred half of #15/#17 (issue #20): v0.3.0-alpha shipped the
-p256proto core; the bootstrap Server/Client ran Noise only, which is the live
-`GODEBUG=fips140=only` blocker for go-qrdb `clusterenroll` (#18/#20) and go-xkms
-(#23).
+The approved suite's design is in [approved-handshake.md](approved-handshake.md).
 
 ## Wire format
 
@@ -55,19 +55,11 @@ duplicated and each suite's own transcript covers it:
 `version` is validated first on the server; a byte other than `0x01` is
 `ErrUnsupportedVersion` before any suite dispatch or key agreement.
 
-### Wire compatibility
-
-This is a **breaking wire change** relative to v0.3.0-alpha, whose Noise
-bootstrap sent a bare Noise message 1 with no header and no prologue. Both ends
-bump together (they always ship from this one module), and the only non-test
-caller is `truststrap serve` in this repo; the downstream consumers are blocked
-today and adopt the new tag on both ends. Released as a MINOR (new capability),
-v0.4.0-alpha.
+A message 1 without the header is refused: there is no fallback to a headerless Noise wire. Both ends ship from this module and must be the same version.
 
 ## Suite selection policy
 
-Mirrors the B2/#15 selection ruling (and the go-luks2 KDF ruling), applied at
-the bootstrap layer. `fipsEnforced()` is true whenever the Noise/X25519 path is
+`fipsEnforced()` is true whenever the Noise/X25519 path is
 unavailable in this process, and it decides that by **probing**, not by
 predicate: it constructs the Noise cipher suite and generates an X25519 key
 pair through the same code path the handshake takes, and any failure means the
@@ -79,7 +71,7 @@ even in a binary built without the tag — the shape a pipeline that sets
 under `GODEBUG=fips140=on`, which loads the module but still permits
 non-approved algorithms: X25519 remains available there, so Noise remains the
 non-FIPS default. `crypto/fips140.Enabled()` is true in both runtime modes and
-cannot tell them apart, which is why the probe replaced it (#51 review). Both
+cannot tell them apart, which is why the probe is used. Both
 ends consult the same probe, so a client and a server in the same mode agree.
 
 **Server (per connection, on the suite byte it reads):**
@@ -95,8 +87,7 @@ ends consult the same probe, so a client and a server in the same mode agree.
 
 `NewServer` requires at least one static key (Noise or P-256). It does **not**
 hard-fail a Noise-only config under FIPS: it constructs, and refuses each
-connection at dispatch, preserving v0.3.0-alpha's "starts, handshake refused"
-behaviour.
+connection at dispatch.
 
 **Client (chooses one suite to offer, in `Connect`):**
 
@@ -111,7 +102,7 @@ behaviour.
 
 `truststrap.NoiseBootstrapper` — the high-level facade, and the only way
 `AutoBootstrapper` reaches this transport — carries the same two keys and the
-same `Suite` selector and delegates to this `Client` (#51). It therefore makes
+same `Suite` selector and delegates to this `Client`. It therefore makes
 this decision in one place rather than mirroring the policy a layer up, and a
 consumer of the facade and a consumer of this package choose identically.
 
@@ -132,9 +123,9 @@ rather than completing a weaker session:
    the whole frame to `Responder.ReadMessage1`, which fails on size/point/tag.
 3. **Tamper the header in place** (same suite). The two bytes are bound
    (transcript / prologue); the tag check fails on both cores.
-4. **Strip the header and speak raw v0.3.0-alpha Noise.** The new server expects
-   the header and sets a prologue; a headerless message 1 fails to parse or
-   fails the prologue-bound tag. There is no silent fallback to the old wire.
+4. **Strip the header and send a bare Noise message 1.** The server expects the
+   header and sets a prologue; a headerless message 1 fails to parse or fails
+   the prologue-bound tag.
 
 A FIPS client offers only `0x02` and a FIPS server accepts only `0x02`, so the
 approved deployment has a single reachable suite and downgrade is unreachable by
@@ -143,13 +134,12 @@ construction.
 ## P-256 static-key persistence
 
 The P-256 responder authenticates with a long-term `p256proto.StaticKey`, the
-analogue of the Noise `noiseproto.StaticKey` the existing bootstrap persists.
-`pkg/p256proto` gains the same at-rest serialisation surface as `noiseproto`:
+analogue of `noiseproto.StaticKey`. `pkg/p256proto` has the same at-rest
+serialisation surface as `noiseproto`:
 
-- `GenerateStaticKey()` — already present; a fresh key pair.
-- `NewStaticKey(*enclave.MemoryEnclave)` — already present; reconstruct from a
-  scalar in protected memory. It took a `*memguard.LockedBuffer` until the
-  go-enclave adoption (#19) retyped it.
+- `GenerateStaticKey()` — a fresh key pair.
+- `NewStaticKey(*enclave.MemoryEnclave)` — reconstruct from a scalar in
+  protected memory.
 - `StaticKey` owns its private scalar in an `enclave.MemoryEnclave` for the
   key's whole lifetime (with a `Destroy` lifecycle), mirroring
   `noiseproto.StaticKey`. `GenerateStaticKey` draws the scalar straight into
@@ -164,8 +154,7 @@ analogue of the Noise `noiseproto.StaticKey` the existing bootstrap persists.
   the standard library's API rather than of the storage primitive.
 
 `ServerConfig.P256StaticKey *p256proto.StaticKey` is the responder key; the
-consumer (go-xkms barrier, #23) persists and reloads it post-unseal exactly as
-it does the Noise key, constructing the `MemoryEnclave` it hands in. The one residual is the one p256proto already documents:
+consumer persists and reloads it exactly as it does the Noise key, constructing the `MemoryEnclave` it hands in. The one residual is the one p256proto already documents:
 `crypto/ecdh` keeps a heap copy of the scalar for the key's lifetime, which no
 API can lock — reimplementing P-256 to avoid it would forfeit the FIPS
 validation this suite exists for.
@@ -176,4 +165,3 @@ A consumer adopts the FIPS-clean bootstrap by selecting the suite, not
 rewriting: set `ServerConfig.P256StaticKey` (server) and
 `ClientConfig.ServerP256StaticKey` + `Suite = p256proto.SuiteP256AESGCM`
 (client), or leave `Suite` zero and let a FIPS build/runtime pick `0x02`.
-Unblocks go-qrdb #18, go-qrdb #20, go-xkms #23.
