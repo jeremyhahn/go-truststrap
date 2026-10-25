@@ -16,7 +16,7 @@ import (
 //
 // # Protected memory
 //
-// The authoritative private scalar is held in a go-enclave MemoryEnclave that
+// The authoritative private scalar is held in a go-enclave memory enclave that
 // this StaticKey owns for its whole lifetime: mlock'd pages outside the Go heap,
 // fenced by guard pages, canary-protected, kept out of core dumps, frozen
 // read-only once the scalar is final, and wiped on Destroy. Nothing in this
@@ -55,7 +55,7 @@ import (
 // did not close it and nothing short of leaving the validated module would.
 type StaticKey struct {
 	priv   *ecdh.PrivateKey
-	scalar *enclave.MemoryEnclave
+	scalar enclave.ByteAccess
 	// pub is the uncompressed public point, cached at construction. It is not
 	// secret, so it is an ordinary slice, and it is kept separate from priv so
 	// PublicBytes still returns the key's identity after Destroy has released
@@ -174,15 +174,15 @@ func GenerateStaticKey() (*StaticKey, error) {
 // NewStaticKey reconstructs a static key pair from a P-256 scalar held in
 // locked memory.
 //
-// The scalar is taken as a *enclave.MemoryEnclave rather than a []byte
+// The scalar is taken as an enclave.ByteAccess rather than a []byte
 // deliberately: a long-term private key must be in protected storage for its
 // whole lifetime, so the boundary that accepts one refuses to accept it any
-// other way. This function COPIES the scalar into a MemoryEnclave the returned
+// other way. This function COPIES the scalar into a memory enclave the returned
 // key owns and freezes it, so the key's protected backing outlives the caller's
 // buffer; the caller's enclave stays the caller's to Destroy. Callers reading a
 // key file decode straight into an enclave, never through an intermediate slice
 // or string.
-func NewStaticKey(scalar *enclave.MemoryEnclave) (*StaticKey, error) {
+func NewStaticKey(scalar enclave.ByteAccess) (*StaticKey, error) {
 	const op = "NewStaticKey"
 
 	if scalar == nil || !scalar.IsAlive() {

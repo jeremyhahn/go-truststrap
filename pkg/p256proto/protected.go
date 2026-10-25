@@ -82,7 +82,7 @@ var processAllocator = enclave.ProcessAllocator
 // Every refusal is reported as ErrProtectedMemory wrapping the allocator's own
 // error, so a caller can classify with errors.Is on either. Callers must
 // Destroy what they get: the reservation is held until they do.
-func lockedBuffer(op string, n int) (*enclave.MemoryEnclave, error) {
+func lockedBuffer(op string, n int) (enclave.ByteAccess, error) {
 	a, err := processAllocator()
 	if err != nil {
 		return nil, wrap(op, ErrProtectedMemory, err)
@@ -105,7 +105,7 @@ func lockedBuffer(op string, n int) (*enclave.MemoryEnclave, error) {
 // author chose. An error from the enclave -- a destroyed enclave is the only
 // one -- is reported as ErrProtectedMemory, because at that point fn never ran
 // and there is no classification but this one.
-func borrow(op string, e *enclave.MemoryEnclave, fn func([]byte) error) error {
+func borrow(op string, e enclave.ByteAccess, fn func([]byte) error) error {
 	if e == nil {
 		return failure(op, ErrProtectedMemory, "protected buffer is nil")
 	}
@@ -131,8 +131,12 @@ func borrow(op string, e *enclave.MemoryEnclave, fn func([]byte) error) error {
 // faults instead of silently rewriting key material. A refusal leaves the
 // buffer WRITABLE, so the fault-on-write property holds only because this error
 // is checked rather than ignored.
-func freeze(op string, e *enclave.MemoryEnclave) error {
-	if err := e.Freeze(); err != nil {
+func freeze(op string, e enclave.ByteAccess) error {
+	var f enclave.Freezer
+	if !enclave.As(e, &f) {
+		return wrap(op, ErrProtectedMemory, &enclave.CapabilityError{Backend: e.Backend().Name(), Capability: enclave.CapabilityFreeze})
+	}
+	if err := f.Freeze(); err != nil {
 		return wrap(op, ErrProtectedMemory, err)
 	}
 
@@ -143,7 +147,10 @@ func freeze(op string, e *enclave.MemoryEnclave) error {
 // is an independent cleanup failure, so it is joined to err rather than
 // replacing it: the original error and enclave.ErrEnclaveCorrupted or
 // enclave.ErrLockedMemoryUnavailable all stay matchable with errors.Is.
-func destroyAfter(err error, e *enclave.MemoryEnclave) error {
+func destroyAfter(err error, e enclave.ByteAccess) error {
+	if e == nil {
+		return err
+	}
 	if destroyErr := e.Destroy(); destroyErr != nil {
 		return errors.Join(err, destroyErr)
 	}
@@ -154,7 +161,10 @@ func destroyAfter(err error, e *enclave.MemoryEnclave) error {
 // joinDestroy destroys e and joins a Destroy failure to *errp. It is for a
 // deferred release on a function with a named error result, so a release that
 // fails after the work succeeded is reported rather than lost.
-func joinDestroy(errp *error, e *enclave.MemoryEnclave) {
+func joinDestroy(errp *error, e enclave.ByteAccess) {
+	if e == nil {
+		return
+	}
 	if destroyErr := e.Destroy(); destroyErr != nil {
 		*errp = errors.Join(*errp, destroyErr)
 	}

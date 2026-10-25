@@ -14,7 +14,7 @@ import (
 // lockedScalar copies raw into an enclave of the same length, so a test can
 // hand NewStaticKey the protected input it requires. A zero-length input yields
 // a nil enclave, which is itself a case worth passing.
-func lockedScalar(t *testing.T, raw []byte) *enclave.MemoryEnclave {
+func lockedScalar(t *testing.T, raw []byte) enclave.ByteAccess {
 	t.Helper()
 
 	if len(raw) == 0 {

@@ -194,11 +194,11 @@ failure is a typed handshake error, never a fallback.
 
 ## Protected memory
 
-All key material this package derives lives in go-enclave `MemoryEnclave`s, read only through `WithBytes` borrows:
+All key material this package derives lives in go-enclave memory enclaves (`enclave.ByteAccess`), read only through `WithBytes` borrows:
 
 - Chaining keys, AEAD keys and both transport keys are held in enclaves for their whole lifetime.
 - Every ECDH shared secret and HKDF intermediate is wiped as soon as the key schedule has absorbed it.
-- `NewStaticKey` accepts a `*enclave.MemoryEnclave` and nothing else. Once the scalar is final the pages are frozen read-only.
+- `NewStaticKey` accepts an `enclave.ByteAccess` and nothing else. Once the scalar is final the pages are frozen read-only.
 - The key schedule is destroyed when the handshake completes and on every terminal failure.
 - `Initiator` and `Responder` expose an idempotent `Destroy`. Callers must defer it.
 

@@ -20,7 +20,7 @@ import (
 func assertScheduleReleased(t *testing.T, s *symmetricState, context string) {
 	t.Helper()
 
-	if s == nil {
+	if s == nil || s.schedule == nil {
 		return
 	}
 	if s.schedule.IsAlive() {

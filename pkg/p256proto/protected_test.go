@@ -65,7 +65,7 @@ func withScheduleHalves(t *testing.T, s *symmetricState, fn func(ck, k []byte)) 
 // returned every byte it took. That leak check is the package's only detector
 // for an unreleased reservation: the protocol behaves identically whether or
 // not the pages come back.
-func withBudget(t *testing.T, bytes int64) *enclave.Allocator {
+func withBudget(t *testing.T, bytes int64) enclave.Allocator {
 	t.Helper()
 
 	allocator, err := enclave.NewAllocator(bytes)
@@ -74,7 +74,7 @@ func withBudget(t *testing.T, bytes int64) *enclave.Allocator {
 	}
 
 	prev := processAllocator
-	processAllocator = func() (*enclave.Allocator, error) { return allocator, nil }
+	processAllocator = func() (enclave.Allocator, error) { return allocator, nil }
 
 	t.Cleanup(func() {
 		processAllocator = prev
@@ -446,7 +446,7 @@ func TestNewResponder_TouchesNoBudget(t *testing.T) {
 
 	reached := false
 	prev := processAllocator
-	processAllocator = func() (*enclave.Allocator, error) {
+	processAllocator = func() (enclave.Allocator, error) {
 		reached = true
 		return prev()
 	}
@@ -612,7 +612,7 @@ func TestLockedBuffer_ReportsAnUnreachableAllocator(t *testing.T) {
 	sentinel := errors.New("discovery failed")
 
 	prev := processAllocator
-	processAllocator = func() (*enclave.Allocator, error) { return nil, sentinel }
+	processAllocator = func() (enclave.Allocator, error) { return nil, sentinel }
 	t.Cleanup(func() { processAllocator = prev })
 
 	_, err := lockedBuffer("op", hashSize)
@@ -669,12 +669,12 @@ func TestPackage_NeverReachesAcrossTheProcess(t *testing.T) {
 // sizedEnclave allocates n bytes of writable locked memory for a test's own
 // inputs. It deliberately bypasses the allocator seam: a test's fixtures must
 // not consume the budget the test is squeezing.
-func sizedEnclave(t *testing.T, n int) *enclave.MemoryEnclave {
+func sizedEnclave(t *testing.T, n int) enclave.ByteAccess {
 	t.Helper()
 
-	e, err := enclave.NewMemoryEnclaveSized(n)
+	e, err := enclave.NewMemorySized(n)
 	if err != nil {
-		t.Fatalf("enclave.NewMemoryEnclaveSized(%d): %v", n, err)
+		t.Fatalf("enclave.NewMemorySized(%d): %v", n, err)
 	}
 
 	return e
@@ -682,7 +682,7 @@ func sizedEnclave(t *testing.T, n int) *enclave.MemoryEnclave {
 
 // destroyOnCleanup destroys e when the test ends and fails the test if the
 // enclave reports corruption, so a discarded Destroy error cannot hide it.
-func destroyOnCleanup(t *testing.T, e *enclave.MemoryEnclave) {
+func destroyOnCleanup(t *testing.T, e enclave.ByteAccess) {
 	t.Helper()
 
 	t.Cleanup(func() {
@@ -700,7 +700,7 @@ func destroyOnCleanup(t *testing.T, e *enclave.MemoryEnclave) {
 // false, so an assertion like "these two keys differ" cannot pass for a buffer
 // that was released instead of for one that holds different bytes. A released
 // enclave fails the test here.
-func enclaveHolds(t *testing.T, e *enclave.MemoryEnclave, want []byte) bool {
+func enclaveHolds(t *testing.T, e enclave.ByteAccess, want []byte) bool {
 	t.Helper()
 
 	same, err := e.EqualTo(want)
@@ -712,7 +712,7 @@ func enclaveHolds(t *testing.T, e *enclave.MemoryEnclave, want []byte) bool {
 }
 
 // assertEnclaveHolds fails unless e holds exactly want.
-func assertEnclaveHolds(t *testing.T, e *enclave.MemoryEnclave, want []byte, context string) {
+func assertEnclaveHolds(t *testing.T, e enclave.ByteAccess, want []byte, context string) {
 	t.Helper()
 
 	if !enclaveHolds(t, e, want) {
@@ -723,7 +723,7 @@ func assertEnclaveHolds(t *testing.T, e *enclave.MemoryEnclave, want []byte, con
 // enclavesHoldTheSame compares two enclaves without either one leaving its
 // locked region: the first is borrowed, and the second is compared against that
 // borrowed view in constant time.
-func enclavesHoldTheSame(t *testing.T, a, b *enclave.MemoryEnclave) bool {
+func enclavesHoldTheSame(t *testing.T, a, b enclave.ByteAccess) bool {
 	t.Helper()
 
 	var same bool

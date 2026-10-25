@@ -29,11 +29,11 @@
 // section 6), no key material this package derives is held on the Go heap:
 //
 //   - Chaining keys, AEAD keys and both transport keys live in go-enclave
-//     MemoryEnclaves for their whole lifetime: mlock'd pages outside the Go
+//     memory enclaves for their whole lifetime: mlock'd pages outside the Go
 //     heap, fenced by guard pages, canary-protected and kept out of core dumps.
 //   - Every ECDH shared secret and every HKDF intermediate is wiped as soon as
 //     the key schedule has absorbed it.
-//   - A long-term static scalar enters through a *enclave.MemoryEnclave;
+//   - A long-term static scalar enters through an enclave.ByteAccess;
 //     NewStaticKey accepts nothing else, so the boundary cannot be used
 //     unsafely. Once final it is frozen read-only.
 //   - The handshake's key schedule is destroyed when the handshake completes,

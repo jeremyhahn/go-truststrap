@@ -231,7 +231,7 @@ permissions:
   security-events: write
 
 env:
-  GO_VERSION: "1.27.2"        # latest stable, raised from 1.26.7 in the portfolio-wide Go 1.27 wave (#14; devops.md §9 — latest stable, adopted portfolio-wide in one pass, never piecemeal). The block this line used to record is GONE: cockroachdb/swiss compiles under 1.27 as of v0.0.0-20260820225851-333444432258, and this module never depended on it. A PATCH, never `1.27` or `stable` (devops.md §9a — a floating tag is an unpinned toolchain). Keep in lockstep with go.mod, nightly.yml's GO_VERSION, and the golang: bases in Dockerfile, .devcontainer/Dockerfile and test/integration/Dockerfile
+  GO_VERSION: "1.27.3"        # latest stable, raised from 1.26.7 in the portfolio-wide Go 1.27 wave (#14; devops.md §9 — latest stable, adopted portfolio-wide in one pass, never piecemeal). The block this line used to record is GONE: cockroachdb/swiss compiles under 1.27 as of v0.0.0-20260820225851-333444432258, and this module never depended on it. A PATCH, never `1.27` or `stable` (devops.md §9a — a floating tag is an unpinned toolchain). Keep in lockstep with go.mod, nightly.yml's GO_VERSION, and the golang: bases in Dockerfile, .devcontainer/Dockerfile and test/integration/Dockerfile
   COVERAGE_THRESHOLD: 90      # CUSTOMIZE: matches COVERAGE_THRESHOLD in the Makefile (testing-guidelines.md)
 
 jobs:

@@ -29,7 +29,7 @@ var processAllocator = enclave.ProcessAllocator
 var readRandom = rand.Read
 
 // StaticKey is a Curve25519 static identity key pair whose private scalar lives
-// in a go-enclave MemoryEnclave for its whole lifetime: locked pages outside
+// in a go-enclave memory enclave for its whole lifetime: locked pages outside
 // the Go heap, excluded from core dumps where the platform allows, frozen
 // read-only once filled, and zeroized on Destroy. The public key is not secret
 // and is held on the ordinary heap.
@@ -59,7 +59,7 @@ var readRandom = rand.Read
 // has not finished still holds an alias it will read through at its next
 // step, so Destroy must not run while a Session is mid-handshake with this key.
 type StaticKey struct {
-	private *enclave.MemoryEnclave
+	private enclave.ByteAccess
 	public  []byte
 }
 
@@ -117,7 +117,7 @@ func LoadStaticKey(privateKey []byte) (*StaticKey, error) {
 // error from fill is returned unchanged; every refusal from the allocator or
 // the enclave is reported as ErrProtectedMemory wrapping the enclave error.
 // Nothing is left allocated on any failure path.
-func lockedScalar(op string, fill func([]byte) error) (*enclave.MemoryEnclave, error) {
+func lockedScalar(op string, fill func([]byte) error) (enclave.ByteAccess, error) {
 	allocator, err := processAllocator()
 	if err != nil {
 		return nil, wrap(op, ErrProtectedMemory, err)
@@ -134,7 +134,12 @@ func lockedScalar(op string, fill func([]byte) error) (*enclave.MemoryEnclave, e
 
 	// A refused Freeze leaves the pages WRITABLE, so fault-on-write holds only
 	// because this error is checked.
-	if err := priv.Freeze(); err != nil {
+	var frozen enclave.Freezer
+	if !enclave.As(priv, &frozen) {
+		capErr := &enclave.CapabilityError{Backend: priv.Backend().Name(), Capability: enclave.CapabilityFreeze}
+		return nil, destroyAfter(wrap(op, ErrProtectedMemory, capErr), priv)
+	}
+	if err := frozen.Freeze(); err != nil {
 		return nil, destroyAfter(wrap(op, ErrProtectedMemory, err), priv)
 	}
 
@@ -145,7 +150,7 @@ func lockedScalar(op string, fill func([]byte) error) (*enclave.MemoryEnclave, e
 // is an independent cleanup failure, so it is joined to err rather than
 // replacing it: the original error and enclave.ErrEnclaveCorrupted or
 // enclave.ErrLockedMemoryUnavailable all stay matchable with errors.Is.
-func destroyAfter(err error, e *enclave.MemoryEnclave) error {
+func destroyAfter(err error, e enclave.ByteAccess) error {
 	if destroyErr := e.Destroy(); destroyErr != nil {
 		return errors.Join(err, destroyErr)
 	}
@@ -157,7 +162,13 @@ func destroyAfter(err error, e *enclave.MemoryEnclave) error {
 // error fn returns is passed through unchanged, so the classification its
 // author chose survives; an error from the enclave itself -- fn never ran --
 // is reported as ErrProtectedMemory wrapping it.
-func borrow(op string, e *enclave.MemoryEnclave, fn func([]byte) error) error {
+func borrow(op string, e enclave.ByteAccess, fn func([]byte) error) error {
+	// A zero-value StaticKey holds a nil enclave. Report it as destroyed, as
+	// the nil enclave pointer did before go-enclave v0.10.0-alpha.
+	if e == nil {
+		return wrap(op, ErrProtectedMemory, enclave.ErrEnclaveDestroyed)
+	}
+
 	var inner error
 
 	outer := e.WithBytes(func(b []byte) error {
@@ -177,7 +188,7 @@ func borrow(op string, e *enclave.MemoryEnclave, fn func([]byte) error) error {
 
 // newStaticKey derives the public key for a private scalar already resident in
 // protected memory and takes ownership of the enclave.
-func newStaticKey(op string, priv *enclave.MemoryEnclave) (*StaticKey, error) {
+func newStaticKey(op string, priv enclave.ByteAccess) (*StaticKey, error) {
 	var pub []byte
 
 	err := borrow(op, priv, func(b []byte) error {
@@ -286,7 +297,7 @@ func (k *StaticKey) WithDHKey(fn func(noise.DHKey) error) error {
 // enclave.WipeAll reports every corruption Destroy detected in its SweepError,
 // where the shutdown sweep logs it.
 func (k *StaticKey) Destroy() {
-	if k == nil {
+	if k == nil || k.private == nil {
 		return
 	}
 

@@ -14,7 +14,7 @@ import (
 // encodeKey hex-encodes key into a fresh protected buffer and returns a
 // protected buffer holding the encoded bytes, mirroring how a consumer hands the
 // encoded form to a barrier for sealing. The caller Destroys it.
-func encodeKey(t *testing.T, key *StaticKey) *enclave.MemoryEnclave {
+func encodeKey(t *testing.T, key *StaticKey) enclave.ByteAccess {
 	t.Helper()
 
 	dst := sizedEnclave(t, HexKeySize)
@@ -113,7 +113,7 @@ func TestEncodeStaticKey_Errors(t *testing.T) {
 }
 
 // bufferFrom copies b into a fresh protected buffer for the decode-error tests.
-func bufferFrom(t *testing.T, b []byte) *enclave.MemoryEnclave {
+func bufferFrom(t *testing.T, b []byte) enclave.ByteAccess {
 	t.Helper()
 
 	buf := sizedEnclave(t, len(b))

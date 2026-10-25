@@ -180,7 +180,7 @@ func TestStaticKey_BudgetExhausted(t *testing.T) {
 func TestStaticKey_AllocatorUnavailable(t *testing.T) {
 	sentinel := errors.New("no allocator")
 	original := processAllocator
-	processAllocator = func() (*enclave.Allocator, error) { return nil, sentinel }
+	processAllocator = func() (enclave.Allocator, error) { return nil, sentinel }
 	t.Cleanup(func() { processAllocator = original })
 
 	_, err := GenerateStaticKey()
@@ -216,14 +216,14 @@ func TestDecodeStaticKey_InvalidHexReleasesEnclave(t *testing.T) {
 // withTestAllocator points this package at a private allocator of the given
 // budget for the rest of the test, so a test can observe the reservation or
 // drive exhaustion without touching the install-once process allocator.
-func withTestAllocator(t *testing.T, budget int64) *enclave.Allocator {
+func withTestAllocator(t *testing.T, budget int64) enclave.Allocator {
 	t.Helper()
 
 	allocator, err := enclave.NewAllocator(budget)
 	require.NoError(t, err)
 
 	original := processAllocator
-	processAllocator = func() (*enclave.Allocator, error) { return allocator, nil }
+	processAllocator = func() (enclave.Allocator, error) { return allocator, nil }
 	t.Cleanup(func() { processAllocator = original })
 
 	return allocator

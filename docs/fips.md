@@ -98,7 +98,7 @@ FIPS build performs no non-approved key agreement.
 `nkCipherSuite` covers the handshake, and is consulted before a session
 generates a static key its pattern needs but was not given. `derivePublicKey`
 covers `StaticKey`, whose private scalar is drawn straight into a go-enclave
-`MemoryEnclave` and whose public key is derived by scalar base multiplication.
+memory enclave and whose public key is derived by scalar base multiplication.
 
 **No exported declaration is removed.** Every type, constructor, method and
 constant of every package exists in both builds; a FIPS build refuses at the

@@ -245,7 +245,7 @@ var errTempCreate = errors.New("injected temp file failure")
 func withKeyHex(t *testing.T, key *noiseproto.StaticKey, fn func(encoded []byte)) {
 	t.Helper()
 
-	buf, err := enclave.NewMemoryEnclaveSized(noiseproto.HexKeySize)
+	buf, err := enclave.NewMemorySized(noiseproto.HexKeySize)
 	require.NoError(t, err)
 	defer buf.Destroy()
 
@@ -281,7 +281,7 @@ func assertKeyFileHolds(t *testing.T, path string, key *noiseproto.StaticKey, ms
 	require.NoError(t, err)
 	defer f.Close()
 
-	file, err := enclave.NewMemoryEnclaveSized(maxKeyFileSize)
+	file, err := enclave.NewMemorySized(maxKeyFileSize)
 	require.NoError(t, err)
 	defer file.Destroy()
 

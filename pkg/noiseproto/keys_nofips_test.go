@@ -166,7 +166,7 @@ func TestEncodeStaticKey_LongerDestination(t *testing.T) {
 	key := newTestStaticKey(t)
 
 	withEncoded(t, key, HexKeySize, func(want []byte) {
-		buf, err := enclave.NewMemoryEnclaveSized(HexKeySize + 1)
+		buf, err := enclave.NewMemorySized(HexKeySize + 1)
 		require.NoError(t, err)
 		defer buf.Destroy()
 
@@ -290,10 +290,10 @@ func newTestStaticKey(t *testing.T) *StaticKey {
 // randomScalar returns an enclave holding KeySize random bytes generated in
 // place, so a test input for LoadStaticKey never exists on the heap. It is left
 // unfrozen so a test may mutate it, and destroyed when the test ends.
-func randomScalar(t *testing.T) *enclave.MemoryEnclave {
+func randomScalar(t *testing.T) enclave.ByteAccess {
 	t.Helper()
 
-	e, err := enclave.NewMemoryEnclaveSized(KeySize)
+	e, err := enclave.NewMemorySized(KeySize)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, e.Destroy()) })
 
@@ -336,7 +336,7 @@ func sameScalar(t *testing.T, a, b *StaticKey) bool {
 func withEncoded(t *testing.T, key *StaticKey, n int, fn func(encoded []byte)) {
 	t.Helper()
 
-	buf, err := enclave.NewMemoryEnclaveSized(n)
+	buf, err := enclave.NewMemorySized(n)
 	require.NoError(t, err)
 	defer buf.Destroy()
 

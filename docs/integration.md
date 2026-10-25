@@ -129,7 +129,7 @@ server, err := bootstrap.NewServer(&bootstrap.ServerConfig{
 Containers typically start with a minimal trust store. go-truststrap is well-suited for container initialization:
 
 ```dockerfile
-FROM golang:1.27.1 AS builder
+FROM golang:1.27.3 AS builder
 WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 go build -o /truststrap ./cmd/truststrap

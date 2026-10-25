@@ -138,15 +138,15 @@ analogue of `noiseproto.StaticKey`. `pkg/p256proto` has the same at-rest
 serialisation surface as `noiseproto`:
 
 - `GenerateStaticKey()` — a fresh key pair.
-- `NewStaticKey(*enclave.MemoryEnclave)` — reconstruct from a scalar in
+- `NewStaticKey(enclave.ByteAccess)` — reconstruct from a scalar in
   protected memory.
-- `StaticKey` owns its private scalar in an `enclave.MemoryEnclave` for the
+- `StaticKey` owns its private scalar in an `enclave.ByteAccess` for the
   key's whole lifetime (with a `Destroy` lifecycle), mirroring
   `noiseproto.StaticKey`. `GenerateStaticKey` draws the scalar straight into
   that locked region via rejection sampling and freezes it read-only — it never
   materialises the scalar as an ordinary heap `[]byte`.
-- `HexKeySize`, `EncodeStaticKey(dst *enclave.MemoryEnclave, key)`,
-  `DecodeStaticKey(encoded *enclave.MemoryEnclave)`. Both ends of the boundary
+- `HexKeySize`, `EncodeStaticKey(dst enclave.ByteAccess, key)`,
+  `DecodeStaticKey(encoded enclave.ByteAccess)`. Both ends of the boundary
   are protected memory: encode reads straight from the owned locked scalar
   (never `crypto/ecdh`'s `PrivateKey.Bytes()`) into a caller-supplied enclave,
   so the plaintext scalar never touches the Go heap in this package. The only
@@ -154,7 +154,7 @@ serialisation surface as `noiseproto`:
   the standard library's API rather than of the storage primitive.
 
 `ServerConfig.P256StaticKey *p256proto.StaticKey` is the responder key; the
-consumer persists and reloads it exactly as it does the Noise key, constructing the `MemoryEnclave` it hands in. The one residual is the one p256proto already documents:
+consumer persists and reloads it exactly as it does the Noise key, constructing the `enclave.ByteAccess` it hands in. The one residual is the one p256proto already documents:
 `crypto/ecdh` keeps a heap copy of the scalar for the key's lifetime, which no
 API can lock — reimplementing P-256 to avoid it would forfeit the FIPS
 validation this suite exists for.

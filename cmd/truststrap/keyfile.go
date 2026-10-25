@@ -43,7 +43,7 @@ var createTempFile = os.CreateTemp
 // carrying the enclave error, so errors.Is reaches either -- enclave's own
 // ErrBudgetExhausted and ErrLockedMemoryUnavailable included. Callers must
 // Destroy what they get.
-func lockedBuffer(op string, n int) (*enclave.MemoryEnclave, error) {
+func lockedBuffer(op string, n int) (enclave.ByteAccess, error) {
 	allocator, err := enclave.ProcessAllocator()
 	if err != nil {
 		return nil, commandWrap(op, ErrKeyOperation, err)

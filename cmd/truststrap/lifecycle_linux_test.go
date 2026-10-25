@@ -221,7 +221,7 @@ func lifecycleHelper(mode string) lifecycleReport {
 		report.DefaultBudget = limit.Bytes
 	}
 
-	var held *enclave.MemoryEnclave
+	var held enclave.ByteAccess
 	probe := &cobra.Command{
 		Use: lifecycleProbeCommand,
 		RunE: func(*cobra.Command, []string) error {

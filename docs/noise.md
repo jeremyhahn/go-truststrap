@@ -274,7 +274,7 @@ defer loaded.Destroy()
 
 `GenerateStaticKey`, `LoadStaticKey` and `DecodeStaticKey` place the private
 scalar in a [go-enclave](https://github.com/jeremyhahn/go-enclave)
-`MemoryEnclave` -- the portfolio's protected-memory primitive -- admitted
+memory enclave -- the portfolio's protected-memory primitive -- admitted
 against the process's locked-memory budget (`enclave.ProcessAllocator`, which
 `cmd/truststrap` sizes at startup). A generated scalar is drawn straight into
 the locked pages; a loaded or decoded one is copied or hex-decoded straight

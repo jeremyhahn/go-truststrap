@@ -117,7 +117,7 @@ func constrainedRLimitChild(t *testing.T) {
 	}
 
 	prev := processAllocator
-	processAllocator = func() (*enclave.Allocator, error) { return allocator, nil }
+	processAllocator = func() (enclave.Allocator, error) { return allocator, nil }
 	t.Cleanup(func() { processAllocator = prev })
 
 	// Everything that has to lock memory is built BEFORE the ceiling drops,

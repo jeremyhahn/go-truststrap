@@ -13,7 +13,7 @@ import (
 
 // lockedKey returns a destroyable 32-byte protected buffer for tests that build
 // a Transport directly rather than through a handshake.
-func lockedKey(t *testing.T) *enclave.MemoryEnclave {
+func lockedKey(t *testing.T) enclave.ByteAccess {
 	t.Helper()
 
 	key := sizedEnclave(t, hashSize)

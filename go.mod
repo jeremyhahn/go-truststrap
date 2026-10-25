@@ -1,21 +1,20 @@
 module github.com/jeremyhahn/go-truststrap
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/flynn/noise v1.1.0
-	github.com/jeremyhahn/go-enclave v0.8.0-alpha
+	github.com/jeremyhahn/go-enclave v0.10.0-alpha
 	github.com/miekg/dns v1.1.72
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.55.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/time v0.15.0
 )
 
 require (
-	github.com/awnumar/memcall v0.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect

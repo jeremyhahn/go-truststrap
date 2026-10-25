@@ -16,7 +16,7 @@ import (
 // every wire element, and a chaining key ratcheted by each key agreement --
 // without being Noise: the AEAD here supplies its own nonce.
 //
-// Every secret it holds lives in a go-enclave MemoryEnclave for its whole
+// Every secret it holds lives in a go-enclave memory enclave for its whole
 // lifetime, per the protected-memory mandate for Layer 0 library code
 // (conventions/security-review.md section 6). Destroy releases them, which also
 // returns their reservations to the process's locked-memory budget.
@@ -54,7 +54,7 @@ type symmetricState struct {
 	// pages must stay writable for the schedule's whole life. Freezing is for
 	// material that is final, which a long-term static scalar is and a chaining
 	// key is not.
-	schedule *enclave.MemoryEnclave
+	schedule enclave.ByteAccess
 
 	hasKey bool
 }
@@ -128,13 +128,13 @@ func newSymmetricState(op string) (*symmetricState, error) {
 // Destroy wipes the chaining and AEAD keys and releases their locked pages,
 // returning the reservation to the process's locked-memory budget. It is
 // idempotent and safe on a nil receiver, and safe before the schedule has been
-// locked -- MemoryEnclave.Destroy tolerates a nil enclave. Nothing may read the
+// locked -- a nil schedule is skipped. Nothing may read the
 // schedule afterwards.
 //
 // The enclave's Destroy error is not returned: the next enclave.WipeAll
 // reports every corruption Destroy detected.
 func (s *symmetricState) Destroy() {
-	if s == nil {
+	if s == nil || s.schedule == nil {
 		return
 	}
 
@@ -294,7 +294,7 @@ func (s *symmetricState) openTagAndHash(tag []byte) error {
 //
 // A refused allocation returns ErrProtectedMemory with nothing left allocated,
 // so the failure costs that one session rather than the process.
-func (s *symmetricState) split(op string) (initToResp, respToInit *enclave.MemoryEnclave, err error) {
+func (s *symmetricState) split(op string) (initToResp, respToInit enclave.ByteAccess, err error) {
 	if err := s.withSchedule(op, func(ck, _ []byte) error {
 		okm, expandErr := hkdf.Expand(sha256.New, ck, infoSplit, 2*hashSize)
 		if expandErr != nil {

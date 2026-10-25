@@ -16,9 +16,9 @@ const HexKeySize = PrivateKeySize * 2
 
 // EncodeStaticKey hex-encodes the private scalar of key into dst for persistent
 // storage. Both sides of the boundary are protected memory: the scalar is read
-// straight from the MemoryEnclave the StaticKey owns (never crypto/ecdh's
+// straight from the memory enclave the StaticKey owns (never crypto/ecdh's
 // PrivateKey.Bytes(), which would materialise it on the ordinary heap), and dst
-// is a *enclave.MemoryEnclave, not an ordinary slice, for the same reason
+// is an enclave.ByteAccess, not an ordinary slice, for the same reason
 // NewStaticKey takes one -- the hex-encoded scalar is as sensitive as the key
 // itself. So the plaintext scalar never touches the Go heap in this package's
 // code.
@@ -26,7 +26,7 @@ const HexKeySize = PrivateKeySize * 2
 // dst must be alive, at least HexKeySize bytes, and still WRITABLE -- a sized
 // enclave that has not been Frozen. It stays the caller's to seal and Destroy;
 // freezing it, once written, is the caller's call to make.
-func EncodeStaticKey(dst *enclave.MemoryEnclave, key *StaticKey) error {
+func EncodeStaticKey(dst enclave.ByteAccess, key *StaticKey) error {
 	const op = "EncodeStaticKey"
 
 	if key == nil || key.scalar == nil || !key.scalar.IsAlive() {
@@ -48,14 +48,14 @@ func EncodeStaticKey(dst *enclave.MemoryEnclave, key *StaticKey) error {
 }
 
 // DecodeStaticKey decodes a hex-encoded P-256 scalar held in protected memory
-// and reconstructs the key pair. encoded is a *enclave.MemoryEnclave of exactly
+// and reconstructs the key pair. encoded is an enclave.ByteAccess of exactly
 // HexKeySize bytes -- the sensitive hex form never passes through an ordinary
 // heap slice or an immutable Go string. The decoded scalar is written into a
 // second enclave that is DESTROYED (wiped, unmapped, and its reservation
 // returned to the process budget) on every return path via defer, so it does not
 // linger; the only lasting copy is the one crypto/ecdh keeps internally (see
 // StaticKey). encoded stays the caller's to Destroy.
-func DecodeStaticKey(encoded *enclave.MemoryEnclave) (key *StaticKey, err error) {
+func DecodeStaticKey(encoded enclave.ByteAccess) (key *StaticKey, err error) {
 	const op = "DecodeStaticKey"
 
 	if encoded == nil || !encoded.IsAlive() {
