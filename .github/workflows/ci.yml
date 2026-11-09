@@ -264,15 +264,14 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
-      # This step IS the verification for both removals in this job (#29): it
-      # puts the resolved PATH and version of each baked tool in the job log,
-      # so "the image's pinned tool is the one that ran" is something a
-      # reviewer can read rather than assume. A GOPATH/bin path on either line
-      # is the tell that an install crept back in and shadowed the image.
+      # This step reports the versions the job installed above: it puts the
+      # resolved path and version of each tool in the job log, so the
+      # version that ran is something a reviewer can read rather than
+      # assume. A tool missing from PATH fails here with `command not
+      # found`, before any lint step runs.
       #
-      # Both probes are STRICTLY LOCAL — no network, or this step would
-      # reintroduce the very dependency the change removes: each only prints
-      # values stamped into its own binary at build time.
+      # Both probes are STRICTLY LOCAL — no network: each only prints
+      # values recorded in its own binary at build time.
       - name: Report baked tool versions
         run: |
           echo "golangci-lint: $(command -v golangci-lint)"
@@ -357,26 +356,19 @@ jobs:
       # Never @latest.
       - name: Install gosec and govulncheck
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
-      # This step IS the verification for the change above (#35): it puts the
-      # resolved path and version of each baked tool in the job log, so "the
-      # image's pinned tool is the one that ran" is something a reviewer can
-      # read rather than assume. gosec stamps its version from build ldflags,
-      # so the image's build prints a real release here while an unstamped
-      # `go install ...@latest` build would print a dev/unknown version — which
-      # makes this line the tell if an install ever creeps back in.
-      #
-      # It also moves the failure earlier and makes it legible: if the image
-      # ever ships without one of these, this step dies with `command not
-      # found` before any analysis is attempted, instead of the scan step
+      # This step reports the versions the job installed above: it puts the
+      # resolved path and version of each tool in the job log, so the
+      # version that ran is something a reviewer can read rather than
+      # assume. A tool missing from PATH fails here with `command not
+      # found`, before any analysis is attempted, instead of the scan step
       # exiting 127 amid its own output.
       #
-      # Both probes are STRICTLY LOCAL — no network, or this step would
-      # reintroduce the very dependency the change removes. `gosec -version`
-      # only prints its ldflags-stamped variables. `go version -m` reads the
-      # module version out of the binary's own build info; govulncheck's
+      # Both probes are STRICTLY LOCAL — no network. `gosec -version` only
+      # prints its build-stamped variables. `go version -m` reads the module
+      # version out of the binary's own build info; govulncheck's
       # `-version` is NOT used here because it also reports vulnerability-DB
       # state, which is a fetch.
       - name: Report baked tool versions
