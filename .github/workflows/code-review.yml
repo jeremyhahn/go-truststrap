@@ -1,4 +1,4 @@
-# code-review-template: v5.10.1 -- the code review in Gitea or GitHub CI for a pull request
+# code-review-template: v5.10.2 -- the code review in Gitea or GitHub CI for a pull request
 # that carries `code-review` and `task:ready`, routed by its labels through
 # route-labels (labels.md §2). Codex on the `codex` runner reviews every such
 # PR; `agent:opencode` adds an advisory COMMENT review by the opencode job on
@@ -28,6 +28,17 @@
 #   COORDINATOR_TURNS         the codex rounds the project coordinator has
 #                             on a `needs-coordinator` PR after the two-round
 #                             stop (v5.9.8, Company Agent m2185); default 3
+#
+# v5.10.2 (2026-11-09, Company Agent m2286 (3), ruling 398): Codex's P1 on
+# go-xkms #2026. The patch-id leaves out the whole `@@` line, so the same
+# edit moved to another function kept the key and carried an approval to a
+# change Codex had not read. The guard now keys a review by two values: the
+# patch-id, and `ctx`, the sha1 of each file's `@@` function-context lines in
+# order (the text after the second `@@`, with the file's path; never the
+# line numbers). A verdict carries only when both match, so a head that only
+# merged main in still carries and a moved edit runs Codex. A marker without
+# ctx= (v5.10.1 or before) carries nothing, so each open PR is reviewed once
+# more. testdata/code-review-modzip-tests.py part D checks the moved edit.
 #
 # v5.10.1 (2026-11-09, Infrastructure's review of go-xkms #2026 under Company
 # Agent m2274, ruling 394): two v5.10.0 defects Codex found. (a) The review key
@@ -897,19 +908,32 @@ jobs:
           # not review the same change twice. No diff from the forge (GitHub
           # refuses one over its size limit) leaves it empty: the head is the
           # key, as before v5.9.8.
+          # v5.10.2 (Company Agent m2286 (3)): the patch-id leaves out the
+          # whole `@@` line, so the same edit moved to another function keeps
+          # it. hunk_ctx is the second half of the key: the sha1 of one
+          # "<path><TAB><function context>" line per hunk, in diff order. The
+          # function context is the text after the second `@@`; the line
+          # numbers are not in it, so merging main in keeps it.
           patch_id=""
+          hunk_ctx=""
           if pr_diff "$WORK/pr.diff"; then
             patch_id=$(git patch-id --verbatim < "$WORK/pr.diff" | awk 'NR == 1 {print $1}') || patch_id=""
+            hunk_ctx=$(awk '/^diff --git / { f = $NF; next }
+                            /^@@ / { c = $0; sub(/^@@ [^@]* @@ ?/, "", c); print f "\t" c }' "$WORK/pr.diff" |
+                       sha1sum | awk '{print $1}') || hunk_ctx=""
           fi
           [[ $patch_id =~ ^[0-9a-f]{40}$ ]] || patch_id=""
+          [[ $hunk_ctx =~ ^[0-9a-f]{40}$ ]] && [ -n "$patch_id" ] || hunk_ctx=""
           rm -f "$WORK/pr.diff"
           echo "patch_id=$patch_id" >> "$GITHUB_OUTPUT"
-          echo "Review key: patch ${patch_id:-unknown (keyed by head)}."
+          echo "hunk_ctx=$hunk_ctx" >> "$GITHUB_OUTPUT"
+          echo "Review key: patch ${patch_id:-unknown (keyed by head)}${hunk_ctx:+, ctx $hunk_ctx}."
 
           # This reviewer's verdicts on every head of the PR, oldest first,
           # read from the marker the posting step writes:
-          #   <!-- codex-review:verdict head=<sha> patch=<patch-id> round=<n> -->
-          # A marker from v5.9.6 or before has head= alone. A dismissed
+          #   <!-- codex-review:verdict head=<sha> patch=<patch-id> ctx=<sha1> round=<n> -->
+          # A marker from v5.9.6 or before has head= alone; one from v5.10.1
+          # or before has no ctx=. A dismissed
           # verdict still counts as a round; it no longer stands.
           all=$(api_all "/pulls/$PR_NUM/reviews?")
           hist=$(jq -c --arg u "$REVIEWER" '
@@ -922,18 +946,21 @@ jobs:
                         stands: ((.state != "DISMISSED") and (.dismissed | not)),
                         state: (if .state == "DISMISSED" then "DISMISSED" else .state end),
                         patch: (($m.a | capture("\\bpatch=(?<p>[0-9a-f]{40})\\b") | .p) // ""),
+                        ctx: (($m.a | capture("\\bctx=(?<c>[0-9a-f]{40})\\b") | .c) // ""),
                         round: (($m.a | capture("\\bround=(?<r>[0-9]+)\\b") | .r | tonumber) // null) } ]
               | sort_by(.id)' <<<"$all")
 
           # SAME PATCH: the latest standing verdict on another head with this
-          # patch carries to this head without a codex run. An approval is
-          # posted again on $EVENT_SHA (the confirm step and automerge read a
-          # verdict on the head); a rejection fails this run, as on its own head.
-          # A label just added to change the route reviews again (above).
+          # patch and these function contexts (v5.10.2) carries to this head
+          # without a codex run. An approval is posted again on $EVENT_SHA (the
+          # confirm step and automerge read a verdict on the head); a rejection
+          # fails this run, as on its own head. The same patch with other
+          # contexts is a moved edit: codex reviews it. A label just added to
+          # change the route reviews again (above).
           round=""
-          if [ -n "$patch_id" ] && [ -z "$again" ]; then
-            prev=$(jq -c --arg p "$patch_id" --arg s "$EVENT_SHA" '
-                [ .[] | select(.stands and .patch == $p and .commit_id != $s) ] | last // empty' <<<"$hist")
+          if [ -n "$patch_id" ] && [ -n "$hunk_ctx" ] && [ -z "$again" ]; then
+            prev=$(jq -c --arg p "$patch_id" --arg x "$hunk_ctx" --arg s "$EVENT_SHA" '
+                [ .[] | select(.stands and .patch == $p and .ctx == $x and .commit_id != $s) ] | last // empty' <<<"$hist")
             if [ -n "$prev" ]; then
               psha=$(jq -r '.commit_id' <<<"$prev")
               echo "skip=same-patch" >> "$GITHUB_OUTPUT"
@@ -943,9 +970,9 @@ jobs:
                 exit 1
               fi
               round=$(jq -r '.round // empty' <<<"$prev")
-              jq -r --arg s "$EVENT_SHA" --arg p "$patch_id" --arg r "$round" --arg o "$psha" '
-                  "<!-- codex-review:verdict head=\($s) patch=\($p)\(if $r == "" then "" else " round=\($r)" end) carried=\($o) -->\n"
-                  + "Carried from `\($o)`: head `\($s)` is the same patch (`\($p)`), so codex did not review it again.\n\n"
+              jq -r --arg s "$EVENT_SHA" --arg p "$patch_id" --arg x "$hunk_ctx" --arg r "$round" --arg o "$psha" '
+                  "<!-- codex-review:verdict head=\($s) patch=\($p) ctx=\($x)\(if $r == "" then "" else " round=\($r)" end) carried=\($o) -->\n"
+                  + "Carried from `\($o)`: head `\($s)` is the same patch (`\($p)`) in the same functions, so codex did not review it again.\n\n"
                   + (.body | sub("<!-- codex-review:verdict [^>]*-->\n?"; ""))' <<<"$prev" > "$WORK/body.md"
               send=APPROVED
               [ "$FORGE" != github ] || send=APPROVE
@@ -1567,6 +1594,7 @@ jobs:
           MODEL: ${{ steps.guard.outputs.codex_model }}
           EFFORT: ${{ steps.guard.outputs.codex_effort }}
           PATCH_ID: ${{ steps.guard.outputs.patch_id }}
+          HUNK_CTX: ${{ steps.guard.outputs.hunk_ctx }}
           ROUND: ${{ steps.guard.outputs.round }}
           LIMIT: ${{ steps.guard.outputs.limit }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1599,8 +1627,10 @@ jobs:
             event=APPROVED
           fi
           # The marker (v5.9.8) carries the review key and the round, which
-          # the guard reads on the next head: head=<sha> patch=<patch-id> round=<n>.
+          # the guard reads on the next head: head=<sha> patch=<patch-id>
+          # ctx=<sha1> round=<n> (ctx= since v5.10.2).
           [[ $PATCH_ID =~ ^[0-9a-f]{40}$ ]] || PATCH_ID=""
+          [[ $HUNK_CTX =~ ^[0-9a-f]{40}$ ]] && [ -n "$PATCH_ID" ] || HUNK_CTX=""
           [[ $ROUND =~ ^[0-9]+$ ]] || die "the guard gave no round number"
           [[ $LIMIT =~ ^[0-9]+$ ]] || die "the guard gave no round limit"
           # v5.9.8: a rejection at the round limit hands the PR on (THE
@@ -1611,11 +1641,11 @@ jobs:
             [ "$ROUND" -lt $((2 + COORDINATOR_TURNS)) ] || stop=needs-owner
           fi
           jq -r --arg e "$event" --arg s "$EVENT_SHA" --arg m "$MODEL" --arg f "$EFFORT" --arg u "$RUN_URL" \
-                --arg p "$PATCH_ID" --arg r "$ROUND" --arg t "$stop" '
+                --arg p "$PATCH_ID" --arg x "$HUNK_CTX" --arg r "$ROUND" --arg t "$stop" '
               def where: if .file == "" then "" elif .line > 0 then " (`\(.file):\(.line)`)" else " (`\(.file)`)" end;
               def item: "- **\(.priority)** \(.title)\(where)\n\n  \(.body | gsub("\n"; "\n  "))\n";
               (if $e == "APPROVED" then "Approve" else "Request changes" end) as $v
-              | "<!-- codex-review:verdict head=\($s)\(if $p == "" then "" else " patch=\($p)" end) round=\($r) -->\n## Codex review: \($v)\n\n"
+              | "<!-- codex-review:verdict head=\($s)\(if $p == "" then "" else " patch=\($p)" end)\(if $x == "" or $p == "" then "" else " ctx=\($x)" end) round=\($r) -->\n## Codex review: \($v)\n\n"
                 + "Head `\($s)`, model `\($m)`, effort `\($f)`, round \($r), [run](\($u)).\n\n\(.summary)\n\n"
                 + (if (.findings | length) == 0 then "No findings.\n"
                    else "### Findings\n\n" + (.findings | sort_by(.priority) | map(item) | join("\n")) end)
