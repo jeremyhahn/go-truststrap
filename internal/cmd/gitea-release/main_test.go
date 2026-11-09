@@ -49,8 +49,9 @@ func TestRun_ReadsTheCheckoutAndTheEnvironment(t *testing.T) {
 	env := map[string]string{
 		"GITHUB_SERVER_URL": srv.URL,
 		"GITHUB_REPOSITORY": "owner/repo",
-		"GITEA_TOKEN":       "t",
-		"TAG":               "v1.2.3",
+		// lab-string-ok: the environment variable name the command reads; a value, not prose (rule 25 rewords prose only)
+		"GITEA_TOKEN": "t",
+		"TAG":         "v1.2.3",
 	}
 
 	var out bytes.Buffer
@@ -62,6 +63,7 @@ func TestRun_ReadsTheCheckoutAndTheEnvironment(t *testing.T) {
 	}
 
 	// A missing token is refused before anything is sent.
+	// lab-string-ok: the environment variable name the command reads; a value, not prose (rule 25 rewords prose only)
 	delete(env, "GITEA_TOKEN")
 	var cfgErr *gitearelease.ConfigError
 	if err := run(context.Background(), func(k string) string { return env[k] }, dir, &out); !errors.As(err, &cfgErr) {

@@ -332,9 +332,10 @@ func TestPublish_RefusesAnIncompleteConfig(t *testing.T) {
 	cases := map[string]func(*Config){
 		"GITHUB_SERVER_URL": func(c *Config) { c.ServerURL = "" },
 		"GITHUB_REPOSITORY": func(c *Config) { c.Repository = "" },
-		"GITEA_TOKEN":       func(c *Config) { c.Token = "" },
-		"TAG":               func(c *Config) { c.Tag = "" },
-		"DistDir":           func(c *Config) { c.DistDir = "" },
+		// lab-string-ok: the environment variable name the command reads; a value, not prose (rule 25 rewords prose only)
+		"GITEA_TOKEN": func(c *Config) { c.Token = "" },
+		"TAG":         func(c *Config) { c.Tag = "" },
+		"DistDir":     func(c *Config) { c.DistDir = "" },
 	}
 	for field, clear := range cases {
 		t.Run(field, func(t *testing.T) {

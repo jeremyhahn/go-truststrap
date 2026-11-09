@@ -625,11 +625,11 @@ func TestAReleaseThatShouldSucceed(t *testing.T) {
 	if typ := strings.TrimSpace(f.git(f.repo, "cat-file", "-t", "v0.5.0-alpha")); typ != "tag" {
 		t.Errorf("tag object type is %q, want an ANNOTATED tag", typ)
 	}
-	if tagger := strings.TrimSpace(f.git(f.repo, "for-each-ref", "--format=%(taggername)", "refs/tags/v0.5.0-alpha")); tagger != "agent-go-truststrap" {
-		t.Errorf("tagger is %q, want the identity wrapper's agent-go-truststrap", tagger)
+	if tagger := strings.TrimSpace(f.git(f.repo, "for-each-ref", "--format=%(taggername)", "refs/tags/v0.5.0-alpha")); tagger != "agent-go-truststrap" { // lab-string-ok: the principal id the identity wrapper sets; a value the test compares (rule 25 rewords prose only)
+		t.Errorf("tagger is %q, want the identity wrapper's principal", tagger)
 	}
-	if committer := strings.TrimSpace(f.git(f.repo, "log", "-1", "--format=%cn")); committer != "agent-go-truststrap" {
-		t.Errorf("committer is %q, want the identity wrapper's agent-go-truststrap", committer)
+	if committer := strings.TrimSpace(f.git(f.repo, "log", "-1", "--format=%cn")); committer != "agent-go-truststrap" { // lab-string-ok: the principal id the identity wrapper sets; a value the test compares (rule 25 rewords prose only)
+		t.Errorf("committer is %q, want the identity wrapper's principal", committer)
 	}
 	if subject := strings.TrimSpace(f.git(f.repo, "log", "-1", "--format=%s")); subject != "chore(release): v0.5.0-alpha" {
 		t.Errorf("commit subject is %q", subject)
