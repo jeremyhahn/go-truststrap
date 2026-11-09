@@ -255,72 +255,23 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # NO `go install` FOR golangci-lint HERE — deliberate, and NOT an
-      # omission (#29, completing what #35 deferred). DEVIATION from
-      # ci-template v1.11; recorded so the next template sync does not
-      # silently re-add it.
-      #
-      # WHAT WAS HERE: a three-attempt retry loop around
-      # `go install .../golangci-lint@<pin>`. The pin was not a default — it
-      # exists for a specific reason (go-qrdb#42, 2026-08-19): @latest moved to
-      # v2.13.0, which panics under Go 1.26 ("nilness: internal error:
-      # unhandled builtin recover" in honnef.co/go/tools v0.8.0-rc.1) and took
-      # the whole gate down, and with it every job that needed lint. The retry
-      # loop was there because sum.golang.org fetches during this install flake
-      # (HTTP/2 INTERNAL_ERROR, 2/2 runs on go-qrdb; IPv6 ENETUNREACH on both
-      # runner hosts, #29). That loop is a local workaround for a platform
-      # flake, and it could still exhaust its attempts and fail the job — which
-      # under staged fail-fast (v1.9) is a whole red pipeline for a download.
-      #
-      # WHY IT CAN GO NOW: #35 declined to drop it without first reading the
-      # image's pin list, because guessing WHICH golangci-lint the image
-      # carries would trade a network flake for the exact outage the pin
-      # prevents. That list is now on the record (#29): at the time of the
-      # removal the image baked the SAME version this step pinned, so dropping
-      # the install changed nothing about which linter ran — and the image
-      # build FAILS CLOSED if any tool's self-report disagrees with its pin,
-      # so the manifest cannot drift from the binaries. Removing the install
-      # kept the pin's effect and dropped only the network fetch. The image's
-      # pin has MOVED SINCE, which is exactly why it belongs there and not
-      # here: it moves under review, and CI follows it with no edit to this
-      # file.
-      #
-      # NO VERSION NUMBER IS NAMED ABOVE, deliberately (#68): the version in
-      # force is the image's, which is the whole point of #29, and a number
-      # copied into a comment here is a second copy with nothing to keep it
-      # honest. This comment went stale exactly that way — it kept naming the
-      # release this step used to install long after the Go 1.27 wave moved
-      # the image on to a newer one. The authority is
-      # infra/gitea/ci-runner/Dockerfile; the report step below is what says
-      # which binary actually ran.
-      #
-      # It also closes the reverse hazard the install created: actions/setup-go
-      # prepends GOPATH/bin to PATH, so a SUCCESSFUL install SHADOWED the
-      # image's pinned binary with the freshly fetched one — a repo could
-      # believe the image pinned its tooling while CI ran something else. With
-      # the install gone, `golangci-lint` resolves to the image's copy, and the
-      # version report below is what makes that legible rather than assumed.
-      #
-      # FAILS CLOSED: with no install step, an image that lacks the tool makes
-      # the version report below exit 127 immediately. It cannot silently skip
-      # the lint.
-      #
-      # TO BUMP A VERSION: do NOT reinstate `go install` — ask agent-company to
-      # rebuild the image. The pins live in infra/gitea/ci-runner/Dockerfile
-      # and bumping one is a reviewed change, deliberately not drift. That is
-      # also which devops.md §9 clause applies here: with no install command
-      # there is no pin in an install command to argue over, and the version in
-      # force is the reviewed one the image ships.
+      # The hosted ubuntu-latest image bakes none of these tools, so this job
+      # installs them at pinned versions (Company Agent m2286 (2)). Module
+      # paths only, so they come through proxy.golang.org (handbook §7a); the
+      # golangci-lint pin is the Makefile's GOLANGCI_LINT_VERSION. Never @latest.
+      - name: Install golangci-lint and actionlint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
-      # This step IS the verification for both removals in this job (#29): it
-      # puts the resolved PATH and version of each baked tool in the job log,
-      # so "the image's pinned tool is the one that ran" is something a
-      # reviewer can read rather than assume. A GOPATH/bin path on either line
-      # is the tell that an install crept back in and shadowed the image.
+      # This step reports the versions the job installed above: it puts the
+      # resolved path and version of each tool in the job log, so the
+      # version that ran is something a reviewer can read rather than
+      # assume. A tool missing from PATH fails here with `command not
+      # found`, before any lint step runs.
       #
-      # Both probes are STRICTLY LOCAL — no network, or this step would
-      # reintroduce the very dependency the change removes: each only prints
-      # values stamped into its own binary at build time.
+      # Both probes are STRICTLY LOCAL — no network: each only prints
+      # values recorded in its own binary at build time.
       - name: Report baked tool versions
         run: |
           echo "golangci-lint: $(command -v golangci-lint)"
@@ -346,17 +297,7 @@ jobs:
       # self-hosted labels from reading as unknown runners, which is what
       # trains people to ignore linter output.
       #
-      # NO `go install` FOR actionlint HERE either, for the same reason as
-      # golangci-lint above (#29) — the runner image bakes it, so see that
-      # step's note for the full rationale and the version-bump procedure.
-      #
-      # One difference worth stating: this step fetched `@latest`, so the image
-      # does not merely spare it a network call, it PINS it — the image carries
-      # actionlint v1.7.12. `@latest` is what makes a tool's output
-      # unattributable to a version (the reproducibility complaint in
-      # go-luks2#21), and the version report above now names the actionlint
-      # that actually ran. Bumping it is agent-company's reviewed image change,
-      # not a re-added install.
+      # actionlint is installed at a pinned version by the install step above.
 
       # actionlint DELEGATES every SC* rule to shellcheck and, when shellcheck is
       # absent from PATH, DISABLES those rules and EXITS 0 at default verbosity —
@@ -409,55 +350,25 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      # NO TOOL INSTALL STEP HERE — deliberate, and NOT an omission (#35,
-      # completed by #29). DEVIATION from ci-template v1.11; recorded so the next
-      # template sync does not silently re-add what this change removed.
-      #
-      # The `ubuntu-latest` label resolves to the company runner image
-      # (ci-runner:latest, served by the internal forge's registry), which
-      # BAKES gosec and govulncheck at pinned versions. Installing them
-      # again at job time fetched tools the container already had, and did it
-      # over a network path that intermittently fails: IPv6 ENETUNREACH to
-      # sum.golang.org, measured on both runner hosts (#29). That flake is what
-      # the three-attempt retry loop removed here was compensating for — it
-      # could still exhaust its attempts and fail a job whose analysis had not
-      # run, which under staged fail-fast (v1.9) is a whole red pipeline for a
-      # tool download.
-      #
-      # The baked binaries carry their version in build ldflags, so `gosec
-      # -version` in the job log reports the pinned release rather than the
-      # `dev` an unstamped `go install ...@latest` build prints. That is the
-      # check to run when confirming the image's tool is the one in use.
-      #
-      # FAILS CLOSED: with no install step, an image that lacks the tool makes
-      # the next step exit 127 immediately. It cannot silently skip the scan.
-      #
-      # TO BUMP A VERSION: do NOT reinstate `go install` — ask agent-company to
-      # rebuild the image. The pins live in infra/gitea/ci-runner/Dockerfile.
-      #
-      # NO TOOL IS INSTALLED IN THE LINT JOB EITHER any more: golangci-lint and
-      # actionlint, which #35 left standing pending the image's pin list, went
-      # the same way in #29 once that list confirmed the image carries
-      # golangci-lint at the very version this repo pinned. See the notes in
-      # that job; the procedure above applies to all four tools.
+      # The hosted ubuntu-latest image bakes none of these tools, so this job
+      # installs them at pinned versions (Company Agent m2286 (2)). Module
+      # paths only, so they come through proxy.golang.org (handbook §7a).
+      # Never @latest.
+      - name: Install gosec and govulncheck
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
-      # This step IS the verification for the change above (#35): it puts the
-      # resolved path and version of each baked tool in the job log, so "the
-      # image's pinned tool is the one that ran" is something a reviewer can
-      # read rather than assume. gosec stamps its version from build ldflags,
-      # so the image's build prints a real release here while an unstamped
-      # `go install ...@latest` build would print a dev/unknown version — which
-      # makes this line the tell if an install ever creeps back in.
-      #
-      # It also moves the failure earlier and makes it legible: if the image
-      # ever ships without one of these, this step dies with `command not
-      # found` before any analysis is attempted, instead of the scan step
+      # This step reports the versions the job installed above: it puts the
+      # resolved path and version of each tool in the job log, so the
+      # version that ran is something a reviewer can read rather than
+      # assume. A tool missing from PATH fails here with `command not
+      # found`, before any analysis is attempted, instead of the scan step
       # exiting 127 amid its own output.
       #
-      # Both probes are STRICTLY LOCAL — no network, or this step would
-      # reintroduce the very dependency the change removes. `gosec -version`
-      # only prints its ldflags-stamped variables. `go version -m` reads the
-      # module version out of the binary's own build info; govulncheck's
+      # Both probes are STRICTLY LOCAL — no network. `gosec -version` only
+      # prints its build-stamped variables. `go version -m` reads the module
+      # version out of the binary's own build info; govulncheck's
       # `-version` is NOT used here because it also reports vulnerability-DB
       # state, which is a fetch.
       - name: Report baked tool versions
@@ -540,10 +451,6 @@ jobs:
         with:
           sarif_file: gosec.sarif
           category: gosec
-
-      # NO `go install golang.org/x/vuln/cmd/govulncheck` HERE, for the same
-      # reason as gosec above — the runner image bakes it at a pinned version
-      # (#35). Read that block; it is not repeated.
 
       # Also the toolchain-currency forcing function: fails on stdlib vulns
       # in an outdated Go (devops.md §9).
@@ -637,6 +544,25 @@ jobs:
       # and the same one-character fix belongs in
       # software/templates/github-actions/ci.yml. Delete this note when the
       # template carries the quotes.
+      # The labstrings gate (internal/labstrings, run by `go test ./...` below)
+      # reads its patterns from the file LABSTRINGS_PATTERNS names. The
+      # patterns are a secret: written to a 0600 file under RUNNER_TEMP from
+      # env, never echoed and never on a command line. A fork PR has no
+      # secrets; the step then writes nothing and the gate runs without a
+      # patterns file, as it does today.
+      - name: Stage the labstrings patterns file
+        env:
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+        run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            echo "RELEASABILITY_PATTERNS is not set; the labstrings gate runs without a patterns file"
+            exit 0
+          fi
+          f="$RUNNER_TEMP/labstrings-patterns"
+          (umask 077 && printf '%s' "$RELEASABILITY_PATTERNS" > "$f")
+          chmod 0600 "$f"
+          echo "LABSTRINGS_PATTERNS=$f" >> "$GITHUB_ENV"
+
       - name: Run tests with coverage
         run: |
           go test -race -count=1 -timeout=900s -coverprofile=coverage.out ./...
