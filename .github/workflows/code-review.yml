@@ -1,4 +1,4 @@
-# code-review-template: v5.10.4 -- the code review in Gitea or GitHub CI for a pull request
+# code-review-template: v5.10.5 -- the code review in Gitea or GitHub CI for a pull request
 # that carries `code-review` and `task:ready`, routed by its labels through
 # route-labels (labels.md §2). Codex on the `codex` runner reviews every such
 # PR; `agent:opencode` adds an advisory COMMENT review by the opencode job on
@@ -29,6 +29,13 @@
 #                             on a `needs-coordinator` PR after the two-round
 #                             stop (v5.9.8, Company Agent m2185); default 3
 #
+# v5.10.5 (2026-11-09, Codex's P1 on v5.10.4 at go-xkms #2026): the TWIN
+# WAIT fails closed. Each GitHub lookup it makes is assigned first and its
+# failure stops the job, as does a body jq cannot read (jq -e exit other
+# than 0 or 1). v5.10.4 read an older run's jobs inside an `if`
+# condition, where `set -e` does not apply, so a failed lookup read as "no
+# codex job in progress" and let a same-head twin review beside its older
+# twin.
 # v5.10.4 (2026-11-09, Codex's P1 on v5.10.3 at go-xkms #2026; Company Agent
 # m2301 (2), ruling 402): the review key's ctx= is the sha1 of each hunk's whole `@@` line with
 # its file's path, the line numbers included. v5.10.2 hashed the function
@@ -797,14 +804,25 @@ jobs:
             wf=$(gha "/actions/runs/$GITHUB_RUN_ID" | jq -r '.workflow_id // empty')
             [ -n "$wf" ] || die "could not read the workflow of run $GITHUB_RUN_ID"
             while :; do
-              older=$(gha "/actions/workflows/$wf/runs?head_sha=$EVENT_SHA&status=in_progress&per_page=100" |
-                      jq -r --argjson me "$GITHUB_RUN_ID" '.workflow_runs[]? | select(.id < $me) | .id')
+              # v5.10.5: each lookup is assigned before jq reads it. In an `if`
+              # condition `set -e` does not apply, so a failed lookup there
+              # would read as no codex job in progress on this head.
+              runs=$(gha "/actions/workflows/$wf/runs?head_sha=$EVENT_SHA&status=in_progress&per_page=100") ||
+                die "could not list the in-progress runs on $EVENT_SHA"
+              older=$(jq -r --argjson me "$GITHUB_RUN_ID" '.workflow_runs[]? | select(.id < $me) | .id' <<<"$runs") ||
+                die "could not read the in-progress runs on $EVENT_SHA"
               busy=0
               for id in $older; do
-                if gha "/actions/runs/$id/jobs?per_page=100" |
-                   jq -e 'any(.jobs[]?; .name == "Code Review (codex)" and .status == "in_progress")' >/dev/null; then
-                  busy=1
-                fi
+                jobs=$(gha "/actions/runs/$id/jobs?per_page=100") ||
+                  die "could not read the jobs of run $id"
+                # jq -e exits 1 for false; any other non-zero is an unreadable body.
+                jrc=0
+                jq -e 'any(.jobs[]?; .name == "Code Review (codex)" and .status == "in_progress")' >/dev/null <<<"$jobs" || jrc=$?
+                case $jrc in
+                  0) busy=1 ;;
+                  1) ;;
+                  *) die "could not read the jobs of run $id" ;;
+                esac
               done
               [ "$busy" = 1 ] || break
               [ "$twin_waited" -gt 0 ] || echo "An older run's codex job is reviewing $EVENT_SHA; waiting for its verdict."
