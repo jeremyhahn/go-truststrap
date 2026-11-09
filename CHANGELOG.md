@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **The releasability gate no longer quotes what it finds.** A
+  `labstrings` finding renders its path, line and class only; the matched text
+  and the line around it stay out of the report and the CI log.
+
 ## [0.6.0-alpha] - 2026-10-08
 
 **Breaking API change:** truststrap now builds on go-enclave v0.8.0-alpha, and

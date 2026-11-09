@@ -500,9 +500,33 @@ func TestReport_SaysWhatToDoAndOnlyWhenDirty(t *testing.T) {
 	if !dirty {
 		t.Error("dirty = false with a finding")
 	}
-	for _, want := range []string{"cmd/truststrap/thing.go:7", "vm-host-4", "name the role", waiverPrefix} {
+	for _, want := range []string{"cmd/truststrap/thing.go:7", "name the role", waiverPrefix} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report omits %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "vm-host-4") {
+		t.Errorf("report quotes the matched text:\n%s", out.String())
+	}
+}
+
+func TestFinding_StringRendersPathLineAndClassOnly(t *testing.T) {
+	const match, pattern = "sample-match-text", "sample-pattern-text"
+	f := Finding{
+		Path:     "a/b.go",
+		Line:     3,
+		Class:    ClassLabHost,
+		Match:    match,
+		Excerpt:  "// near " + match + " by " + pattern,
+		Guidance: pattern,
+	}
+	got := f.String()
+	if want := "a/b.go:3: [" + string(ClassLabHost) + "]"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	for _, leak := range []string{match, pattern} {
+		if strings.Contains(got, leak) {
+			t.Errorf("String() renders %q: %q", leak, got)
 		}
 	}
 }

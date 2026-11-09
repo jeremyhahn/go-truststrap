@@ -399,9 +399,11 @@ type Finding struct {
 }
 
 // String renders a finding in the file:line:message form every editor and every
-// CI log viewer already knows how to jump to.
+// CI log viewer already knows how to jump to. It names the path, the line and
+// the class only: the matched text and the excerpt around it are the very value
+// that must not be published, and a CI log is published.
 func (f Finding) String() string {
-	return fmt.Sprintf("%s:%d: [%s] %q -- %s\n\t%s", f.Path, f.Line, f.Class, f.Match, f.Guidance, f.Excerpt)
+	return fmt.Sprintf("%s:%d: [%s]", f.Path, f.Line, f.Class)
 }
 
 // excerptLimit bounds the quoted line. Minified bundles are single lines of
@@ -674,7 +676,7 @@ func Report(w io.Writer, findings []Finding) (bool, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d lab value(s) in tracked files -- this tree ships publicly:\n\n", len(findings))
 	for _, f := range findings {
-		fmt.Fprintf(&b, "%s\n\n", f)
+		fmt.Fprintf(&b, "%s -- %s\n\n", f, f.Guidance)
 	}
 	b.WriteString("Replace the value, move it to CI/infra configuration, or -- if the value\n")
 	b.WriteString("is the point (benchmark provenance, a captured log) -- waive the line with\n")
