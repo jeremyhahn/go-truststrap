@@ -11,7 +11,7 @@
 //
 //	GITHUB_SERVER_URL   the Gitea instance root
 //	GITHUB_REPOSITORY   owner/name
-//	GITEA_TOKEN         a token with write access to the repository
+//	RELEASE_TOKEN         a token with write access to the repository
 //	TAG                 the tag being released, e.g. v0.4.0
 //
 // It reads CHANGELOG.md and dist/ from the working directory. See package
@@ -72,7 +72,7 @@ func run(ctx context.Context, getenv func(string) string, dir string, out io.Wri
 	return gitearelease.Publish(ctx, gitearelease.Config{
 		ServerURL:  getenv("GITHUB_SERVER_URL"),
 		Repository: getenv("GITHUB_REPOSITORY"),
-		Token:      getenv("GITEA_TOKEN"),
+		Token:      getenv("RELEASE_TOKEN"),
 		Tag:        getenv("TAG"),
 		Changelog:  changelog,
 		DistDir:    filepath.Join(dir, "dist"),

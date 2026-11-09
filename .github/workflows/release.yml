@@ -110,7 +110,7 @@ jobs:
       - name: Create Gitea Release
         if: github.server_url != 'https://github.com'
         env:
-          GITEA_TOKEN: ${{ secrets.AGENT_TOKEN }}
+          RELEASE_TOKEN: ${{ secrets.AGENT_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: go run ./internal/cmd/gitea-release
 
