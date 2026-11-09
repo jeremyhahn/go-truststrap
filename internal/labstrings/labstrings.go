@@ -480,9 +480,11 @@ const readChunk = 64 << 10
 
 // windowLookahead is how many bytes of a window are held back for the next one
 // so that a match starting near the window's end is seen whole, with the byte
-// after it that `\b` needs. It must exceed the longest match any pattern can
-// produce plus one; TestPatterns_MatchesFitTheWindowOverlap pins that.
-const windowLookahead = 64
+// after it that `\b` needs. It is sized to the longest match of the operator's
+// patterns file (1042 bytes) plus that byte, plus one; the loader refuses a
+// file with a longer match, and TestPatterns_MatchesFitTheWindowOverlap pins
+// that for the test patterns.
+const windowLookahead = 1044
 
 // windowLookbehind is how many bytes before a window's own region are kept so
 // that a `\b` at the region's first byte sees the real byte in front of it.

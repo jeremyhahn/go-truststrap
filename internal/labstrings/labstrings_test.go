@@ -380,6 +380,28 @@ func TestScanStream_AMatchIsReportedOnceAtEveryWindowBoundary(t *testing.T) {
 	}
 }
 
+func TestScanStream_ALongMatchAcrossAWindowBoundaryIsReportedOnceAndWhole(t *testing.T) {
+	ps, err := parsePatterns("long", []byte("lab-host\t\\ba{1000}\\b\n"))
+	if err != nil {
+		t.Fatalf("parsePatterns: %v", err)
+	}
+	t.Cleanup(setPatterns(ps))
+	match := strings.Repeat("a", 1000)
+	for _, boundary := range []int{readChunk, 2*readChunk - windowLookbehind - windowLookahead} {
+		for _, off := range []int{boundary - 999, boundary - 500, boundary - 1, boundary + 1} {
+			head := strings.Repeat("x", off) + " "
+			line := head + match + " " + strings.Repeat("y", 3*readChunk-len(head)-len(match)-1)
+			findings, err := scanStream("f", strings.NewReader(line), nil)
+			if err != nil {
+				t.Fatalf("offset %d: %v", off, err)
+			}
+			if len(findings) != 1 || findings[0].Match != match {
+				t.Fatalf("offset %d: want one whole %d-byte match, got %d findings", off, len(match), len(findings))
+			}
+		}
+	}
+}
+
 func TestScanStream_AWaiverAnywhereInALongLineCoversAllOfIt(t *testing.T) {
 	useTestPatterns(t)
 	host := "gpu-host"
@@ -742,6 +764,8 @@ func TestLoadPatterns_TakesTheFilesClassSet(t *testing.T) {
 		t.Errorf("guidance = %q, %q; want lab-host's, then defaultGuidance", ps[0].Guidance, ps[1].Guidance)
 	}
 
+	// Start from an empty rule set, whatever LABSTRINGS_PATTERNS names.
+	t.Cleanup(setPatterns(nil))
 	rule := []AllowRule{{Path: "fixtures/**", Classes: []Class{extra}, Reason: "the gate's own fixtures"}}
 	if err := ValidateAllowList(rule); err == nil {
 		t.Fatalf("a rule naming %s validated before a patterns file stated it", extra)

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Security
 
 - labstrings: the loader takes the patterns file's class set as the file states it, with fixed guidance per class; loader errors carry file and line only
+- labstrings: the scan windows hold back 1044 bytes, so a match of up to 1042 bytes is seen whole; a longer one is still refused at load with the file and line only
 - **The releasability gate no longer quotes what it finds.** A
   `labstrings` finding renders its path, line and class only; the matched text
   and the line around it stay out of the report and the CI log.
