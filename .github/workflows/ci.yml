@@ -544,6 +544,25 @@ jobs:
       # and the same one-character fix belongs in
       # software/templates/github-actions/ci.yml. Delete this note when the
       # template carries the quotes.
+      # The labstrings gate (internal/labstrings, run by `go test ./...` below)
+      # reads its patterns from the file LABSTRINGS_PATTERNS names. The
+      # patterns are a secret: written to a 0600 file under RUNNER_TEMP from
+      # env, never echoed and never on a command line. A fork PR has no
+      # secrets; the step then writes nothing and the gate runs without a
+      # patterns file, as it does today.
+      - name: Stage the labstrings patterns file
+        env:
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+        run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            echo "RELEASABILITY_PATTERNS is not set; the labstrings gate runs without a patterns file"
+            exit 0
+          fi
+          f="$RUNNER_TEMP/labstrings-patterns"
+          (umask 077 && printf '%s' "$RELEASABILITY_PATTERNS" > "$f")
+          chmod 0600 "$f"
+          echo "LABSTRINGS_PATTERNS=$f" >> "$GITHUB_ENV"
+
       - name: Run tests with coverage
         run: |
           go test -race -count=1 -timeout=900s -coverprofile=coverage.out ./...
