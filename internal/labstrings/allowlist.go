@@ -52,10 +52,9 @@ var DefaultAllowList = []AllowRule{
 // ValidateAllowList reports the first unusable entry. Called by Scan, so a
 // malformed rule fails the gate instead of quietly widening it.
 func ValidateAllowList(rules []AllowRule) error {
-	known := make(map[Class]bool, len(classes))
-	for _, c := range classes {
-		known[c] = true
-	}
+	// A rule may name a class this package names or one the loaded
+	// patterns file states.
+	known := inForce
 	for i, r := range rules {
 		switch {
 		case r.Path == "":

@@ -691,15 +691,15 @@ func TestLoadPatterns_ReadsTheFileAndNamesTheLineOfAMalformedEntry(t *testing.T)
 		}
 	}
 
-	for name, body := range map[string]string{
-		"no-tab":        "lab-host\tci-node-1\nno tab here\n",
-		"unknown-class": "lab-host\tci-node-1\nnot-a-class\tx\n",
-		"empty-regexp":  "lab-host\tci-node-1\nlab-host\t\n",
-		"bad-regexp":    "lab-host\tci-node-1\nlab-host\t(\n",
+	for name, tc := range map[string]struct{ body, field string }{
+		"no-tab":          {"lab-host\tci-node-1\nno tab here\n", "no tab here"},
+		"malformed-class": {"lab-host\tci-node-1\nNot_A.Class\tx\n", "Not_A.Class"},
+		"empty-regexp":    {"lab-host\tci-node-1\nlab-host\t\n", ""},
+		"bad-regexp":      {"lab-host\tci-node-1\nlab-host\t(ci-node\n", "(ci-node"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := filepath.Join(t.TempDir(), "patterns")
-			if err := os.WriteFile(bad, []byte(body), 0o600); err != nil {
+			if err := os.WriteFile(bad, []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			_, err := loadPatterns(bad)
@@ -713,6 +713,11 @@ func TestLoadPatterns_ReadsTheFileAndNamesTheLineOfAMalformedEntry(t *testing.T)
 			if !strings.Contains(err.Error(), bad+":2: ") {
 				t.Errorf("error %q does not name its line", err)
 			}
+			// The file holds the lab's own values: no field of it may
+			// reach the error text.
+			if tc.field != "" && strings.Contains(err.Error(), tc.field) {
+				t.Errorf("error %q quotes the line's field %q", err, tc.field)
+			}
 		})
 	}
 
@@ -721,6 +726,54 @@ func TestLoadPatterns_ReadsTheFileAndNamesTheLineOfAMalformedEntry(t *testing.T)
 	}
 	if _, err := loadPatterns(filepath.Join(dir, "missing")); err == nil {
 		t.Error("a missing patterns file is not an error")
+	}
+}
+
+func TestLoadPatterns_TakesTheFilesClassSet(t *testing.T) {
+	const extra Class = "lab-service"
+	ps, err := parsePatterns("patterns", []byte("lab-host\t(?i)\\bci-node-\\d{1,3}\\b\nlab-service\t(?i)\\bsvc\\.lab\\.example\\b\n"))
+	if err != nil {
+		t.Fatalf("parsePatterns: %v", err)
+	}
+	if len(ps) != 2 || ps[1].Class != extra {
+		t.Fatalf("got %v, want lab-host then %s", ps, extra)
+	}
+	if ps[0].Guidance != classGuidance[ClassLabHost] || ps[1].Guidance != defaultGuidance {
+		t.Errorf("guidance = %q, %q; want lab-host's, then defaultGuidance", ps[0].Guidance, ps[1].Guidance)
+	}
+
+	rule := []AllowRule{{Path: "fixtures/**", Classes: []Class{extra}, Reason: "the gate's own fixtures"}}
+	if err := ValidateAllowList(rule); err == nil {
+		t.Fatalf("a rule naming %s validated before a patterns file stated it", extra)
+	}
+	t.Cleanup(setPatterns(ps))
+	if err := ValidateAllowList(rule); err != nil {
+		t.Fatalf("a rule naming a loaded class: %v", err)
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.md"), []byte("ask svc.lab.example at 192.0.2.10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := Scan(root, []string{"notes.md"}, nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(findings) != 1 || findings[0].Class != extra {
+		t.Fatalf("findings = %v, want one %s", findings, extra)
+	}
+
+	// notes.md is a file, so a path under it fails Lstat with ENOTDIR, a
+	// ReadError: reaching the filesystem at all shows the file was read.
+	// Accepted for one loaded class of two, it is read; accepted for both,
+	// it is skipped.
+	partial := []AllowRule{{Path: "notes.md/**", Classes: []Class{extra}, Reason: "a fixture tree"}}
+	if _, err := Scan(root, []string{"notes.md/thing"}, partial); err == nil {
+		t.Error("a file accepted for only some loaded classes was not read")
+	}
+	all := []AllowRule{{Path: "notes.md/**", Classes: []Class{ClassLabHost, extra}, Reason: "a fixture tree"}}
+	if findings, err := Scan(root, []string{"notes.md/thing"}, all); err != nil || len(findings) != 0 {
+		t.Errorf("a file accepted for every loaded class: got %v, %v; want it skipped", findings, err)
 	}
 }
 
