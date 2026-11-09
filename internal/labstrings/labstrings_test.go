@@ -6,6 +6,7 @@ package labstrings
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -61,6 +62,7 @@ func writeTree(t *testing.T, files map[string]string) (string, []string) {
 }
 
 func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
+	useTestPatterns(t)
 	cases := []struct {
 		name      string
 		content   string
@@ -149,6 +151,7 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 }
 
 func TestScan_AcceptsWhatItShould(t *testing.T) {
+	useTestPatterns(t)
 	cases := []struct {
 		name    string
 		content string
@@ -198,6 +201,7 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 }
 
 func TestScan_AWaiverWithNoReasonIsNotAWaiver(t *testing.T) {
+	useTestPatterns(t)
 	root, files := writeTree(t, map[string]string{
 		"bare.md":       "Measured on gpu-host. <!-- lab-string-ok: -->\n",
 		"whitespace.md": "Measured on gpu-host. # lab-string-ok:    \n",
@@ -212,6 +216,7 @@ func TestScan_AWaiverWithNoReasonIsNotAWaiver(t *testing.T) {
 }
 
 func TestScan_AnAllowRuleAcceptsOnlyTheClassesItNames(t *testing.T) {
+	useTestPatterns(t)
 	content := "host vm-host-4 under " + ownerPathFixture + "/sources\n"
 	root, files := writeTree(t, map[string]string{"pkg/thing_test.go": content})
 
@@ -233,6 +238,7 @@ func TestScan_AnAllowRuleAcceptsOnlyTheClassesItNames(t *testing.T) {
 }
 
 func TestScan_RejectsAnUnusableAllowList(t *testing.T) {
+	useTestPatterns(t)
 	root, files := writeTree(t, map[string]string{"clean.txt": "nothing here\n"})
 	rules := []AllowRule{{Path: "**/*.go", Classes: []Class{ClassLabHost}}}
 
@@ -247,6 +253,7 @@ func TestScan_RejectsAnUnusableAllowList(t *testing.T) {
 }
 
 func TestScan_AFileDeletedFromTheWorkingTreeIsSkipped(t *testing.T) {
+	useTestPatterns(t)
 	root, files := writeTree(t, map[string]string{"present.txt": "clean\n"})
 	files = append(files, "deleted-from-the-working-tree.txt")
 
@@ -282,6 +289,7 @@ func TestScan_ABinaryFileIsScanned(t *testing.T) {
 }
 
 func TestScan_ReadsASymlinkTarget(t *testing.T) {
+	useTestPatterns(t)
 	root := t.TempDir()
 	link := filepath.Join(root, "go-truststrap")
 	if err := os.Symlink(labShareFixture+"-01/go-truststrap/", link); err != nil {
@@ -310,6 +318,7 @@ func TestScan_ReadsASymlinkTarget(t *testing.T) {
 // was skipped unscanned. The value sits past that cap, on a single line far
 // longer than any window, so only a streaming scan reaches it.
 func TestScan_AFileLargerThanAnyBufferIsScannedToItsEnd(t *testing.T) {
+	useTestPatterns(t)
 	root := t.TempDir()
 	name := "huge.txt"
 	f, err := os.Create(filepath.Join(root, name))
@@ -385,6 +394,7 @@ func TestScanStream_AWaiverAnywhereInALongLineCoversAllOfIt(t *testing.T) {
 }
 
 func TestScanStream_AReadFailureIsATypedError(t *testing.T) {
+	useTestPatterns(t)
 	cause := errors.New("device gone")
 	_, err := scanStream("f", iotest.ErrReader(cause), nil)
 	var readErr *ReadError
@@ -394,15 +404,24 @@ func TestScanStream_AReadFailureIsATypedError(t *testing.T) {
 }
 
 func TestPatterns_MatchesFitTheWindowOverlap(t *testing.T) {
-	for _, p := range patterns {
-		longest := p.Expr.String()
-		// Every pattern is literal text plus bounded repeats; the regexp's
-		// own source length bounds the match length from above.
-		if len(longest)+1 >= windowLookahead {
-			t.Errorf("pattern %q may produce a match longer than the %d-byte window overlap", longest, windowLookahead)
+	useTestPatterns(t)
+	for i, p := range patterns {
+		n, ok := maxMatchLen(p.Expr)
+		if !ok {
+			t.Errorf("pattern %d (%s) has an unbounded match; windows cannot guarantee to see its matches whole", i, p.Class)
+			continue
 		}
-		if strings.ContainsAny(longest, "*+") {
-			t.Errorf("pattern %q has an unbounded repeat; windows cannot guarantee to see its matches whole", longest)
+		if n+1 >= windowLookahead {
+			t.Errorf("pattern %d (%s) may produce a %d-byte match, longer than the %d-byte window overlap", i, p.Class, n, windowLookahead)
+		}
+	}
+
+	// The loader refuses a pattern the windows could not see whole.
+	for i, expr := range []string{`/home/owner.*`, `ci-node-\d+`, strings.Repeat("a", windowLookahead)} {
+		_, err := parsePatterns("long", []byte("lab-host\t"+expr+"\n"))
+		var pfe *PatternsFileError
+		if !errors.As(err, &pfe) || pfe.Line != 1 {
+			t.Errorf("over-long pattern %d: got %v, want a PatternsFileError on line 1", i, err)
 		}
 	}
 }
@@ -549,33 +568,37 @@ func TestTrackedFiles_ListsTheIndexAndRefusesADirectoryWithNoIndex(t *testing.T)
 // pattern whose Needle its own matches do not contain would be skipped for every
 // file in the tree, and the gate would pass while seeing nothing.
 func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
-	// One string per pattern that the pattern is known to match. They are the
-	// values the audit actually found, so this doubles as the record of what
-	// each rule was written for.
-	samples := map[string][]string{
-		`\b192\.168\.101\.\d{1,3}\b`:   {"198.51.100.91:3001", "at 198.51.100.51:8443"},
-		`(?i)\bvstation-\d{2}\b`:       {"agent-vm-host-4", "VSTATION-01 rebooted"},
-		`(?i)\bdellemc-\d{2}\b`:        {"runner ci-node-2", "DELLEMC-01"},
-		`(?i)\bgodlike(\.internal)?\b`: {"on gpu-host", "http://GODLIKE.internal:8077"},
-		`(?i)/home/jhahn\b`:            {ownerPathFixture + "/sources"},        // lab-string-ok: sample for the owner-path rule
-		`(?i)/mnt/vstation`:            {"/mnt/" + "vstation" + "-01/go-qrdb"}, // lab-string-ok: sample for the owner-path rule
+	useTestPatterns(t)
+	// Strings each test pattern is known to match, keyed by the pattern's
+	// index in testPatternsFile. Subtests are named by index and class, never
+	// by expression, so a real patterns file never reaches a test log.
+	samples := map[int][]string{
+		0: {"198.51.100.91:3001", "at 198.51.100.51:8443"},
+		1: {"runner ci-node-2", "CI-NODE-01"},
+		2: {"agent-vm-host-4", "VM-HOST-01 rebooted"},
+		3: {"on gpu-host", "http://GPU-HOST.internal:8077"},
+		4: {ownerPathFixture + "/sources"},
+		5: {labShareFixture + "-01/go-qrdb"},
+	}
+	if len(samples) != len(patterns) {
+		t.Fatalf("%d samples for %d test patterns: keep them in step", len(samples), len(patterns))
 	}
 
-	for _, p := range patterns {
-		t.Run(p.Expr.String(), func(t *testing.T) {
+	for i, p := range patterns {
+		t.Run(fmt.Sprintf("%d-%s", i, p.Class), func(t *testing.T) {
 			if p.Needle == "" {
 				t.Fatal("pattern has no sieve needle")
 			}
 			if p.Needle != strings.ToLower(p.Needle) {
 				t.Errorf("needle %q is not lowercase; the sieve folds case before searching", p.Needle)
 			}
-			got, ok := samples[p.Expr.String()]
+			got, ok := samples[i]
 			if !ok {
 				t.Fatalf("no sample for this pattern: add one so its needle stays honest")
 			}
 			for _, sample := range got {
 				if !p.Expr.MatchString(sample) {
-					t.Errorf("%q does not match its own sample %q", p.Expr, sample)
+					t.Errorf("pattern %d does not match its own sample %q", i, sample)
 				}
 				if !strings.Contains(strings.ToLower(sample), p.Needle) {
 					t.Errorf("sample %q matches but does not contain needle %q: the sieve would skip it", sample, p.Needle)
@@ -586,6 +609,7 @@ func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
 }
 
 func TestScan_AMinifiedLineIsQuotedBounded(t *testing.T) {
+	useTestPatterns(t)
 	long := "const x=\"" + strings.Repeat("padding;", 200) + "gpu-host\";"
 	root, files := writeTree(t, map[string]string{"dist/bundle.js": long + "\n"})
 
@@ -606,17 +630,10 @@ func TestScan_AMinifiedLineIsQuotedBounded(t *testing.T) {
 }
 
 func TestScan_AFileWhoseEveryClassIsAllowedIsNeverRead(t *testing.T) {
-	every := make([]Class, 0, len(patterns))
-	seen := map[Class]bool{}
-	for _, p := range patterns {
-		if !seen[p.Class] {
-			seen[p.Class] = true
-			every = append(every, p.Class)
-		}
-	}
+	useTestPatterns(t)
 	rules := []AllowRule{{
 		Path:    "vendored/**",
-		Classes: every,
+		Classes: append([]Class(nil), classes...),
 		Reason:  "a tree this repository does not author and does not publish edits to",
 	}}
 
@@ -628,5 +645,57 @@ func TestScan_AFileWhoseEveryClassIsAllowedIsNeverRead(t *testing.T) {
 	}
 	if len(findings) != 0 {
 		t.Fatalf("expected no findings, got %v", findings)
+	}
+}
+
+func TestLoadPatterns_ReadsTheFileAndNamesTheLineOfAMalformedEntry(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "patterns")
+	if err := os.WriteFile(good, []byte("# comment\n\nlab-host\t(?i)\\bci-node-\\d{1,3}\\b\r\nowner-path\t(?i)/home/owner\\b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := loadPatterns(good)
+	if err != nil {
+		t.Fatalf("loadPatterns: %v", err)
+	}
+	if len(ps) != 2 || ps[0].Class != ClassLabHost || ps[1].Class != ClassOwnerPath {
+		t.Fatalf("got %d patterns %v, want lab-host then owner-path", len(ps), ps)
+	}
+	for i, p := range ps {
+		if p.Needle == "" || p.Guidance == "" {
+			t.Errorf("pattern %d (%s) has no needle or no guidance", i, p.Class)
+		}
+	}
+
+	for name, body := range map[string]string{
+		"no-tab":        "lab-host\tci-node-1\nno tab here\n",
+		"unknown-class": "lab-host\tci-node-1\nnot-a-class\tx\n",
+		"empty-regexp":  "lab-host\tci-node-1\nlab-host\t\n",
+		"bad-regexp":    "lab-host\tci-node-1\nlab-host\t(\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := filepath.Join(t.TempDir(), "patterns")
+			if err := os.WriteFile(bad, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadPatterns(bad)
+			var pfe *PatternsFileError
+			if !errors.As(err, &pfe) {
+				t.Fatalf("got %v, want a PatternsFileError", err)
+			}
+			if pfe.Line != 2 || pfe.Path != bad {
+				t.Errorf("error names %s line %d, want %s line 2", pfe.Path, pfe.Line, bad)
+			}
+			if !strings.Contains(err.Error(), bad+":2: ") {
+				t.Errorf("error %q does not name its line", err)
+			}
+		})
+	}
+
+	if ps, err := loadPatterns(""); ps != nil || err != nil {
+		t.Errorf("no patterns file: got %v, %v; want nothing and no error", ps, err)
+	}
+	if _, err := loadPatterns(filepath.Join(dir, "missing")); err == nil {
+		t.Error("a missing patterns file is not an error")
 	}
 }
