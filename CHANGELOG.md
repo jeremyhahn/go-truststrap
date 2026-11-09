@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 - **The releasability gate no longer quotes what it finds.** A
   `labstrings` finding renders its path, line and class only; the matched text
   and the line around it stay out of the report and the CI log.
+- **The releasability gate checks its patterns file before reading it.** The
+  path in `LABSTRINGS_PATTERNS` must be absolute and name a regular file (a
+  symlink is refused) of at most 1 MiB.
 
 ## [0.6.0-alpha] - 2026-10-08
 

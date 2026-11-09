@@ -723,3 +723,34 @@ func TestLoadPatterns_ReadsTheFileAndNamesTheLineOfAMalformedEntry(t *testing.T)
 		t.Error("a missing patterns file is not an error")
 	}
 }
+
+func TestLoadPatterns_RefusesAPathThatIsNotAnAbsoluteRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "patterns")
+	if err := os.WriteFile(good, []byte("lab-host\tci-node-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(good, link); err != nil {
+		t.Fatal(err)
+	}
+	big := filepath.Join(dir, "big")
+	if err := os.WriteFile(big, make([]byte, maxPatternsFileSize+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"relative":  "patterns",
+		"directory": dir,
+		"symlink":   link,
+		"too-large": big,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if ps, err := loadPatterns(path); err == nil {
+				t.Errorf("loadPatterns(%s) = %d patterns, no error; want refused", name, len(ps))
+			}
+		})
+	}
+	if _, err := loadPatterns(filepath.Join(dir, ".", "patterns")); err != nil {
+		t.Errorf("an absolute path to a regular file is refused: %v", err)
+	}
+}

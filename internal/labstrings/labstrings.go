@@ -162,6 +162,10 @@ type Pattern struct {
 // down in it.
 const PatternsEnv = "LABSTRINGS_PATTERNS"
 
+// maxPatternsFileSize caps the patterns file: it holds a few dozen lines, and
+// a file far larger than that is not the one the operator meant to name.
+const maxPatternsFileSize = 1 << 20
+
 // patterns is the rule set, loaded once at startup from the file PatternsEnv
 // names. patternsErr is the loader's error, which Scan and ScanRepo return.
 //
@@ -213,7 +217,24 @@ func loadPatterns(path string) ([]Pattern, error) {
 	if path == "" {
 		return nil, nil
 	}
-	data, err := os.ReadFile(path) // #nosec G304 -- the path is the operator's own patterns file
+	// The path comes from the environment, so it is checked before it is
+	// read: an absolute path to a regular file (a symlink is refused, not
+	// followed) no larger than a patterns file has any reason to be.
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return nil, fmt.Errorf("labstrings: patterns file %s: not an absolute path", clean)
+	}
+	info, err := os.Lstat(clean) // #nosec G703 -- a stat of the cleaned absolute path, to validate it
+	if err != nil {
+		return nil, fmt.Errorf("labstrings: patterns file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("labstrings: patterns file %s: not a regular file", clean)
+	}
+	if info.Size() > maxPatternsFileSize {
+		return nil, fmt.Errorf("labstrings: patterns file %s: larger than %d bytes", clean, maxPatternsFileSize)
+	}
+	data, err := os.ReadFile(clean) // #nosec G304 G703 -- the operator's own patterns file, validated above
 	if err != nil {
 		return nil, fmt.Errorf("labstrings: patterns file: %w", err)
 	}
