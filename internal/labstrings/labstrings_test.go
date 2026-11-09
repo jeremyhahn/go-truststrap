@@ -14,9 +14,32 @@ import (
 	"testing/iotest"
 )
 
-// ownerPathFixture is the owner home prefix this gate bans, assembled at runtime
-// so the fixture does not itself have to be waived on every line that uses it.
-var ownerPathFixture = "/home/" + "jhahn" // lab-string-ok: fixture for the owner-path rule
+// testPatternsFile is the neutral stand-in for the lab's untracked patterns
+// file: the same classes and shapes, with values that name no real machine.
+const testPatternsFile = "# neutral test patterns\n" +
+	"lab-address\t\\b198\\.51\\.100\\.\\d{1,3}\\b\n" +
+	"lab-host\t(?i)\\bci-node-\\d{1,3}\\b\n" +
+	"lab-host\t(?i)\\bvm-host-\\d{1,3}\\b\n" +
+	"lab-host\t(?i)\\bgpu-host(\\.internal)?\\b\n" +
+	"owner-path\t(?i)/home/owner\\b\n" +
+	"owner-path\t(?i)/mnt/labshare\n"
+
+// useTestPatterns installs the neutral patterns for the length of the test and
+// restores the previous ones when it ends.
+func useTestPatterns(t *testing.T) {
+	t.Helper()
+	ps, err := parsePatterns("testPatternsFile", []byte(testPatternsFile))
+	if err != nil {
+		t.Fatalf("parse the test patterns: %v", err)
+	}
+	t.Cleanup(setPatterns(ps))
+}
+
+// ownerPathFixture is the owner home prefix the test patterns ban.
+const ownerPathFixture = "/home/owner"
+
+// labShareFixture is the network mount prefix the test patterns ban.
+const labShareFixture = "/mnt/labshare"
 
 // writeTree writes files into a temporary directory and returns the root plus
 // the file list in the form Scan takes.
@@ -54,9 +77,9 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 		},
 		{
 			name:      "fleet hostname in a doc",
-			content:   "# Runbook\n\nRun it on GODLIKE first.\n",
+			content:   "# Runbook\n\nRun it on GPU-HOST first.\n",
 			wantClass: ClassLabHost,
-			wantMatch: "GODLIKE",
+			wantMatch: "GPU-HOST",
 			wantLine:  3,
 		},
 		{
@@ -82,9 +105,9 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 		},
 		{
 			name:      "lab NFS mount in a script default",
-			content:   "QRDB=${QRDB:-/mnt/" + "vstation" + "-01/go-qrdb}\n", // lab-string-ok: fixture for the owner-path rule
+			content:   "QRDB=${QRDB:-" + labShareFixture + "-01/go-qrdb}\n",
 			wantClass: ClassOwnerPath,
-			wantMatch: "/mnt/" + "vstation",
+			wantMatch: labShareFixture,
 			wantLine:  1,
 		},
 	}
@@ -132,7 +155,7 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 	}{
 		{
 			name:    "documentation addresses",
-			content: "dial 198.51.100.7:8443 or 192.0.2.10 or 203.0.113.4\n",
+			content: "dial 192.0.2.7:8443 or 192.0.2.10 or 203.0.113.4\n",
 		},
 		{
 			name:    "RFC 1918 literals that are not the fleet subnet",
@@ -156,7 +179,7 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 		},
 		{
 			name:    "a hostname that merely contains a fleet name as a substring",
-			content: "ungodlikeness is not a host, and vstation-0 has no second digit\n",
+			content: "ungpu-hostness is not a host, and vm-host-x has no number\n",
 		},
 	}
 
@@ -240,7 +263,8 @@ func TestScan_AFileDeletedFromTheWorkingTreeIsSkipped(t *testing.T) {
 // the fleet passed the gate because anything with a NUL near its start was
 // skipped as binary.
 func TestScan_ABinaryFileIsScanned(t *testing.T) {
-	addr := "192.168." + "101.51" // lab-string-ok: fixture for the lab-address rule
+	useTestPatterns(t)
+	addr := "198.51.100.51"
 	root, files := writeTree(t, map[string]string{
 		"assets/capture.bin": addr + "\x00\x01\x02 more bytes\n",
 	})
@@ -260,7 +284,7 @@ func TestScan_ABinaryFileIsScanned(t *testing.T) {
 func TestScan_ReadsASymlinkTarget(t *testing.T) {
 	root := t.TempDir()
 	link := filepath.Join(root, "go-truststrap")
-	if err := os.Symlink("/mnt/"+"vstation"+"-01/go-truststrap/", link); err != nil { // lab-string-ok: fixture for the owner-path rule
+	if err := os.Symlink(labShareFixture+"-01/go-truststrap/", link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 
@@ -298,7 +322,7 @@ func TestScan_AFileLargerThanAnyBufferIsScannedToItsEnd(t *testing.T) {
 			t.Fatalf("write: %v", err)
 		}
 	}
-	host := "god" + "like" // lab-string-ok: fixture for the lab-host rule
+	host := "gpu-host"
 	if _, err := f.WriteString(" " + host + " \n"); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -322,7 +346,8 @@ func TestScan_AFileLargerThanAnyBufferIsScannedToItsEnd(t *testing.T) {
 // it, or ending on it is reported exactly once and whole, and a digit glued to
 // its front across the boundary still defeats the word boundary.
 func TestScanStream_AMatchIsReportedOnceAtEveryWindowBoundary(t *testing.T) {
-	addr := "192.168." + "101.51" // lab-string-ok: fixture for the lab-address rule
+	useTestPatterns(t)
+	addr := "198.51.100.51"
 	for _, boundary := range []int{readChunk, 2*readChunk - windowLookbehind - windowLookahead} {
 		for off := boundary - len(addr) - 2; off <= boundary+2; off++ {
 			line := []byte(strings.Repeat("x", off) + " " + addr + " " + strings.Repeat("y", readChunk))
@@ -347,7 +372,8 @@ func TestScanStream_AMatchIsReportedOnceAtEveryWindowBoundary(t *testing.T) {
 }
 
 func TestScanStream_AWaiverAnywhereInALongLineCoversAllOfIt(t *testing.T) {
-	host := "god" + "like" // lab-string-ok: fixture for the lab-host rule
+	useTestPatterns(t)
+	host := "gpu-host"
 	long := host + " " + strings.Repeat("z", 3*readChunk) + " " + waiverPrefix + " provenance\n" + host + "\n" + host + "\n"
 	findings, err := scanStream("f", strings.NewReader(long), nil)
 	if err != nil {

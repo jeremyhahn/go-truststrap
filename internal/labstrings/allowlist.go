@@ -52,9 +52,9 @@ var DefaultAllowList = []AllowRule{
 // ValidateAllowList reports the first unusable entry. Called by Scan, so a
 // malformed rule fails the gate instead of quietly widening it.
 func ValidateAllowList(rules []AllowRule) error {
-	known := map[Class]bool{}
-	for _, p := range patterns {
-		known[p.Class] = true
+	known := make(map[Class]bool, len(classes))
+	for _, c := range classes {
+		known[c] = true
 	}
 	for i, r := range rules {
 		switch {
@@ -97,7 +97,7 @@ func validatePattern(pattern string) error {
 // Patterns are already validated by the time this runs, so a malformed pattern
 // cannot silently match nothing.
 func acceptedClasses(rules []AllowRule, name string) map[Class]bool {
-	accepted := make(map[Class]bool, len(patterns))
+	accepted := make(map[Class]bool, len(classes))
 	for _, r := range rules {
 		ok, err := matchSegments(strings.Split(r.Path, "/"), strings.Split(name, "/"))
 		if err != nil || !ok {

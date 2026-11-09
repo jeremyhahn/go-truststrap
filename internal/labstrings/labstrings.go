@@ -57,6 +57,20 @@
 //
 // A forbidden FILE has no waiver: the fix is to untrack it.
 //
+// THE PATTERNS FILE. The lab's own values cannot be written down in the tree
+// this gate keeps them out of, so the patterns live in an untracked file whose
+// path is in the LABSTRINGS_PATTERNS environment variable (PatternsEnv). It is
+// read once, at startup. Each line is
+//
+//	class<TAB>regexp
+//
+// where class is lab-address, lab-host or owner-path and regexp is RE2 syntax
+// (regexp.Compile). Blank lines and lines starting with # are skipped. The
+// literal every match must contain, which the cheap pre-scan searches for, is
+// derived from the regexp. A malformed line is an error naming its line
+// number, and Scan and ScanRepo return it. With the variable unset there are
+// no lab patterns and ScanRepo reports nothing.
+//
 // WHERE THIS LIVES. A package under internal/ because it is repository tooling
 // that no consumer of this library may import, and because `make test` runs
 // `go test ./...`, so the gate runs on every unit-test pass with no Makefile
@@ -79,7 +93,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"regexp/syntax"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -101,6 +117,19 @@ const (
 	ClassOwnerPath Class = "owner-path"
 )
 
+// classes is every class this package declares. It is fixed, not derived
+// from the loaded patterns, so an allow-list rule naming a class stays valid
+// on a machine that has no patterns file.
+var classes = []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath}
+
+// classGuidance is the remediation advice for each class. The patterns file
+// carries no advice, only the class a pattern belongs to.
+var classGuidance = map[Class]string{
+	ClassLabAddress: "use an RFC 5737 documentation address (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) or a name under .example.com",
+	ClassLabHost:    "name the role, not the machine: ci-runner-01, forge.internal, truststrap.example.com",
+	ClassOwnerPath:  "make the path relative to the repository root, or use /var/lib, /srv, /home/agent",
+}
+
 // waiverPrefix marks a line whose lab value is the point of the line. The text
 // after it is the reason and must not be empty.
 const waiverPrefix = "lab-string-ok:"
@@ -118,73 +147,221 @@ type Pattern struct {
 	// contain. It is the cheap precondition the sieve uses: a substring
 	// search runs at memory bandwidth where this regexp runs at a few
 	// megabytes a second, and the whole tree has to be read on every unit
-	// test pass. A Needle that is not implied by Expr would make the gate
-	// silently blind, so TestPatterns_EveryNeedleIsImpliedByItsExpr pins it.
+	// test pass. needleOf derives it from Expr itself, so it cannot drift
+	// from the expression; an Expr with no mandatory literal gets an empty
+	// Needle, which the sieve never skips.
 	Needle string
 
 	// Guidance is what the engineer who tripped this rule should do instead.
 	Guidance string
 }
 
-// patterns is the rule set. It is a package-level var rather than a constant
-// list so a new fleet subnet or hostname is one line, and so the lab's own
-// values are written down in exactly one place in this repository.
+// PatternsEnv names the environment variable that holds the path of the
+// patterns file. The file is not tracked: the lab's own values are exactly
+// what this gate keeps out of the public tree, so they cannot be written
+// down in it.
+const PatternsEnv = "LABSTRINGS_PATTERNS"
+
+// patterns is the rule set, loaded once at startup from the file PatternsEnv
+// names. patternsErr is the loader's error, which Scan and ScanRepo return.
 //
-// Note what is NOT here: 192.168.0.0/16 at large. Tests across this tree use
-// RFC 1918 literals as opaque addresses that are never dialed, and banning the
-// whole space would bury the real findings under hundreds of them. The fleet
-// subnet is named precisely instead.
-var patterns = []Pattern{
-	{
-		Class:    ClassLabAddress,
-		Expr:     regexp.MustCompile(`\b192\.168\.101\.\d{1,3}\b`),
-		Needle:   "192.168.101.",
-		Guidance: "use an RFC 5737 documentation address (198.51.100.0/24) or a name under .example.com",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bvstation-\d{2}\b`),
-		Needle:   "vstation-",
-		Guidance: "name the role, not the machine: ci-runner-01, forge.internal, truststrap.example.com",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bdellemc-\d{2}\b`),
-		Needle:   "dellemc-",
-		Guidance: "a CI runner's own hostname is never load-bearing: ci-runner-01 reads the same",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bgodlike(\.internal)?\b`), // lab-string-ok: the hostname this rule exists to find
-		Needle:   "gpu-host",
-		Guidance: "name the role, not the machine: ci-runner-01, gpu-host.internal",
-	},
-	{
-		Class:    ClassOwnerPath,
-		Expr:     regexp.MustCompile(`(?i)/home/jhahn\b`), // lab-string-ok: the path prefix this rule exists to find
-		Needle:   "/home/jhahn",
-		Guidance: "make the path relative to the repository root, or use /var/lib, /srv, /home/agent",
-	},
-	{
-		Class:    ClassOwnerPath,
-		Expr:     regexp.MustCompile(`(?i)/mnt/vstation`), // lab-string-ok: the mount prefix this rule exists to find
-		Needle:   "/mnt/vstation",
-		Guidance: "the lab's NFS mount does not exist anywhere else; use a repository-relative path",
-	},
-}
+// Note what does not belong in that file: 192.168.0.0/16 at large. Tests
+// across this tree use RFC 1918 literals as opaque addresses that are never
+// dialed, and banning the whole space would bury the real findings under
+// hundreds of them. Name the fleet subnet precisely instead.
+var patterns, patternsErr = loadPatterns(os.Getenv(PatternsEnv))
 
 // sieveNeedles is every pattern's Needle, in the form the sieve wants them.
 // Almost no file in this tree contains a lab value, and the whole tracked tree
 // is read on every unit-test pass: settling "there is nothing here" has to be
 // cheap, and a substring search is two orders of magnitude cheaper than the
 // patterns themselves.
-var sieveNeedles = func() [][]byte {
-	needles := make([][]byte, 0, len(patterns))
-	for _, p := range patterns {
+var sieveNeedles = needlesOf(patterns)
+
+func needlesOf(ps []Pattern) [][]byte {
+	needles := make([][]byte, 0, len(ps))
+	for _, p := range ps {
 		needles = append(needles, []byte(p.Needle))
 	}
 	return needles
-}()
+}
+
+// setPatterns replaces the rule set and returns a function that restores the
+// previous one. It is the tests' hook: the real patterns are not in the tree.
+func setPatterns(ps []Pattern) (restore func()) {
+	oldPatterns, oldNeedles, oldErr := patterns, sieveNeedles, patternsErr
+	patterns, sieveNeedles, patternsErr = ps, needlesOf(ps), nil
+	return func() {
+		patterns, sieveNeedles, patternsErr = oldPatterns, oldNeedles, oldErr
+	}
+}
+
+// PatternsFileError reports a malformed line in the patterns file.
+type PatternsFileError struct {
+	Path    string
+	Line    int
+	Problem string
+}
+
+func (e *PatternsFileError) Error() string {
+	return fmt.Sprintf("labstrings: patterns file %s:%d: %s", e.Path, e.Line, e.Problem)
+}
+
+// loadPatterns reads the patterns file at path. An empty path means no file:
+// the scanner then has no lab patterns and reports nothing.
+func loadPatterns(path string) ([]Pattern, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is the operator's own patterns file
+	if err != nil {
+		return nil, fmt.Errorf("labstrings: patterns file: %w", err)
+	}
+	return parsePatterns(path, data)
+}
+
+// parsePatterns parses the patterns file format described in the package
+// documentation. path only labels errors.
+func parsePatterns(path string, data []byte) ([]Pattern, error) {
+	known := make(map[Class]bool, len(classes))
+	for _, c := range classes {
+		known[c] = true
+	}
+	var ps []Pattern
+	for i, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		class, expr, ok := strings.Cut(line, "\t")
+		if !ok {
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "want class<TAB>regexp"}
+		}
+		if !known[Class(class)] {
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "unknown class " + strconv.Quote(class)}
+		}
+		if expr == "" {
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "empty regexp"}
+		}
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: err.Error()}
+		}
+		if n, ok := maxMatchLen(re); !ok || n+1 >= windowLookahead {
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: fmt.Sprintf(
+				"a match may be longer than %d bytes; the scan windows cannot see it whole", windowLookahead-2)}
+		}
+		ps = append(ps, newPattern(Class(class), re))
+	}
+	return ps, nil
+}
+
+// newPattern builds a Pattern of class c around re, deriving its Needle and
+// its Guidance.
+func newPattern(c Class, re *regexp.Regexp) Pattern {
+	return Pattern{Class: c, Expr: re, Needle: needleOf(re), Guidance: classGuidance[c]}
+}
+
+// needleOf returns the longest literal that every match of re must contain,
+// lowercased for the case-folded sieve, or "" when re has none.
+func needleOf(re *regexp.Regexp) string {
+	tree, err := syntax.Parse(re.String(), syntax.Perl)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(mandatoryLiteral(tree.Simplify()))
+}
+
+// maxMatchLen returns the most bytes a match of re can span, and false when a
+// repeat with no upper bound makes it unbounded.
+func maxMatchLen(re *regexp.Regexp) (int, bool) {
+	tree, err := syntax.Parse(re.String(), syntax.Perl)
+	if err != nil {
+		return 0, false
+	}
+	return maxLen(tree)
+}
+
+func maxLen(re *syntax.Regexp) (int, bool) {
+	switch re.Op {
+	case syntax.OpLiteral:
+		n := 0
+		for _, r := range re.Rune {
+			n += runeLen(r, re.Flags&syntax.FoldCase != 0)
+		}
+		return n, true
+	case syntax.OpCharClass:
+		n := 0
+		for i := 1; i < len(re.Rune); i += 2 {
+			n = max(n, utf8.RuneLen(re.Rune[i]))
+		}
+		return n, true
+	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		return utf8.UTFMax, true
+	case syntax.OpCapture, syntax.OpQuest:
+		return maxLen(re.Sub[0])
+	case syntax.OpRepeat:
+		if re.Max < 0 {
+			return 0, false
+		}
+		n, ok := maxLen(re.Sub[0])
+		return n * re.Max, ok
+	case syntax.OpStar, syntax.OpPlus:
+		return 0, false
+	case syntax.OpConcat, syntax.OpAlternate:
+		total := 0
+		for _, sub := range re.Sub {
+			n, ok := maxLen(sub)
+			if !ok {
+				return 0, false
+			}
+			if re.Op == syntax.OpConcat {
+				total += n
+			} else {
+				total = max(total, n)
+			}
+		}
+		return total, true
+	}
+	// The empty-width operators: anchors and word boundaries.
+	return 0, true
+}
+
+// runeLen is the encoded length of r, or with fold set the longest encoding
+// among the runes that fold to it (k also matches the three-byte Kelvin sign).
+func runeLen(r rune, fold bool) int {
+	n := utf8.RuneLen(r)
+	if fold {
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			n = max(n, utf8.RuneLen(f))
+		}
+	}
+	return n
+}
+
+// mandatoryLiteral returns the longest literal run that every string re
+// matches contains.
+func mandatoryLiteral(re *syntax.Regexp) string {
+	switch re.Op {
+	case syntax.OpLiteral:
+		return string(re.Rune)
+	case syntax.OpCapture, syntax.OpPlus:
+		return mandatoryLiteral(re.Sub[0])
+	case syntax.OpRepeat:
+		if re.Min >= 1 {
+			return mandatoryLiteral(re.Sub[0])
+		}
+	case syntax.OpConcat:
+		best := ""
+		for _, sub := range re.Sub {
+			if lit := mandatoryLiteral(sub); len(lit) > len(best) {
+				best = lit
+			}
+		}
+		return best
+	}
+	return ""
+}
 
 // mayContainLabValue reports whether any pattern could possibly match inside
 // content. Case is folded because a hostname is as likely to appear shouted in a
@@ -293,13 +470,16 @@ func TrackedFiles(root string) ([]string, error) {
 // publish -- and anything else that cannot be read is a *ReadError, never a
 // pass.
 func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
+	if patternsErr != nil {
+		return nil, patternsErr
+	}
 	if err := ValidateAllowList(rules); err != nil {
 		return nil, err
 	}
 	var findings []Finding
 	for _, name := range files {
 		accepted := acceptedClasses(rules, name)
-		if len(accepted) == len(patterns) {
+		if len(accepted) == len(classes) {
 			// Every class this gate knows about is allowed here;
 			// reading the file cannot produce a finding.
 			continue
