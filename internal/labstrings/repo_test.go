@@ -93,6 +93,7 @@ func TestTheTrackedTreeCarriesNoForbiddenFile(t *testing.T) {
 // one of each class into a copy of the tree's own layout and asserts all three
 // come back, then asserts the same values pass once waived.
 func TestThePlantedViolationIsCaught(t *testing.T) {
+	useTestPatterns(t)
 	planted := map[string]string{
 		"cmd/truststrap/help.go": "const help = \"--server https://198.51.100.51:8443\"\n",
 		"docs/guide.md":          "Deploy it on gpu-host, then check " + ownerPathFixture + "/sources.\n",
@@ -214,6 +215,7 @@ func TestForbiddenFiles_RefusesAnUnusableRule(t *testing.T) {
 // patterns stops matching any of these, the gate has stopped doing the job it
 // was written for.
 func TestTheGateWouldHaveCaughtIssue75(t *testing.T) {
+	useTestPatterns(t)
 	cases := []struct {
 		name    string
 		file    string

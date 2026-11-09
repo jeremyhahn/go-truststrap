@@ -147,9 +147,10 @@ func TestLoadExemptions_AMissingListFailsClosed(t *testing.T) {
 // TestScan_OwnerPathsMatchInAnyCase: the rule set is case-insensitive
 // throughout, as the scope rule requires.
 func TestScan_OwnerPathsMatchInAnyCase(t *testing.T) {
+	useTestPatterns(t)
 	root, files := writeTree(t, map[string]string{
 		"a.md": strings.ToUpper(ownerPathFixture) + "/src\n",
-		"b.md": "/MNT/" + "VSTATION" + "/share\n", // lab-string-ok: fixture for the case-insensitive owner-path rule
+		"b.md": strings.ToUpper(labShareFixture) + "/share\n",
 	})
 	findings, err := Scan(root, files, DefaultAllowList)
 	if err != nil {
