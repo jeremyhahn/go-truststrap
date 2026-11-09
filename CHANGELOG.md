@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **The releasability gate checks its patterns file before reading it.** The
   path in `LABSTRINGS_PATTERNS` must be absolute and name a regular file (a
   symlink is refused) of at most 1 MiB.
+- ci: the labstrings gate fails on a push to main when RELEASABILITY_PATTERNS is empty
 
 ## [0.6.0-alpha] - 2026-10-08
 
