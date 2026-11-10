@@ -1,3 +1,9 @@
+# automerge v13.2 (2026-11-10, Company Agent m2355 item 2a): the selected
+# approver list, AUTOMERGE_APPROVERS_ONLY when set and AUTOMERGE_APPROVERS
+# otherwise, must be a non-empty JSON array of strings before any PR is
+# evaluated, or the job fails closed. v13.1 validated only the override, so a
+# scalar AUTOMERGE_APPROVERS made the approval check a substring match.
+# Regression cases: testdata/automerge-approvers-tests.py.
 # automerge v13.1 (2026-11-08, Company Agent m2107 item 4): the fail-closed
 # check on the domain and the reviewer list is an if; v13 wrote it as
 # `A && B || C`, which actionlint reports as shellcheck SC2015 and a lint
@@ -219,22 +225,26 @@ jobs:
               ${3:+-d "$3"} "$REPO_API$2"
           }
           die() { echo "::error::$*" >&2; exit 1; }
-          # EFFECTIVE_APPROVERS = APPROVERS_ONLY when set and valid, else
-          # APPROVERS (v9). Unset APPROVERS_ONLY changes nothing from v7/v8.
-          # Anything else that is not a JSON array of strings, OR an empty
-          # array (nobody could approve), FAILS CLOSED: a malformed or empty
-          # variable must never silently change who can release a
-          # `code-review` PR.
-          EFFECTIVE_APPROVERS=$(jq -nc --argjson base "$APPROVERS" --arg only "${APPROVERS_ONLY:-}" '
+          # EFFECTIVE_APPROVERS = APPROVERS_ONLY when set, else APPROVERS (v9).
+          # Unset APPROVERS_ONLY changes nothing from v7/v8. v13.2: the
+          # SELECTED list, whichever it is, must be a non-empty JSON array of
+          # strings before any PR is evaluated; anything else FAILS CLOSED. A
+          # malformed or empty variable must never silently change who can
+          # release a `code-review` PR: v13.1 checked only APPROVERS_ONLY, so
+          # a scalar APPROVERS reached `index()` below, which on a string is a
+          # substring match ("codex" admitted "code").
+          EFFECTIVE_APPROVERS=$(jq -nc --arg base "$APPROVERS" --arg only "${APPROVERS_ONLY:-}" '
               def parsed: if . == "" then "__unset__" else (try fromjson catch "__invalid__") end;
+              def checked:
+                if type != "array" then "__invalid__"
+                elif length == 0 then "__invalid__"
+                elif any(.[]; type != "string") then "__invalid__"
+                else unique end;
               ($only | parsed) as $o
-              | if $o == "__unset__" then $base
-                elif ($o | type) != "array" then "__invalid__"
-                elif ($o | length) == 0 then "__invalid__"
-                elif any($o[]; type != "string") then "__invalid__"
-                else ($o | unique) end')
+              | if $o == "__unset__" then ($base | parsed | checked)
+                else ($o | checked) end')
           [ "$EFFECTIVE_APPROVERS" != '"__invalid__"' ] ||
-            die "AUTOMERGE_APPROVERS_ONLY is set and not a non-empty JSON array of strings: ${APPROVERS_ONLY:-}"
+            die "the selected approver list (AUTOMERGE_APPROVERS_ONLY when set, else AUTOMERGE_APPROVERS) is not a non-empty JSON array of strings"
           paged() { # path out -> every page of a JSON-array endpoint, concatenated
             echo '[]' > "$2"
             local page=1 sep='?'
