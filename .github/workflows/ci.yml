@@ -353,6 +353,10 @@ jobs:
     env:
       GOMEMLIMIT: 10GiB
       GOMAXPROCS: 8
+      # InfoSec O-2: on the pool path, modules come from proxy.golang.org only
+      # (no direct fallback) and go.mod and go.sum are read-only.
+      GOPROXY: https://proxy.golang.org
+      GOFLAGS: -mod=readonly
     steps:
       - uses: actions/checkout@v6
         with:
@@ -501,6 +505,11 @@ jobs:
     # from this repository, ubuntu-latest otherwise (fork PRs). The checkout
     # persists no token on that runner.
     runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # InfoSec O-2: on the pool path, modules come from proxy.golang.org only
+    # (no direct fallback) and go.mod and go.sum are read-only.
+    env:
+      GOPROXY: https://proxy.golang.org
+      GOFLAGS: -mod=readonly
     steps:
       - uses: actions/checkout@v6
         with:
@@ -538,6 +547,11 @@ jobs:
     # from this repository, ubuntu-latest otherwise (fork PRs). The checkout
     # persists no token on that runner.
     runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    # InfoSec O-2: on the pool path, modules come from proxy.golang.org only
+    # (no direct fallback) and go.mod and go.sum are read-only.
+    env:
+      GOPROXY: https://proxy.golang.org
+      GOFLAGS: -mod=readonly
     # No `needs` (v1.14): every job starts at once; CI Gate fails closed on
     # any of them. CUSTOMIZE integration jobs follow the same rule.
     timeout-minutes: 30       # CUSTOMIZE: suite runs in ~30s; 30m is headroom
