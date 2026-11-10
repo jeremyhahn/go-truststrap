@@ -314,6 +314,13 @@ jobs:
       - name: actionlint
         run: actionlint
 
+      # automerge v13.2's approver-list check, run as the workflow runs it
+      # (Codex round 5 on #109): the handbook template's regression cases,
+      # vendored byte for byte beside the workflow they read. Both list
+      # sources, invalid and scalar lists, and the exact-login match.
+      - name: Automerge approver-list tests (vendored handbook cases)
+        run: python3 -I .github/workflows/testdata/automerge-approvers-tests.py
+
   security:
     name: Security
     runs-on: ubuntu-latest
