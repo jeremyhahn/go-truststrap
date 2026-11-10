@@ -50,8 +50,7 @@ func fakeAgentGit(args []string) int {
 		fmt.Fprintln(os.Stderr, "fake agent-git.sh:", werr)
 		return 2
 	}
-	repo := args[0]
-	gitArgs := append([]string{"-c", "user.name=agent-" + repo, "-c", "user.email=agent-" + repo + "@example.invalid"}, args[1:]...)
+	gitArgs := append([]string{"-c", "user.name=project-agent", "-c", "user.email=project-agent@example.invalid"}, args[1:]...)
 	cmd := exec.Command("git", gitArgs...) //nolint:gosec // G702: forwarding git arguments is the wrapper's whole job
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -625,11 +624,11 @@ func TestAReleaseThatShouldSucceed(t *testing.T) {
 	if typ := strings.TrimSpace(f.git(f.repo, "cat-file", "-t", "v0.5.0-alpha")); typ != "tag" {
 		t.Errorf("tag object type is %q, want an ANNOTATED tag", typ)
 	}
-	if tagger := strings.TrimSpace(f.git(f.repo, "for-each-ref", "--format=%(taggername)", "refs/tags/v0.5.0-alpha")); tagger != "agent-go-truststrap" {
-		t.Errorf("tagger is %q, want the identity wrapper's agent-go-truststrap", tagger)
+	if tagger := strings.TrimSpace(f.git(f.repo, "for-each-ref", "--format=%(taggername)", "refs/tags/v0.5.0-alpha")); tagger != "project-agent" {
+		t.Errorf("tagger is %q, want the identity wrapper's principal", tagger)
 	}
-	if committer := strings.TrimSpace(f.git(f.repo, "log", "-1", "--format=%cn")); committer != "agent-go-truststrap" {
-		t.Errorf("committer is %q, want the identity wrapper's agent-go-truststrap", committer)
+	if committer := strings.TrimSpace(f.git(f.repo, "log", "-1", "--format=%cn")); committer != "project-agent" {
+		t.Errorf("committer is %q, want the identity wrapper's principal", committer)
 	}
 	if subject := strings.TrimSpace(f.git(f.repo, "log", "-1", "--format=%s")); subject != "chore(release): v0.5.0-alpha" {
 		t.Errorf("commit subject is %q", subject)

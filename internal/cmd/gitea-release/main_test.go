@@ -49,7 +49,7 @@ func TestRun_ReadsTheCheckoutAndTheEnvironment(t *testing.T) {
 	env := map[string]string{
 		"GITHUB_SERVER_URL": srv.URL,
 		"GITHUB_REPOSITORY": "owner/repo",
-		"GITEA_TOKEN":       "t",
+		"RELEASE_TOKEN":     "t",
 		"TAG":               "v1.2.3",
 	}
 
@@ -62,7 +62,7 @@ func TestRun_ReadsTheCheckoutAndTheEnvironment(t *testing.T) {
 	}
 
 	// A missing token is refused before anything is sent.
-	delete(env, "GITEA_TOKEN")
+	delete(env, "RELEASE_TOKEN")
 	var cfgErr *gitearelease.ConfigError
 	if err := run(context.Background(), func(k string) string { return env[k] }, dir, &out); !errors.As(err, &cfgErr) {
 		t.Fatalf("err = %v, want ConfigError", err)

@@ -77,7 +77,7 @@ func (c *Config) validate() error {
 	case c.Repository == "":
 		return &ConfigError{Field: "GITHUB_REPOSITORY"}
 	case c.Token == "":
-		return &ConfigError{Field: "GITEA_TOKEN"}
+		return &ConfigError{Field: "RELEASE_TOKEN"}
 	case c.Tag == "":
 		return &ConfigError{Field: "TAG"}
 	case c.DistDir == "":

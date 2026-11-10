@@ -314,6 +314,13 @@ jobs:
       - name: actionlint
         run: actionlint
 
+      # automerge v13.2's approver-list check, run as the workflow runs it
+      # (Codex round 5 on #109): the handbook template's regression cases,
+      # vendored byte for byte beside the workflow they read. Both list
+      # sources, invalid and scalar lists, and the exact-login match.
+      - name: Automerge approver-list tests (vendored handbook cases)
+        run: python3 -I .github/workflows/testdata/automerge-approvers-tests.py
+
   security:
     name: Security
     runs-on: ubuntu-latest
@@ -549,12 +556,18 @@ jobs:
       # patterns are a secret: written to a 0600 file under RUNNER_TEMP from
       # env, never echoed and never on a command line. A fork PR has no
       # secrets; the step then writes nothing and the gate runs without a
-      # patterns file, as it does today.
+      # patterns file, as it does today. A push to main always has the
+      # secret, so an empty one there is a misconfiguration and fails the job
+      # rather than letting the gate pass without its patterns.
       - name: Stage the labstrings patterns file
         env:
           RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
         run: |
           if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+              echo "::error::RELEASABILITY_PATTERNS is empty on a push to main"
+              exit 1
+            fi
             echo "RELEASABILITY_PATTERNS is not set; the labstrings gate runs without a patterns file"
             exit 0
           fi
@@ -583,6 +596,12 @@ jobs:
       # no Gitea, no key, seconds to run.
       - name: Release recipe tests (vendored release-alpha template)
         run: make test-release-alpha
+
+      # The staged patterns file is a secret; remove it whatever the job's
+      # outcome, so nothing later on this runner can read it.
+      - name: Remove the labstrings patterns file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/labstrings-patterns"
 
   # CUSTOMIZE (repo-specific gate, kept deliberately through the v1.11 sync —
   # operator ruling on issue #39: a drift sync never deletes working

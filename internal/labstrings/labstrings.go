@@ -64,8 +64,10 @@
 //
 //	class<TAB>regexp
 //
-// where class is lab-address, lab-host or owner-path and regexp is RE2 syntax
-// (regexp.Compile). Blank lines and lines starting with # are skipped. The
+// where class is a label (a lowercase letter, then up to 31 lowercase letters,
+// digits or hyphens) and regexp is RE2 syntax (regexp.Compile). The file states
+// the classes: lab-address, lab-host and owner-path are the ones this package
+// names, with specific guidance, and any other class carries defaultGuidance. Blank lines and lines starting with # are skipped. The
 // literal every match must contain, which the cheap pre-scan searches for, is
 // derived from the regexp. A malformed line is an error naming its line
 // number, and Scan and ScanRepo return it. With the variable unset there are
@@ -95,7 +97,6 @@ import (
 	"regexp"
 	"regexp/syntax"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -117,10 +118,18 @@ const (
 	ClassOwnerPath Class = "owner-path"
 )
 
-// classes is every class this package declares. It is fixed, not derived
-// from the loaded patterns, so an allow-list rule naming a class stays valid
-// on a machine that has no patterns file.
+// classes is every class this package names, the ones with specific guidance.
+// The patterns file states the classes in force, and may name others; classes
+// is fixed, not derived from the loaded patterns, so an allow-list rule naming
+// one of these stays valid on a machine that has no patterns file.
 var classes = []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath}
+
+// classLabel is the form a class field in the patterns file must have.
+var classLabel = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// defaultGuidance is the remediation advice for a class the patterns file
+// states but this package does not name.
+const defaultGuidance = "remove the value, or replace it with a documentation value: an RFC 5737 address, a name under .example.com, or a repository-relative path"
 
 // classGuidance is the remediation advice for each class. The patterns file
 // carries no advice, only the class a pattern belongs to.
@@ -182,6 +191,32 @@ var patterns, patternsErr = loadPatterns(os.Getenv(PatternsEnv))
 // patterns themselves.
 var sieveNeedles = needlesOf(patterns)
 
+// loaded is the set of classes the loaded patterns use, and inForce is that
+// set joined with classes: the classes an allow-list rule may name.
+var loaded, inForce = classSets(patterns)
+
+// loadedClasses is the set of classes ps uses.
+func loadedClasses(ps []Pattern) map[Class]bool {
+	set := make(map[Class]bool, len(ps))
+	for _, p := range ps {
+		set[p.Class] = true
+	}
+	return set
+}
+
+// classSets returns loadedClasses(ps) and its union with classes.
+func classSets(ps []Pattern) (loaded, inForce map[Class]bool) {
+	loaded = loadedClasses(ps)
+	inForce = make(map[Class]bool, len(classes)+len(loaded))
+	for _, c := range classes {
+		inForce[c] = true
+	}
+	for c := range loaded {
+		inForce[c] = true
+	}
+	return loaded, inForce
+}
+
 func needlesOf(ps []Pattern) [][]byte {
 	needles := make([][]byte, 0, len(ps))
 	for _, p := range ps {
@@ -194,9 +229,12 @@ func needlesOf(ps []Pattern) [][]byte {
 // previous one. It is the tests' hook: the real patterns are not in the tree.
 func setPatterns(ps []Pattern) (restore func()) {
 	oldPatterns, oldNeedles, oldErr := patterns, sieveNeedles, patternsErr
+	oldLoaded, oldInForce := loaded, inForce
 	patterns, sieveNeedles, patternsErr = ps, needlesOf(ps), nil
+	loaded, inForce = classSets(ps)
 	return func() {
 		patterns, sieveNeedles, patternsErr = oldPatterns, oldNeedles, oldErr
+		loaded, inForce = oldLoaded, oldInForce
 	}
 }
 
@@ -244,10 +282,6 @@ func loadPatterns(path string) ([]Pattern, error) {
 // parsePatterns parses the patterns file format described in the package
 // documentation. path only labels errors.
 func parsePatterns(path string, data []byte) ([]Pattern, error) {
-	known := make(map[Class]bool, len(classes))
-	for _, c := range classes {
-		known[c] = true
-	}
 	var ps []Pattern
 	for i, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSuffix(raw, "\r")
@@ -258,15 +292,17 @@ func parsePatterns(path string, data []byte) ([]Pattern, error) {
 		if !ok {
 			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "want class<TAB>regexp"}
 		}
-		if !known[Class(class)] {
-			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "unknown class " + strconv.Quote(class)}
+		// The problems are fixed strings: the file holds the lab's own
+		// values, and an error quoting a field would print them.
+		if !classLabel.MatchString(class) {
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "malformed class field"}
 		}
 		if expr == "" {
 			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "empty regexp"}
 		}
 		re, err := regexp.Compile(expr)
 		if err != nil {
-			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: err.Error()}
+			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: "invalid regexp"}
 		}
 		if n, ok := maxMatchLen(re); !ok || n+1 >= windowLookahead {
 			return nil, &PatternsFileError{Path: path, Line: i + 1, Problem: fmt.Sprintf(
@@ -280,7 +316,11 @@ func parsePatterns(path string, data []byte) ([]Pattern, error) {
 // newPattern builds a Pattern of class c around re, deriving its Needle and
 // its Guidance.
 func newPattern(c Class, re *regexp.Regexp) Pattern {
-	return Pattern{Class: c, Expr: re, Needle: needleOf(re), Guidance: classGuidance[c]}
+	guidance, ok := classGuidance[c]
+	if !ok {
+		guidance = defaultGuidance
+	}
+	return Pattern{Class: c, Expr: re, Needle: needleOf(re), Guidance: guidance}
 }
 
 // needleOf returns the longest literal that every match of re must contain,
@@ -440,9 +480,11 @@ const readChunk = 64 << 10
 
 // windowLookahead is how many bytes of a window are held back for the next one
 // so that a match starting near the window's end is seen whole, with the byte
-// after it that `\b` needs. It must exceed the longest match any pattern can
-// produce plus one; TestPatterns_MatchesFitTheWindowOverlap pins that.
-const windowLookahead = 64
+// after it that `\b` needs. It is sized to the longest match of the operator's
+// patterns file (1042 bytes) plus that byte, plus one; the loader refuses a
+// file with a longer match, and TestPatterns_MatchesFitTheWindowOverlap pins
+// that for the test patterns.
+const windowLookahead = 1044
 
 // windowLookbehind is how many bytes before a window's own region are kept so
 // that a `\b` at the region's first byte sees the real byte in front of it.
@@ -502,8 +544,8 @@ func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
 	var findings []Finding
 	for _, name := range files {
 		accepted := acceptedClasses(rules, name)
-		if len(accepted) == len(classes) {
-			// Every class this gate knows about is allowed here;
+		if acceptsAll(accepted, loaded) {
+			// Every class of the loaded patterns is allowed here;
 			// reading the file cannot produce a finding.
 			continue
 		}
@@ -514,6 +556,16 @@ func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
 		findings = append(findings, found...)
 	}
 	return findings, nil
+}
+
+// acceptsAll reports whether accepted holds every class in want.
+func acceptsAll(accepted, want map[Class]bool) bool {
+	for c := range want {
+		if !accepted[c] {
+			return false
+		}
+	}
+	return true
 }
 
 // scanFile scans one tracked file. A symlink's own target is its content: that
