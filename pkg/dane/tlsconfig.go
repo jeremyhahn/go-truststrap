@@ -17,7 +17,7 @@ type TLSALookuper interface {
 	LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*TLSARecord, error)
 }
 
-// NewVerifiedTLSConfig resolves TLSA records now and returns a client config verified only by DANE; build one per connection to honour TTLs.
+// NewVerifiedTLSConfig resolves TLSA records now and returns a client config verified only by DANE; build one per connection to honor TTLs.
 func NewVerifiedTLSConfig(ctx context.Context, hostname string, port uint16, lookuper TLSALookuper) (*tls.Config, error) {
 	if lookuper == nil {
 		return nil, ErrResolverConfig
