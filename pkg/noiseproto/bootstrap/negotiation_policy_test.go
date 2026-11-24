@@ -14,16 +14,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// withNoisePlaceholder installs a placeholder Noise static key on an already
-// constructed server, past NewServer's liveness check.
-//
-// A live Noise key needs X25519 to derive its public half, and a FIPS build
-// refuses to construct one at all, so a build-independent test cannot hold a
-// real key. These tests never reach the Noise key agreement -- they probe the
-// suite policy that runs before it -- so the placeholder only has to make the
-// server hold a Noise key, which is what makes each refusal a policy decision
-// rather than a missing key. Were the key ever borrowed, it would fail that
-// one connection with enclave.ErrEnclaveDestroyed.
+// withNoisePlaceholder gives a constructed server a destroyed Noise key so policy refusals are tested without X25519.
 func withNoisePlaceholder(srv *Server) *Server {
 	srv.config.StaticKey = &noiseproto.StaticKey{}
 	return srv

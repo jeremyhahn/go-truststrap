@@ -31,18 +31,7 @@ const tempKeyPattern = ".truststrap-key-*"
 // prove an existing key file survives them.
 var createTempFile = os.CreateTemp
 
-// lockedBuffer allocates n bytes of locked, zeroed memory from the process's
-// locked-memory budget -- the one this binary installs at startup (see
-// installLockedMemoryBudget). Charging key-file scratch space to the same budget
-// as the protocol packages' key material is what makes that budget an honest
-// account of what this process locks.
-//
-// A refusal is a returned error, never a process-wide purge: the allocator
-// admits the request against its byte budget before any locked memory is asked
-// for. It arrives as a CommandError classified ErrKeyOperation and still
-// carrying the enclave error, so errors.Is reaches either -- enclave's own
-// ErrBudgetExhausted and ErrLockedMemoryUnavailable included. Callers must
-// Destroy what they get.
+// lockedBuffer allocates n zeroed bytes from the process locked-memory budget; refusal is a CommandError (ErrKeyOperation) wrapping the enclave error. Callers must Destroy the result.
 func lockedBuffer(op string, n int) (enclave.ByteAccess, error) {
 	allocator, err := enclave.ProcessAllocator()
 	if err != nil {
@@ -57,10 +46,7 @@ func lockedBuffer(op string, n int) (enclave.ByteAccess, error) {
 	return buf, nil
 }
 
-// readStaticKeyFile reads a hex-encoded Noise static private key from path.
-// The file contents are read into protected memory and wiped before returning,
-// so the private key never lands on the Go heap or in an immutable string.
-// A missing file is reported as an error wrapping os.ErrNotExist.
+// readStaticKeyFile reads a hex Noise static private key into protected memory; a missing file wraps os.ErrNotExist.
 func readStaticKeyFile(path string) (key *noiseproto.StaticKey, err error) {
 	const op = "readStaticKeyFile"
 
@@ -84,10 +70,7 @@ func readStaticKeyFile(path string) (key *noiseproto.StaticKey, err error) {
 		}
 	}()
 
-	// The read, the trim and the decode all happen inside the borrow, so the
-	// hex form never leaves the locked pages. The borrow also holds the
-	// enclave's read lock, so the deferred Destroy cannot unmap the buffer
-	// underneath the read.
+	// Read, trim and decode inside the borrow so the hex form never leaves locked pages.
 	if err := buf.WithBytes(func(b []byte) error {
 		n, readErr := io.ReadFull(f, b)
 		switch {
@@ -111,14 +94,7 @@ func readStaticKeyFile(path string) (key *noiseproto.StaticKey, err error) {
 	return key, nil
 }
 
-// writeStaticKeyFile writes key's private component to path as hex with a
-// trailing newline, using owner-only permissions. The encoded form is built in
-// protected memory and wiped once written.
-//
-// Every failure up to the rename leaves an existing key file untouched. Only
-// the closing directory sync can fail with the new key already in place; that
-// error is still returned, because at that point the key on disk is the one
-// the caller asked for but its survival of a crash is unconfirmed.
+// writeStaticKeyFile writes key's private component as hex with mode 0600 from protected memory; only the final directory sync can fail after the new key is in place.
 func writeStaticKeyFile(path string, key *noiseproto.StaticKey) (err error) {
 	const op = "writeStaticKeyFile"
 
@@ -142,18 +118,7 @@ func writeStaticKeyFile(path string, key *noiseproto.StaticKey) (err error) {
 	})
 }
 
-// writeKeyFileAtomically writes encoded to path through a temporary file in the
-// destination directory, renamed into place.
-//
-// Truncating the destination up front would destroy the server's existing
-// identity the moment anything downstream failed -- a short write, a full disk,
-// or a crash -- with no way to recover it. Any failure before the rename leaves
-// the old key file untouched, and the rename itself is atomic within a
-// filesystem.
-//
-// It is separate from writeStaticKeyFile only so that the whole write runs
-// inside the borrow that keeps the encoded key in locked memory, without the
-// file handling being nested inside a closure.
+// writeKeyFileAtomically writes through a temporary file in the destination directory and renames it into place, so a failure leaves the old key intact.
 func writeKeyFileAtomically(path string, encoded []byte) error {
 	dir := filepath.Dir(path)
 
@@ -178,8 +143,7 @@ func writeKeyFileAtomically(path string, encoded []byte) error {
 		return err
 	}
 
-	// Get the key material on disk before it is visible under the real name,
-	// so a crash cannot leave an empty file where the identity used to be.
+	// Sync the key before the rename makes it visible.
 	if err := tmp.Sync(); err != nil {
 		return err
 	}

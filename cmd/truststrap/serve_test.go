@@ -23,10 +23,7 @@ func TestLoadOrGenerateKey_InvalidHex(t *testing.T) {
 	requireCommandError(t, err, "loadOrGenerateKey")
 }
 
-// A read failure that is not os.ErrNotExist must surface as ErrKeyLoad rather
-// than falling through to key generation. Using a regular file as the parent
-// component yields ENOTDIR, which is uid-independent -- unlike a mode-0000
-// directory, which root reads straight through.
+// A read failure other than os.ErrNotExist must be ErrKeyLoad; a regular file as parent gives ENOTDIR even as root.
 func TestLoadOrGenerateKey_ReadError(t *testing.T) {
 	tmpDir := t.TempDir()
 

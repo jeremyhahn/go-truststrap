@@ -14,18 +14,7 @@ import (
 // the same shape it persists a Noise static key.
 const HexKeySize = PrivateKeySize * 2
 
-// EncodeStaticKey hex-encodes the private scalar of key into dst for persistent
-// storage. Both sides of the boundary are protected memory: the scalar is read
-// straight from the memory enclave the StaticKey owns (never crypto/ecdh's
-// PrivateKey.Bytes(), which would materialise it on the ordinary heap), and dst
-// is an enclave.ByteAccess, not an ordinary slice, for the same reason
-// NewStaticKey takes one -- the hex-encoded scalar is as sensitive as the key
-// itself. So the plaintext scalar never touches the Go heap in this package's
-// code.
-//
-// dst must be alive, at least HexKeySize bytes, and still WRITABLE -- a sized
-// enclave that has not been Frozen. It stays the caller's to seal and Destroy;
-// freezing it, once written, is the caller's call to make.
+// EncodeStaticKey hex-encodes key's scalar from its enclave into dst, a live, writable enclave of at least HexKeySize bytes that the caller seals and destroys.
 func EncodeStaticKey(dst enclave.ByteAccess, key *StaticKey) error {
 	const op = "EncodeStaticKey"
 
@@ -47,14 +36,7 @@ func EncodeStaticKey(dst enclave.ByteAccess, key *StaticKey) error {
 	})
 }
 
-// DecodeStaticKey decodes a hex-encoded P-256 scalar held in protected memory
-// and reconstructs the key pair. encoded is an enclave.ByteAccess of exactly
-// HexKeySize bytes -- the sensitive hex form never passes through an ordinary
-// heap slice or an immutable Go string. The decoded scalar is written into a
-// second enclave that is DESTROYED (wiped, unmapped, and its reservation
-// returned to the process budget) on every return path via defer, so it does not
-// linger; the only lasting copy is the one crypto/ecdh keeps internally (see
-// StaticKey). encoded stays the caller's to Destroy.
+// DecodeStaticKey decodes a HexKeySize hex scalar from an enclave into a temporary enclave destroyed on return, and builds the key pair; encoded stays the caller's.
 func DecodeStaticKey(encoded enclave.ByteAccess) (key *StaticKey, err error) {
 	const op = "DecodeStaticKey"
 
@@ -71,10 +53,7 @@ func DecodeStaticKey(encoded enclave.ByteAccess) (key *StaticKey, err error) {
 	}
 	defer joinDestroy(&err, scalar)
 
-	// The decode runs inside both borrows, so the plaintext scalar goes from one
-	// set of locked pages to the other with no heap intermediate. The borrows
-	// are closed before NewStaticKey runs: it takes its own borrow on scalar,
-	// and a second read lock taken while a writer waits would deadlock.
+	// Decode inside both borrows; close them before NewStaticKey takes its own.
 	if err := borrow(op, encoded, func(src []byte) error {
 		return borrow(op, scalar, func(dst []byte) error {
 			if _, decodeErr := hex.Decode(dst, src); decodeErr != nil {

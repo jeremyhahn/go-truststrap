@@ -227,13 +227,7 @@ func TestServer_StopIsRepeatableAfterACleanDrain(t *testing.T) {
 	}
 }
 
-// A drained server whose caller arrives with an already-expired deadline has
-// BOTH select cases ready, and Go picks between ready cases at random. Without
-// a second, non-blocking check of the drain, roughly half of these calls report
-// ErrShutdownIncomplete -- telling the caller to retain the static key's
-// protected pages for a server that has finished. The repetition is what makes
-// the assertion deterministic: one call would pass against the defect half the
-// time.
+// A drained server with an expired caller deadline has both select cases ready; repetition makes the check deterministic.
 func TestServer_StopReportsTheDrainWhenBothCasesAreReady(t *testing.T) {
 	srv := newStopTestServer(t)
 
@@ -273,9 +267,7 @@ func TestServer_IsSingleUse(t *testing.T) {
 		}
 	})
 
-	// This is the case that used to be reachable and dangerous: the surviving
-	// worker below reads the state a second run would otherwise install over,
-	// so the race detector has something to catch if Start ever relents.
+	// The surviving worker reads state a second run would overwrite, so -race catches a Start that relents.
 	t.Run("after an incomplete drain", func(t *testing.T) {
 		srv := newStopTestServer(t)
 
@@ -337,20 +329,7 @@ func TestServer_FailedStartDoesNotConsumeTheServer(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Stop(context.Background()) })
 }
 
-// Stop racing Start is the dangerous direction, and the Stop-versus-Stop tests
-// above cannot reach it. If the server ever became stoppable before its accept
-// loop was registered, a Stop could Wait on a WaitGroup of zero and return nil
-// -- which this package documents as proof that every worker exited -- while
-// Start was still launching that worker. A caller acting on that nil destroys
-// the static key's protected pages underneath it.
-//
-// This is an end-to-end guard on the observable contract, not a probe of a
-// live defect: today mu makes the interleaving unreachable, so the assertion
-// holds by construction and this test will not fail for any reordering INSIDE
-// Start's critical section. It exists to catch a future change that narrows or
-// removes that mutex. The interleaving is a narrow window, so it drives Start
-// and Stop from the same instant repeatedly rather than staging one, and runs
-// under -race, where an Add that lands after a Wait is itself reportable.
+// Stop racing Start must never return nil while a worker is still launching; run repeatedly under -race.
 func TestServer_StopRacingStartNeverReportsAFalseDrain(t *testing.T) {
 	for i := range 300 {
 		srv := newUnstartedStopTestServer(t)

@@ -14,11 +14,7 @@ import (
 	"strings"
 )
 
-// ForbiddenRule names tracked files that must never reach the public tree,
-// whatever they contain. Content scanning cannot express these: a Gradle test
-// report or an agent's settings file is a leak by what it IS, and the next copy
-// of one will carry whatever the machine that produced it had in its
-// environment.
+// ForbiddenRule names tracked files that must never reach the public tree, whatever they contain.
 type ForbiddenRule struct {
 	// Path is a slash-separated pattern, matched exactly as AllowRule.Path
 	// is: `*` within a segment, a `**` segment across any number of them.
@@ -29,10 +25,7 @@ type ForbiddenRule struct {
 	Reason string
 }
 
-// DefaultForbidden is the set of files this repository must not track. Each
-// entry is an owner ruling on #75 (2026-09-25) or the checklist item it
-// enforces; none has a waiver, because the remedy is always to untrack the
-// file.
+// DefaultForbidden is the set of files this repository must not track; none can be waived.
 var DefaultForbidden = []ForbiddenRule{
 	{
 		Path: "CLAUDE.md",
@@ -127,9 +120,7 @@ func ForbiddenFiles(files []string, rules []ForbiddenRule) ([]ForbiddenFinding, 
 	return findings, nil
 }
 
-// shellInterpreters are the interpreters whose scripts the #75 ruling removed.
-// A name rule cannot find them all: an init script or a build wrapper carries no
-// extension, so ShellScripts reads the interpreter line instead.
+// shellInterpreters are the interpreter names ShellScripts looks for in a first line.
 var shellInterpreters = map[string]bool{
 	"sh": true, "ash": true, "dash": true, "bash": true, "ksh": true,
 	"mksh": true, "zsh": true, "csh": true, "tcsh": true, "fish": true,
@@ -143,12 +134,7 @@ const shellScriptReason = "this repository carries no shell scripts (#75), " +
 // reads no more than this of an interpreter line.
 const maxShebang = 256
 
-// ShellScripts reports every tracked regular file under root whose first line
-// names a shell interpreter, directly (`#!/bin/sh`) or through env
-// (`#!/usr/bin/env bash`). It complements the `*.sh` name rule in
-// DefaultForbidden, which cannot see a script with no extension. A file listed
-// but absent from the work tree, a symlink and anything that is not a regular
-// file are skipped: none of them is a script this tree ships.
+// ShellScripts reports every tracked regular file whose first line names a shell interpreter, directly or through env; absent files and symlinks are skipped.
 func ShellScripts(root string, files []string) ([]ForbiddenFinding, error) {
 	var findings []ForbiddenFinding
 	for _, name := range files {

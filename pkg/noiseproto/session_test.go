@@ -42,13 +42,7 @@ func benchHandshake(b *testing.B, initiator, responder *Session) {
 		b.Fatalf("responder InitHandshake: %v", err)
 	}
 
-	// Deliver every message to the other peer until both sessions report
-	// completion. A step's done flag describes only the peer that took it:
-	// NK completes on the responder's write before the initiator has read
-	// message 2, and XX completes on the initiator's write before the
-	// responder has read message 3, so the loop runs on both peers' state.
-	// maxHandshakeTurns bounds the loop so a stuck handshake fails the
-	// benchmark instead of spinning.
+	// Deliver messages until both peers report completion, bounded by maxHandshakeTurns.
 	const maxHandshakeTurns = 4
 	msg, _, err := initiator.HandshakeMessage(nil)
 	if err != nil {

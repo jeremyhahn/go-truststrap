@@ -220,8 +220,7 @@ func TestEmbeddedBootstrapper_FetchCABundle_InvalidPEM(t *testing.T) {
 }
 
 func TestEmbeddedBootstrapper_FetchCABundle_InvalidCertDER(t *testing.T) {
-	// A CERTIFICATE PEM block with invalid DER data should cause parsePEM
-	// to return an error, which is then wrapped by FetchCABundle.
+	// Invalid DER in a CERTIFICATE block must make FetchCABundle fail.
 	invalidPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: []byte("not valid DER"),

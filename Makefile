@@ -1,86 +1,21 @@
 # go-truststrap Makefile
 # PKI trust bootstrap library
 
-# ---- release wiring for the vendored fleet template (#24) ----
-#
-# make/release-alpha.mk (included at the end of this file) IS the company
-# template `software/templates/make/release-alpha.mk`, vendored BYTE-FOR-BYTE.
-# Nothing in that file is edited here and nothing should be: adopting a newer
-# revision has to stay a file swap, and local edits are what turned one shared
-# recipe into sixteen divergent ones. Everything this repository has to say
-# about its own release is said through the four variables it reads, below.
-#
-# It lives at the TOP of the Makefile for one measured reason. A variable set
-# on the make COMMAND LINE is auto-exported into every subprocess environment,
-# and BUILDING that environment expands it — so a `$(shell ...)` payload in one
-# runs without the Makefile ever naming the variable. The template closes that
-# with `unexport`, but a directive cannot protect what ran BEFORE the file
-# carrying it was included, and this Makefile evaluates `$(shell ...)` while
-# parsing (BUILD_VERSION, the tool versions, AGENT_GIT itself). With the
-# `unexport` only inside the include — hundreds of lines down — `make version
-# 'RELEASE_REMOTE=$(shell id >&2)x'` executed the payload at the first such
-# expansion (measured here on GNU Make 4.4.1; the template's own measurement
-# used a minimal Makefile with no parse-time `$(shell)`, where the include's
-# copy is enough). This is the ADOPTER's half of that guard, not a deviation:
-# the template keeps its own copy, which is the one the recipe relies on.
-#
-# Both name families are listed — the public inputs an operator sets, and the
-# internal REL_* aliases, which are just as settable from a command line.
+# Wiring for the vendored make/release-alpha.mk (never edited here); `unexport` sits at the top so command-line release variables cannot run $(shell) payloads during parsing.
 unexport VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT
 unexport REL_VERSION REL_REMOTE REL_REPO REL_AGENT_GIT
 
-# `:=`, never `?=`, and the order matters: `unexport` on an UNDEFINED variable
-# DEFINES it, empty, with origin `file` (measured, GNU Make 4.4.1), after which
-# `?=` is a no-op and every value below would silently be the empty string —
-# REPO_NAME empty enough to trip the template's own guard, which is the good
-# outcome, and RELEASE_REMOTE empty enough to trip a different one. An operator
-# value given on the command line still outranks a `:=` assignment here, which
-# is the override path the template documents.
-#
-# REPO_NAME — the literal repo name, spelled out. Not `$(PROJECT)`: the recipe
-# reads each input through `$(value ...)`, the variable's RAW text, so a
-# reference to another variable would arrive at agent-git.sh as the ten
-# characters `$(PROJECT)` and sign as a repository by that name. And never
-# `$(notdir $(CURDIR))`, which derives the signing IDENTITY from the checkout
-# directory — a worktree or CI workspace named anything else then signs and
-# attributes the release as the wrong agent. This repo's releases are cut from
-# per-task worktrees whose directory names are chosen for the task.
+# `:=`, never `?=`: `unexport` defines the variable empty, after which `?=` is a no-op.
+# REPO_NAME is the literal repository name, never derived from the checkout directory.
 REPO_NAME := go-truststrap
 
-# RELEASE_REMOTE — the Gitea remote the release is published to. `dev`:
-# version-control.md §2 (owner ruling 2026-09-01) names the Gitea remote `dev`
-# in every repository and forbids `origin` outright, which supersedes the
-# template header's 2026-08-27 `origin` measurement. The template keeps this a
-# VARIABLE rather than a constant for exactly that rollout, so adopting the
-# ruling costs this one line. A checkout that still names its remote otherwise
-# releases with `make release-alpha RELEASE_REMOTE=<name> VERSION=...`; the
-# recipe asserts the remote resolves before it trusts the answer to its
-# duplicate-tag question.
+# RELEASE_REMOTE is the remote the release tag is pushed to; override with RELEASE_REMOTE=<name>.
 RELEASE_REMOTE := dev
 
-# AGENT_GIT — the signing/identity wrapper that every git WRITE in the recipe
-# goes through; it supplies this repository's agent principal and SSH signing,
-# which `main` requires. Resolved FROM PATH, never a baked absolute path: a
-# literal path publishes a login name and one machine's directory layout out of
-# a repository that is mirrored publicly (template v2.3.6 a). Simply-expanded
-# so that `$(value AGENT_GIT)` yields a PATH — a recursive assignment would
-# hand the guard the unexpanded text `$(shell ...)`, which is not executable,
-# turning a working setup into a confusing refusal. Resolved only when the
-# operator supplied nothing; `unexport` above leaves a command-line or
-# environment value and its origin intact, so this tests what it means to.
-# Unresolvable means empty, and the template's `test -x` guard then fails
-# CLOSED before VERSION is written: never a silent unsigned release.
+# AGENT_GIT is the signing wrapper, resolved from PATH; empty fails the template's guard before VERSION is written.
 ifeq ($(filter command line environment,$(origin AGENT_GIT)),)
 AGENT_GIT := $(shell command -v agent-git.sh 2>/dev/null)
 endif
-#
-# The rest of the template's adopter checklist, worked here:
-#   - `grep -n '^VERSION' Makefile` -> nothing. The build version is
-#     BUILD_VERSION (below), renamed precisely so that a Makefile default
-#     cannot shadow `make release-alpha VERSION=vX.Y.Z-alpha` and make the
-#     "state the version explicitly" guard unreachable (template v2.3.6 b).
-#   - No nested module here (one go.mod, at the root), so there is no lockstep
-#     check to keep as a prerequisite of release-alpha.
 
 # Colors
 CYAN    := \033[36m
@@ -92,12 +27,7 @@ NC      := \033[0m
 # Project
 PROJECT     := go-truststrap
 MODULE      := github.com/jeremyhahn/go-truststrap
-# BUILD_VERSION is the UNPREFIXED version in the VERSION file
-# (release-versioning.md §2), injected into local builds. It is deliberately
-# NOT named VERSION: `make release-alpha VERSION=vX.Y.Z-alpha` takes the
-# release version as an argument, and a Makefile-level default would make the
-# "state the version explicitly" guard unreachable — a mistyped argument would
-# silently cut a release named after whatever the file already held.
+# BUILD_VERSION is the unprefixed VERSION file; not named VERSION so release-alpha's explicit VERSION argument cannot be shadowed.
 BUILD_VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.0-dev")
 BUILD_DIR   := bin
 CLI_BINARY  := $(BUILD_DIR)/truststrap
@@ -105,30 +35,13 @@ COVERAGE_DIR := coverage
 
 # Go
 GO          := go
-# NOT named GOFLAGS: that is a reserved Go environment variable, and make
-# re-exports any variable it inherited from the environment. With GOFLAGS set
-# in the environment (a common setting, e.g. -mod=mod) make handed go the value
-# below and every build died with `parsing $GOFLAGS: non-flag "CGO_ENABLED=0"`.
+# Not named GOFLAGS, a reserved Go environment variable.
 GO_ENV      := CGO_ENABLED=0
 LDFLAGS     := -ldflags="-s -w -X main.version=$(BUILD_VERSION)"
 GOTEST      := $(GO) test -count=1 -race
 GOBENCH     := $(GO) test -bench=. -benchmem -count=1
 
-# Tool pins
-# The version the ci-runner image bakes (infra/gitea/ci-runner/Dockerfile is
-# the authority; the image build fails closed if a tool's self-report
-# disagrees with its pin). It is pinned HERE so a developer's `make lint` and
-# CI's lint are the same linter: `install-tools` used to say @latest, which
-# handed whoever ran it whatever shipped that morning, and a local lint that
-# disagrees with the gate is worse than no local lint at all (#68). This pin
-# follows the image, it does not lead it — to bump, the image's pin moves
-# first. CI installs nothing: `make lint` resolves golangci-lint from PATH and
-# exits 1 when it is absent.
-#
-# The module path carries the /v2 suffix because that is where golangci-lint
-# lives since v2.0.0. The old unpinned line asked for @latest on the v1 path,
-# which resolves to v1.64.8 — so `install-tools` was not merely unpinned, it
-# could only ever fetch a linter a major version behind the gate.
+# Tool pins; golangci-lint follows the CI image's pin and lives on the /v2 module path.
 GOLANGCI_LINT_VERSION := v2.14.0
 
 # Docker
@@ -148,17 +61,7 @@ PKG_CLI        := ./cmd/truststrap/...
 # Coverage threshold
 COVERAGE_THRESHOLD := 90
 
-# Security scanner exclusions (devops.md §8 — each needs a written reason).
-# Keep this list identical to -exclude in .github/workflows/ci.yml, where the
-# long-form justifications live. Checked against the code 2026-08-14; G104 was
-# dropped in the same pass because it no longer fires anywhere in the tree.
-# G115: narrowing conversions. framing.go bounds len(data) against
-#       MaxFrameSize before the uint16 cast; the rest are operator-supplied
-#       CLI flags (--port, --selector, --matching-type), never peer input.
-# G304: os.ReadFile on operator-supplied paths. No request-derived path exists.
-# G402: the custom-verifier pattern in pkg/dane, pkg/spkipin and pkg/truststrap
-#       — WebPKI chain building is disabled and VerifyConnection performs the
-#       stronger check (TLSA match, SPKI pin, or TOFU capture) in its place.
+# gosec exclusions, kept identical to ci.yml: G115 bounded or operator-supplied conversions, G304 operator-supplied paths, G402 custom TLS verifiers in pkg/dane, pkg/spkipin and pkg/truststrap.
 GOSEC_EXCLUDE := G115,G304,G402
 
 .PHONY: all build clean deps tidy build-cli \
@@ -247,13 +150,7 @@ test-cli: ## Run CLI tests
 	@$(GOTEST) $(PKG_CLI)
 	@printf "$(GREEN)CLI tests passed$(NC)\n"
 
-# Mirrors the CI `fips` job exactly. GODEBUG=fips140=only makes the Go
-# Cryptographic Module reject non-approved algorithms instead of merely
-# permitting them, and -tags fips compiles out the Noise_NK method, whose
-# protocol-mandated X25519 the module refuses. See docs/fips.md.
-#
-# -race is deliberately omitted: this target answers "does anything on a tested
-# path use non-approved cryptography", which is what the compliance gate asks.
+# Mirrors the nightly fips job: GODEBUG=fips140=only, -tags fips, no -race; see docs/fips.md.
 test-fips: ## Run build and unit tests in FIPS 140-3 only mode
 	@printf "$(CYAN)Running FIPS 140-3 (fips140=only) build and tests...$(NC)\n"
 	@GOFIPS140=latest GODEBUG=fips140=only $(GO) build -tags fips ./...
@@ -370,10 +267,7 @@ bench-truststrap: ## Run all benchmarks
 ## Integration Tests
 ## ============================================================================
 
-# devops.md §4: `make integration-test` runs the suite in a container. The
-# suite drives a real CoreDNS, and taking that from whatever happens to be on
-# the developer's PATH is what kept it dark — green in 1.7s here, unable to run
-# anywhere else. The image bakes coredns and the source in; nothing is mounted.
+# Runs the integration suite in a container that bakes in CoreDNS and the source.
 integration-test: ## Run all integration tests (containerised)
 	@printf "$(CYAN)Building integration test image...$(NC)\n"
 	@# `docker build` does NOT inherit this shell's environment, and go.mod now
@@ -446,10 +340,7 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist (fails on unapproved
 	fi
 	@printf "$(GREEN)InsecureSkipVerify allowlist check passed$(NC)\n"
 
-# The Kotlin SDK is built with the host's Gradle rather than a checked-in
-# wrapper: the wrapper is a pair of shell scripts, and this repository carries
-# none (#75). The wrapper pinned Gradle 9.1.0; the recipe refuses an older
-# major so a stale distro package fails loudly instead of half-building.
+# Builds the Kotlin SDK with the host's Gradle (major 9 or newer).
 GRADLE ?= gradle
 GRADLE_MIN_MAJOR := 9
 
@@ -541,12 +432,7 @@ mod-verify: ## Verify module integrity against go.sum
 	@$(GO) mod verify
 	@printf "$(GREEN)Module integrity verified$(NC)\n"
 
-# Both trivy targets FAIL CLOSED (#94). Until #94 they printed "skipping" and
-# exited 0 when trivy was not on PATH, so `make security` reported a passing
-# suite on any box without the scanner — a gate that passes vacuously, which
-# devops.md counts as worse than no gate. A missing scanner is now an error
-# with the install hint; with trivy present the scanners, severities and exit
-# codes are unchanged.
+# Both trivy targets fail when trivy is not on PATH.
 TRIVY_MISSING_HINT = printf "$(RED)trivy is required but not on PATH$(NC)\n"; \
 	printf "$(YELLOW)  Install the pinned version with: make install-trivy (installs to $(TRIVY_INSTALL_DIR); put that directory on PATH)$(NC)\n"; \
 	exit 1
@@ -611,42 +497,7 @@ install-govulncheck: ## Install govulncheck vulnerability scanner
 		printf "$(GREEN)govulncheck already installed$(NC)\n"; \
 	fi
 
-# ---- pinned, checksum-verified tool installers (#75) ----
-#
-# These two recipes were scripts/install-trivy.sh and
-# scripts/install-shellcheck.sh until #75, when this repository stopped
-# carrying shell scripts (owner ruling). The behaviour moved over unchanged:
-#
-#   - The version is PINNED. A box carrying a different version is
-#     reinstalled; "some copy exists" is not the question.
-#   - The bytes are checked against a SHA-256 BEFORE anything is executed,
-#     and nothing from a download is ever run as a script. They replace
-#     `curl .../contrib/install.sh | sh`, which fetched a script from a MUTABLE
-#     ref and ran it unread -- pulling the security scanner itself through an
-#     unverified channel.
-#   - A checksum MISMATCH is refused with a supply-chain warning. Do not work
-#     around it: re-run, and if it persists, escalate before installing.
-#
-# What each checksum proves is different, and is stated rather than implied:
-#
-#   trivy       The expected SHA-256 comes from upstream's published
-#               checksums file, fetched from the same origin as the tarball.
-#               That catches corruption and tampering in transit; it is NOT a
-#               signature and does not survive a compromised release that
-#               rewrites both. Upstream's sigstore bundle
-#               (trivy_<ver>_checksums.txt.sigstore.json) is the next step and
-#               needs cosign on the runners first.
-#   shellcheck  Upstream publishes no checksums, so the SHA-256 is PINNED HERE,
-#               under review. A compromised release cannot also rewrite the
-#               expectation without a reviewed commit to this file -- which is
-#               why bumping SHELLCHECK_VERSION requires updating both hashes in
-#               the same commit; a version with no pinned hash is refused.
-#
-# The ONE trivy version declaration is .trivy-version, read here and by
-# nightly.yml's trivy-action `version:` input, so CI's trivy and a developer's
-# cannot drift. The Gitea path of nightly.yml runs `make install-trivy`, and
-# ci.yml's lint job runs `make install-shellcheck` so actionlint's SC* rules
-# actually run (without shellcheck on PATH actionlint silently disables them).
+# Pinned, checksum-verified installers: trivy is checked against upstream's checksums file, shellcheck against the hashes pinned here (bump both with SHELLCHECK_VERSION); a mismatch is refused.
 TRIVY_INSTALL_DIR      ?= $(shell $(GO) env GOPATH)/bin
 SHELLCHECK_INSTALL_DIR ?= $(shell $(GO) env GOPATH)/bin
 SHELLCHECK_VERSION     := 0.11.0
@@ -818,49 +669,18 @@ help: ## Show this help message
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "$(CYAN)%-28s$(NC) %s\n", $$1, $$2}'
 
-# Builds never resolve through a workspace: modules come from Gitea tags
-# (dependency-resolution.md §2). Immunizes against stray go.work files.
+# Builds never resolve through a workspace: GOWORK=off.
 export GOWORK=off
 
-# ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# deps-latest runs before compiling in a consumer repo; release-alpha publishes
-# this repo's next -alpha tag to the dev remote.
-# deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
-# 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
-#
-# The SUBMODULE_TAGS list is gone: this repository is a SINGLE module (one
-# go.mod, at the root), so the lockstep tag loop the old recipe ran was always
-# over an empty list — a thing to maintain and to misread, not a feature. A
-# repo that grows a nested module adds its lockstep check back as a
-# PREREQUISITE of release-alpha, where a failure aborts before any tag exists.
+# deps-latest picks the highest tag including -alpha prereleases; `go get @latest` ignores them.
 
 .PHONY: deps-latest test-release-alpha test-sdk-kotlin
 
-# The release path is the one part of this build whose failure mode is a
-# PUBLISHED tag, and a published tag is immutable (release-versioning.md §3) —
-# so it is tested rather than trusted, and what it tests is the VENDORED recipe
-# as included and wired above, reached through this Makefile. A test of a
-# re-authored copy would prove nothing about the file that actually runs. The
-# suite is hermetic: throwaway repositories, a local bare repo standing in for
-# the remote, and a fake AGENT_GIT wrapper. No network, no Gitea, no signing
-# key, and no dependence on the caller having a `dev` remote.
-#
-# It is a Go test (internal/releasealpha) since #75, when this repository
-# stopped carrying shell scripts; the fake wrapper is the test binary itself.
-# `make test` runs it too, as part of ./...; this target runs it alone.
+# Hermetic Go test (internal/releasealpha) of the vendored release recipe as included here.
 test-release-alpha: ## Test the vendored release-alpha recipe as included (hermetic)
 	@$(GO) test -count=1 ./internal/releasealpha/
 
-# `include`, not `-include`: a missing recipe must break the build loudly
-# rather than leave a Makefile with no release target and no explanation. It
-# comes after the wiring at the top of this file because the template's
-# target-specific assignments are simply-expanded, and read those values as
-# this line is parsed.
-#
-# `release-alpha` does not appear in `make help`: the template carries no `##`
-# description and adding one would be an edit to vendored text. Its usage is
-# `make release-alpha VERSION=vX.Y.Z-alpha`, and the recipe's own first guard
-# says so.
+# `include`, not `-include`: a missing recipe must break the build. Usage: make release-alpha VERSION=vX.Y.Z-alpha.
 include make/release-alpha.mk
 
 deps-latest:

@@ -1,6 +1,6 @@
 ### Added
 
-- **A public-releasability gate** (#75, owner ruling 2026-09-25).
+- **A public-releasability gate** (#75).
   `internal/labstrings` reads the git index and fails `make test` on any tracked
   line naming the private development fleet (its subnet, hostnames, or the
   owner's home and NFS paths), and on any tracked file that must never be

@@ -16,13 +16,10 @@ const (
 	// The certificate must pass PKIX validation.
 	UsageServiceCert uint8 = 1
 
-	// UsageDANETA (DANE-TA) specifies a trust anchor for the domain.
-	// PKIX validation is not required; the TLSA record itself establishes trust.
-	// This is the primary use case for go-xkms's CA integration.
+	// UsageDANETA (DANE-TA) specifies a trust anchor; the TLSA record itself establishes trust.
 	UsageDANETA uint8 = 2
 
-	// UsageDANEEE (DANE-EE) pins a specific end-entity certificate.
-	// PKIX validation is not required; the TLSA record itself establishes trust.
+	// UsageDANEEE (DANE-EE) pins an end-entity certificate; the TLSA record itself establishes trust.
 	UsageDANEEE uint8 = 3
 )
 
@@ -60,8 +57,7 @@ type TLSARecord struct {
 	// MatchingType is the Matching Type field (0-2).
 	MatchingType uint8
 
-	// CertData is the Certificate Association Data: a hash digest or raw
-	// certificate/SPKI bytes depending on MatchingType.
+	// CertData is the association data: a digest or raw certificate/SPKI bytes per MatchingType.
 	CertData []byte
 }
 

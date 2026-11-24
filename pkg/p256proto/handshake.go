@@ -21,40 +21,18 @@ type Initiator struct {
 	destroyed bool
 }
 
-// Destroy releases the handshake's locked key-schedule memory.
-//
-// A handshake owns locked pages from the moment it is constructed, and locked
-// memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the garbage
-// collector does not reclaim. **Every Initiator must be destroyed**, so the
-// idiomatic use is a deferred call right after construction:
-//
-//	i, err := NewInitiator(responderStatic)
-//	if err != nil {
-//		return err
-//	}
-//	defer i.Destroy()
-//
-// Destroy is idempotent and safe on a nil receiver, so deferring it costs
-// nothing when the handshake also completes or fails on its own -- both of
-// those already release the schedule.
+// Destroy releases the handshake's locked key schedule; defer it after NewInitiator. Idempotent and nil-safe.
 func (i *Initiator) Destroy() {
 	if i == nil {
 		return
 	}
 
-	// Latch BEFORE releasing. Nothing may read these buffers afterwards, so a
-	// later handshake call must be refused outright rather than proceeding to
-	// generate an ephemeral, run ECDH and reach the key schedule -- which is
-	// secret-bearing work on an object the caller has explicitly discarded,
-	// and which surfaces as a misleading ErrCipher instead of a lifecycle
-	// error.
+	// Latch before releasing so later calls fail with a lifecycle error.
 	i.destroyed = true
 	i.sym.Destroy()
 }
 
-// unusable reports why this handshake can no longer be used, or nil if it can.
-// Both terminal states answer with ErrHandshakeState: from a caller's point of
-// view a spent handshake is a spent handshake, and the detail says which.
+// unusable reports why this handshake can no longer be used (ErrHandshakeState), or nil.
 func (i *Initiator) unusable(op string) error {
 	switch {
 	case i.destroyed:
@@ -66,10 +44,7 @@ func (i *Initiator) unusable(op string) error {
 	return nil
 }
 
-// fail latches a terminal failure: the key schedule is released immediately
-// rather than waiting for a caller to notice, and any later call reports that
-// this handshake is spent. Guard errors do NOT come through here -- a
-// caller-ordering mistake must not destroy a handshake that is still valid.
+// fail latches a terminal failure and releases the key schedule; guard errors do not come here.
 func (i *Initiator) fail(err error) error {
 	i.failed = true
 	i.sym.Destroy()
@@ -77,23 +52,14 @@ func (i *Initiator) fail(err error) error {
 	return err
 }
 
-// NewInitiator prepares a handshake against a responder whose static public
-// key the caller already holds, as PublicKeySize uncompressed bytes.
-//
-// The responder's static public key is mixed into the transcript before
-// anything else, so an initiator provisioned with the WRONG key diverges from
-// the responder at message zero and the handshake fails at a tag check rather
-// than completing against an impostor.
+// NewInitiator prepares a handshake against the responder static public key (PublicKeySize bytes); a wrong key fails at the first tag check.
 func NewInitiator(responderStatic []byte) (*Initiator, error) {
 	responder, err := decodePublicKey("NewInitiator", responderStatic)
 	if err != nil {
 		return nil, err
 	}
 
-	// The initiator's key schedule is locked here rather than deferred: its
-	// handshake is outbound and not reachable by unauthenticated peers, so
-	// there is nothing to defer it past. A locked-memory refusal is reported as
-	// ErrProtectedMemory instead of ending the process (see protected.go).
+	// The initiator locks its key schedule now; refusal is ErrProtectedMemory.
 	sym, err := newSymmetricState("NewInitiator")
 	if err != nil {
 		return nil, err
@@ -103,9 +69,7 @@ func NewInitiator(responderStatic []byte) (*Initiator, error) {
 	return &Initiator{sym: sym, responder: responder}, nil
 }
 
-// WriteMessage1 produces message 1: version, suite, the initiator's ephemeral
-// public key, and a tag over the transcript keyed by the es agreement. The tag
-// is what proves to the responder that the initiator addressed THIS responder.
+// WriteMessage1 produces version, suite, the ephemeral public key and a tag keyed by the es agreement.
 func (i *Initiator) WriteMessage1() ([]byte, error) {
 	if err := i.unusable("WriteMessage1"); err != nil {
 		return nil, err
@@ -225,26 +189,7 @@ type Responder struct {
 	destroyed bool
 }
 
-// Destroy releases the handshake's locked key-schedule memory, returning its
-// reservation to the process's locked-memory budget.
-//
-// A responder locks nothing until ReadMessage1 has been admitted for a
-// structurally valid message 1 (see NewResponder and protected.go), so a bare or
-// abandoned connection pins no locked pages and needs no Destroy for memory's
-// sake. Once a schedule IS locked -- during and after a valid ReadMessage1 --
-// locked memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the
-// garbage collector does not reclaim, and the budget stays charged until the
-// pages go back. Callers therefore still defer Destroy on every Responder: it is
-// the remedy for a peer that sends a valid message 1 and then abandons the
-// connection, and it is harmless on one that locked nothing.
-//
-//	r, err := NewResponder(static)
-//	if err != nil {
-//		return err
-//	}
-//	defer r.Destroy()
-//
-// Destroy is idempotent and safe on a nil receiver.
+// Destroy releases the locked key schedule and its budget reservation; defer it after NewResponder. Idempotent and nil-safe.
 func (r *Responder) Destroy() {
 	if r == nil {
 		return
@@ -275,14 +220,7 @@ func (r *Responder) fail(err error) error {
 	return err
 }
 
-// NewResponder prepares a handshake using the given long-term static key.
-//
-// It locks NO memory and does not so much as reach the process allocator. The
-// transcript is seeded and the responder's static public key is mixed into it --
-// both public operations -- but the secret key schedule is not allocated until
-// ReadMessage1 has done the cheap structural checks on the peer's message and
-// the process budget has admitted it (see protected.go). A bare or abandoned
-// connection therefore pins no locked pages.
+// NewResponder prepares a handshake with the given static key; it locks no memory until ReadMessage1 admits a valid message 1.
 func NewResponder(static *StaticKey) (*Responder, error) {
 	// Refuse a nil OR destroyed key: after Destroy the private half is gone, and
 	// a destroyed key must not authenticate. Checking alive (not just a non-nil
@@ -297,9 +235,7 @@ func NewResponder(static *StaticKey) (*Responder, error) {
 	return &Responder{sym: sym, static: static}, nil
 }
 
-// ReadMessage1 consumes message 1. It rejects a version or suite it does not
-// speak BEFORE any key agreement, and verifies the message's tag, which
-// confirms the initiator addressed this responder's static key.
+// ReadMessage1 rejects an unknown version or suite before key agreement and verifies the tag.
 func (r *Responder) ReadMessage1(msg []byte) error {
 	if err := r.unusable("ReadMessage1"); err != nil {
 		return err
@@ -327,17 +263,7 @@ func (r *Responder) ReadMessage1(msg []byte) error {
 		return r.fail(err)
 	}
 
-	// The cheap checks have passed and nothing has been locked or folded into
-	// the transcript yet. Locking the key schedule is the responder's one
-	// pre-authentication allocation -- the tag is checked below -- so it is the
-	// allocation the process's locked-memory budget has to refuse. A refusal
-	// fails THIS connection closed with ErrProtectedMemory (carrying
-	// enclave.ErrBudgetExhausted or enclave.ErrLockedMemoryUnavailable),
-	// having locked nothing and mutated no state, so a connect-cost flood
-	// costs one connection each rather than the process: no other live
-	// handshake is disturbed and nothing panics (see protected.go). A refused
-	// allocation is not this handshake's fault, so it does not latch the
-	// handshake failed.
+	// Lock the key schedule now; a budget refusal fails only this connection with ErrProtectedMemory and does not latch failure.
 	if err := r.sym.lockSchedule("ReadMessage1"); err != nil {
 		return err
 	}
@@ -346,16 +272,7 @@ func (r *Responder) ReadMessage1(msg []byte) error {
 	r.peer = peer
 	r.sym.mixHash(peer.Bytes())
 
-	// The key agreement runs inside a borrow of the static credential's
-	// protected storage. NewResponder checked the key was alive when this
-	// responder was built, and that answer is stale by the time the peer's
-	// first message arrives: the enclave can be destroyed in between -- a
-	// shutdown sweep is the realistic way -- while crypto/ecdh's own heap copy
-	// of the scalar survives it. Re-reading a predicate here would have the
-	// same problem one instruction later; the borrow is what makes the check
-	// and the use one thing. A released credential fails THIS connection with
-	// ErrProtectedMemory rather than authenticating a peer against a key the
-	// process has already wiped. See StaticKey.withScalar.
+	// Run the key agreement inside a borrow of the static key, so a wiped key fails this connection with ErrProtectedMemory.
 	var es []byte
 
 	if err := r.static.withScalar("ReadMessage1", func(priv *ecdh.PrivateKey) error {

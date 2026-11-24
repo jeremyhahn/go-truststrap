@@ -22,9 +22,7 @@ var commonRecordParams = []struct {
 	{UsageDANETA, SelectorSPKI, MatchingSHA512},     // 2 1 2
 }
 
-// GenerateTLSARecord generates a TLSA record string using recommended defaults:
-// Usage=2 (DANE-TA), Selector=1 (SPKI), MatchingType=1 (SHA-256).
-// This is the most common configuration for DANE trust anchor assertions.
+// GenerateTLSARecord generates a TLSA record string with Usage=2 (DANE-TA), Selector=1 (SPKI), MatchingType=1 (SHA-256).
 func GenerateTLSARecord(cert *x509.Certificate, hostname string, port uint16) (*TLSARecordString, error) {
 	return GenerateTLSARecordFull(cert, hostname, port, UsageDANETA, SelectorSPKI, MatchingSHA256)
 }
@@ -67,10 +65,7 @@ func GenerateTLSARecordFull(
 	}, nil
 }
 
-// GenerateCommonTLSARecords generates TLSA records for all common parameter
-// combinations using DANE-TA (Usage=2). This produces four records covering
-// both selectors (FullCert and SPKI) and both hash algorithms (SHA-256 and
-// SHA-512), allowing DNS operators to publish the most appropriate variant.
+// GenerateCommonTLSARecords generates the four DANE-TA records for both selectors and both SHA-256 and SHA-512.
 func GenerateCommonTLSARecords(cert *x509.Certificate, hostname string, port uint16) ([]*TLSARecordString, error) {
 	if cert == nil {
 		return nil, ErrInvalidCertificate

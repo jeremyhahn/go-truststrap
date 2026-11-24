@@ -1,7 +1,7 @@
 ### Changed
 
 - **BREAKING: `pkg/p256proto` holds every secret in go-enclave, and the interim
-  responder admission cap is retired** (#19, owner ruling 2026-09-22; closes the
+  responder admission cap is retired** (#19; closes the
   residual `CHANGELOG.md` deferred to this issue, and absorbs #27). The package's
   protected memory moves from `memguard` to
   `github.com/jeremyhahn/go-enclave v0.6.0-alpha` — this repository's first
@@ -121,7 +121,7 @@
   consumers see a single API break.
 
 - **Container builds can resolve internal first-party modules** (#27, absorbed
-  into #19 by the same ruling — #27 could not prove itself without the `require`
+  into #19 — #27 could not prove itself without the `require`
   this change adds). Both `Dockerfile` and `test/integration/Dockerfile` did a
   bare `go mod download`, and neither inherited the runner's `GOPRIVATE` or
   `insteadOf` rewrite, so the first `github.com/jeremyhahn/*` requirement would

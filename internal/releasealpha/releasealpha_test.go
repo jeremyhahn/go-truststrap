@@ -16,11 +16,7 @@ import (
 	"testing"
 )
 
-// fakeWrapperEnv, when set to "1", turns this test binary into the stand-in
-// for agent-git.sh: same calling convention (`agent-git.sh <repo> <git
-// args...>`), records every invocation in $AGENT_GIT_LOG, and runs git under an
-// identity derived from the repo name so a test can prove the write went
-// through it rather than through plain git.
+// fakeWrapperEnv set to "1" makes this binary stand in for agent-git.sh, logging calls to $AGENT_GIT_LOG and committing under a repo-derived identity.
 const fakeWrapperEnv = "TRUSTSTRAP_RELEASEALPHA_FAKE_AGENT_GIT"
 
 func TestMain(m *testing.M) {
@@ -83,11 +79,7 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// strippedEnv is the parent environment minus everything that would make a
-// case depend on who runs it: make's own flags (a `make ci VERSION=...` would
-// otherwise reach every nested make through MAKEFLAGS), the release inputs
-// themselves, git's repository overrides, and any config injected through
-// the environment.
+// strippedEnv is the parent environment without make flags, release inputs, git overrides and injected git config.
 func strippedEnv() []string {
 	drop := map[string]bool{
 		"MAKEFLAGS": true, "MFLAGS": true, "MAKELEVEL": true, "MAKEOVERRIDES": true, "GNUMAKEFLAGS": true,
@@ -113,8 +105,7 @@ func strippedEnv() []string {
 	)
 }
 
-// toolPath is a PATH holding make, git and the base system tools, and
-// deliberately NOT any agent-git.sh the host may carry.
+// toolPath is a PATH with make, git and base tools but no agent-git.sh.
 func toolPath(t *testing.T) string {
 	t.Helper()
 	dirs := []string{}
@@ -356,8 +347,7 @@ func (f *fixture) wrapperCalls() int {
 	return strings.Count(string(data), "\n")
 }
 
-// assertRefused is the full refusal contract: non-zero, says why, and nothing
-// -- no tag, no push, no VERSION write -- happened before the guard fired.
+// assertRefused checks non-zero exit, a reason, and no tag, push or VERSION write.
 func (f *fixture) assertRefused(out string, status int, why string) {
 	f.t.Helper()
 	if status == 0 {
@@ -378,9 +368,7 @@ func (f *fixture) assertRefused(out string, status int, why string) {
 }
 
 func TestNoVersionArgument(t *testing.T) {
-	// The guard is only reachable because the build version was renamed
-	// BUILD_VERSION when the template was adopted; a Makefile-level VERSION
-	// would shadow the argument and cut a release named after the file.
+	// Reachable only because the build version is BUILD_VERSION, not VERSION.
 	f := newRepo(t)
 	out, status := f.release()
 	f.assertRefused(out, status, "state the version explicitly")
@@ -403,19 +391,7 @@ func TestMalformedVersionsIncludingACommandSubstitution(t *testing.T) {
 }
 
 func TestMakeVariableInjectionThroughEveryReleaseInput(t *testing.T) {
-	// A command-line variable is auto-exported and EXPANDED when make builds
-	// a subprocess environment, so a $(shell ...) payload in one runs without
-	// the Makefile ever naming the variable. Two halves close that:
-	// `$(value ...)` plus `unexport` for the four public inputs, and
-	// `override` plus `unexport` for the four internal REL_* aliases -- an
-	// alias outranks a plain target-specific assignment, so without
-	// `override` an attacker simply skips the sanitiser.
-	//
-	// The window this guards is the PARSE-TIME one: the include sits hundreds
-	// of lines down, and every `$(shell ...)` evaluated before it builds an
-	// environment of its own. `make -n` cannot see any of this -- under -n no
-	// recipe runs and an injectable Makefile looks clean -- so these cases run
-	// the real thing.
+	// Command-line $(shell) payloads must not run at parse time or through the export; `make -n` cannot show this, so the real recipe runs.
 	f := newRepo(t)
 	for _, v := range []string{"VERSION", "RELEASE_REMOTE", "REPO_NAME", "AGENT_GIT", "REL_VERSION", "REL_REMOTE", "REL_REPO", "REL_AGENT_GIT"} {
 		marker := filepath.Join(f.work, "pwned-"+v)
@@ -552,12 +528,7 @@ func TestTheReleaseCommitCannotBeMade(t *testing.T) {
 }
 
 func TestPushFollowTagsCannotSmuggleOtherAnnotatedTags(t *testing.T) {
-	// `push --atomic <remote> HEAD refs/tags/<v>` names exactly two refs, but
-	// with `push.followTags = true` -- usually GLOBAL, so no repository shows
-	// any sign of it -- git ADDS every missing annotated tag reachable from
-	// the pushed commit. The recipe therefore pushes `--no-follow-tags`
-	// (template v2.3.9). The lightweight `local-only-tag` every case carries
-	// cannot catch this: follow-tags only considers ANNOTATED tags.
+	// With push.followTags=true git would add reachable annotated tags; the recipe pushes --no-follow-tags.
 	f := newRepo(t)
 	f.git(f.repo, "config", "push.followTags", "true")
 	f.git(f.repo, "tag", "-a", "unrelated-annotated", "-m", "reachable from the release commit, not part of this release")
@@ -571,12 +542,7 @@ func TestPushFollowTagsCannotSmuggleOtherAnnotatedTags(t *testing.T) {
 }
 
 func TestAChangelogHeadingInsideAFencedBlockDoesNotCount(t *testing.T) {
-	// A literal column-1 match cannot tell a quoted heading from a real
-	// section: the release would be cut and PUSHED -- immutably -- for a
-	// version the file documents nowhere. The guard follows CommonMark
-	// fences, so all three shapes below are code: a backtick fence, a tilde
-	// fence, and a four-backtick fence containing a three-backtick line,
-	// which a naive open/close toggle would treat as closed.
+	// A heading inside a fenced code block (backtick, tilde, or four-backtick around three) is not a CHANGELOG section.
 	f := newRepo(t)
 	f.write(filepath.Join(f.repo, "CHANGELOG.md"), strings.Join([]string{
 		"# Changelog", "",

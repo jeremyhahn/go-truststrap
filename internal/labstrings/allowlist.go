@@ -8,22 +8,14 @@ import (
 	"strings"
 )
 
-// AllowRule accepts one class of lab value in the files its path pattern
-// matches. It exists for the cases an inline waiver cannot reach: a whole tree
-// of them, or a file whose syntax has no comments.
-//
-// Every field is required. A rule with no reason is rejected by
-// ValidateAllowList, because the reason is the entire difference between an
-// allow-list and a blindfold.
+// AllowRule accepts one class of lab value in the files its path pattern matches; every field, including the reason, is required.
 type AllowRule struct {
 	// Path is a slash-separated pattern. `*` matches within one path
 	// segment; a `**` segment matches any number of segments, including
 	// none. An exact path matches only itself.
 	Path string
 
-	// Classes are the classes this rule accepts in those files. Naming them
-	// keeps the rule narrow: a tree allowed to mention a fleet hostname is
-	// not thereby allowed to hardcode the owner's home directory.
+	// Classes are the classes this rule accepts in those files.
 	Classes []Class
 
 	// Reason says why publishing this value is acceptable, or who owns
@@ -31,14 +23,7 @@ type AllowRule struct {
 	Reason string
 }
 
-// DefaultAllowList is the accepted set for THIS repository. Every entry is a
-// deliberate decision, and the list is meant to stay short.
-//
-// The release-readiness change (#75) removed the values themselves everywhere
-// they appeared rather than listing them here. A value that genuinely has to
-// stay is waived in place with `lab-string-ok: <reason>`, next to the line it
-// explains; an entry here is for a whole tree or a file that cannot carry a
-// comment, and it has to say why.
+// DefaultAllowList is this repository's accepted set; single lines are waived in place with `lab-string-ok: <reason>`.
 var DefaultAllowList = []AllowRule{
 	{
 		Path:    "internal/labstrings/*_test.go",
@@ -76,10 +61,7 @@ func ValidateAllowList(rules []AllowRule) error {
 	return nil
 }
 
-// validatePattern checks every segment of a path pattern up front. Matching
-// stops at the first segment that does not match, so a malformed segment
-// further along would otherwise never be evaluated -- and a pattern that can
-// never match is a rule that silently does nothing.
+// validatePattern checks every segment up front, so a pattern that can never match is rejected.
 func validatePattern(pattern string) error {
 	for _, segment := range strings.Split(pattern, "/") {
 		if segment == "**" {

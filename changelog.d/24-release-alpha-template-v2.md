@@ -40,8 +40,7 @@
   `go-truststrap` — not `$(PROJECT)`, because the recipe reads its inputs
   through `$(value ...)`, the variable's raw text, and a reference would reach
   the signing wrapper as the characters `$(PROJECT)`; `RELEASE_REMOTE` is `dev`
-  per `version-control.md` §2 (the 2026-09-01 owner ruling that names the Gitea
-  remote and forbids `origin`), which is the one-line rollout the template
+  per `version-control.md` §2, which is the one-line rollout the template
   keeps this a variable for; `AGENT_GIT` resolves from `PATH` with no absolute
   path baked in, so nothing publishes a developer's username or checkout
   layout, and an unresolvable value fails closed before `VERSION` is written.

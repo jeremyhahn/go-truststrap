@@ -18,10 +18,7 @@ import (
 // info string, or the order of the two HKDF output halves therefore turns
 // these red, which is what makes them a specification and not a mirror.
 
-// mustMixKeyChainingKey re-derives, from the formulas in
-// docs/approved-handshake.md, the chaining key a fresh state holds after one
-// mixKey over ikm. It is the test's own EXPECTATION, computed independently of
-// the code under test -- not a copy of anything read out of protected memory.
+// mustMixKeyChainingKey computes the expected chaining key after one mixKey from docs/approved-handshake.md.
 func mustMixKeyChainingKey(t *testing.T, ikm []byte) []byte {
 	t.Helper()
 
@@ -239,9 +236,7 @@ func TestSymmetricState_MixKeyAndSplitUseDistinctInfo(t *testing.T) {
 	})
 }
 
-// A fixed transcript must produce fixed keys. This pins the wire: if any part
-// of the schedule changes on BOTH sides at once the round-trip tests would
-// still pass, and only a pinned vector notices.
+// A fixed transcript must produce fixed keys: a pinned vector.
 func TestSymmetricState_KnownAnswer(t *testing.T) {
 	s := mustSymmetricState(t)
 	t.Cleanup(s.Destroy)
@@ -267,10 +262,7 @@ func TestSymmetricState_KnownAnswer(t *testing.T) {
 		wantRespToInit = "413a5011b6c746b3fce6b067015e0d94f8147ad9957adb43abb7f81dcf3a1ccd"
 	)
 
-	// The transcript hash is public, so it may be rendered. The two transport
-	// keys are not: they are compared against the DECODED expectation in
-	// place, because encoding one to a string would copy a secret out of its
-	// locked buffer into the Go heap (testing-guidelines.md).
+	// Transport keys are compared in place against the decoded expectation, never rendered.
 	if got := hex.EncodeToString(s.h[:]); got != wantH {
 		t.Errorf("h = %s, want %s", got, wantH)
 	}

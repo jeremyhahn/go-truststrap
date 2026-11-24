@@ -7,10 +7,7 @@ package p256proto
 // message is fixed length, which removes length parsing from the attack
 // surface entirely.
 const (
-	// ProtocolName seeds both the transcript hash and the chaining key, so
-	// every derived key is bound to the full algorithm identity. A peer
-	// speaking any other suite derives different keys and fails to
-	// authenticate, rather than negotiating downward.
+	// ProtocolName seeds the transcript hash and chaining key, binding every derived key to the suite.
 	ProtocolName = "TSBOOT1_P256_AESGCM_SHA256"
 
 	// Version is the protocol version carried in message 1.
@@ -30,10 +27,7 @@ const (
 	// PrivateKeySize is the length of a P-256 scalar.
 	PrivateKeySize = 32
 
-	// TagSize is cipher.NewGCMWithRandomNonce's overhead: a 12-byte random
-	// nonce the construction prepends, plus the 16-byte GCM tag. The nonce
-	// travelling on the wire is exactly what Noise forbids and why this is a
-	// separate protocol.
+	// TagSize is NewGCMWithRandomNonce's overhead: a 12-byte prepended nonce plus the 16-byte tag.
 	TagSize = 28
 
 	// Message1Size is version || suite || e_i.pub || tag.

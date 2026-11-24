@@ -19,18 +19,9 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 )
 
-// These tests exercise the byte-budget admission that closes the measured
-// connect-cost denial of service (#15/#17), now that the hand-rolled
-// concurrency cap has been retired in favour of go-enclave's allocator (#19).
-//
-// They substitute a deliberately tiny allocator for the process one. That
-// substitution is why the seam exists: the process allocator is install-once by
-// design, so it cannot be shrunk and restored around a test, and a test that
-// could reinstall it would be testing a contract the library does not have.
+// Byte-budget admission tests with a tiny substitute allocator.
 
-// scheduleCost is what one responder key schedule charges: the page-rounded
-// cost of one scheduleSize region. The allocator charges what the KERNEL
-// charges, so the arithmetic has to be in the same unit.
+// scheduleCost is the page-rounded charge for one responder key schedule.
 var scheduleCost = enclave.LockedSize(scheduleSize)
 
 // transportKeyCost is what ONE directional transport key charges. split takes
@@ -38,17 +29,7 @@ var scheduleCost = enclave.LockedSize(scheduleSize)
 // below aim at.
 var transportKeyCost = enclave.LockedSize(hashSize)
 
-// withScheduleHalves borrows a key schedule and hands fn its two halves -- the
-// chaining key and the AEAD key -- so a test can assert on them WITHOUT either
-// leaving its locked region. fn runs inside the borrow and must not retain
-// either slice.
-//
-// This is the shape every protected-memory assertion in this package takes.
-// A helper that copied the material out into an ordinary heap slice for the
-// test to look at would leave an unwipeable duplicate of a live key on the Go
-// heap, which is the thing the protected-memory mandate exists to prevent and
-// is refused outright for tests (security-review.md section 6,
-// testing-guidelines.md).
+// withScheduleHalves lends fn the chaining and AEAD keys inside the borrow; fn must not retain them.
 func withScheduleHalves(t *testing.T, s *symmetricState, fn func(ck, k []byte)) {
 	t.Helper()
 
@@ -86,10 +67,7 @@ func withBudget(t *testing.T, bytes int64) enclave.Allocator {
 	return allocator
 }
 
-// message1 produces a valid message 1 for static, and the initiator that wrote
-// it. It runs BEFORE any budget substitution in these tests, so the initiator's
-// own schedule is charged to the real process allocator and does not eat the
-// budget under test -- the responder is the side being squeezed.
+// message1 builds a valid message 1 for static before any budget substitution.
 func message1(t *testing.T, static *StaticKey) (*Initiator, []byte) {
 	t.Helper()
 
@@ -169,8 +147,7 @@ func TestResponder_ExhaustedBudgetFailsClosedWithoutDamagingActiveHandshakes(t *
 	if !errors.Is(refusal, ErrProtectedMemory) {
 		t.Fatalf("ReadMessage1 over the budget: got %v, want ErrProtectedMemory", refusal)
 	}
-	// The allocator's own sentinel is reachable too: the refusal was decided by
-	// admission, BEFORE any locked memory was requested of the kernel.
+	// The allocator's sentinel is reachable too: admission refused it.
 	if !errors.Is(refusal, enclave.ErrBudgetExhausted) {
 		t.Fatalf("ReadMessage1 over the budget: got %v, want enclave.ErrBudgetExhausted", refusal)
 	}
@@ -214,18 +191,7 @@ func TestResponder_ExhaustedBudgetFailsClosedWithoutDamagingActiveHandshakes(t *
 	}
 }
 
-// The reproduction from the issue: a flood of structurally valid, correctly
-// tagged message 1 values against a budget that holds only two of them. Every
-// refusal must be the typed exhaustion error, nothing may panic, and the budget
-// must come back to zero once the flood is released.
-//
-// The counts here are EXACT, not "at least one of each", and the coordination
-// is what makes them so. Every goroutine reports its outcome and then blocks
-// until all of them have reported, so no admitted responder can give its
-// reservation back while another is still competing for it. Without that hold
-// the scheduler is free to run the goroutines one at a time -- each admitted,
-// each releasing before the next starts -- and the test would pass with nothing
-// ever refused, which is the property it exists to check.
+// A flood of valid message 1 values against a two-schedule budget: exact refusal counts, no panic, budget back to zero; goroutines hold until all report.
 func TestResponder_FloodUnderAConstrainedBudgetRefusesWithoutPanicking(t *testing.T) {
 	static, err := GenerateStaticKey()
 	if err != nil {
@@ -572,8 +538,7 @@ func TestBorrow_ClassifiesTheCallersErrorSeparatelyFromTheEnclaves(t *testing.T)
 		if !errors.Is(err, want) || err.Error() != want.Error() {
 			t.Fatalf("got %v, want the callback's own error %v", err, want)
 		}
-		// Unchanged means UNWRAPPED as well as reachable: a borrow that rewrapped
-		// it would still satisfy errors.Is above, and would reclassify it here.
+		// The error must be returned unwrapped as well as reachable.
 		if errors.Is(err, ErrProtectedMemory) {
 			t.Fatal("the callback's error was reclassified as a locked-memory failure")
 		}
@@ -621,12 +586,7 @@ func TestLockedBuffer_ReportsAnUnreachableAllocator(t *testing.T) {
 	}
 }
 
-// This package is Layer 0 and must never reach across the process: sizing the
-// one locked-memory budget belongs to the binary, and destroying every enclave
-// in the process belongs to the binary's shutdown. A library doing either is
-// deciding for subsystems it knows nothing about (owner ruling 2026-09-22 on
-// #19). That is a rule about the SOURCE, not about behaviour, so it is checked
-// against the source: no behavioural test can prove an absence.
+// This package must never size the process budget or wipe every enclave; checked against the source.
 func TestPackage_NeverReachesAcrossTheProcess(t *testing.T) {
 	const forbidden = "enclave.SetAllocator, enclave.WipeAll"
 
@@ -692,14 +652,7 @@ func destroyOnCleanup(t *testing.T, e enclave.ByteAccess) {
 	})
 }
 
-// enclaveHolds reports whether e holds exactly want, comparing in constant time
-// UNDER the enclave's read lock -- so the material is never copied into
-// ordinary heap memory for a test to look at.
-//
-// EqualTo returns ErrEnclaveDestroyed for a destroyed enclave rather than a bare
-// false, so an assertion like "these two keys differ" cannot pass for a buffer
-// that was released instead of for one that holds different bytes. A released
-// enclave fails the test here.
+// enclaveHolds reports whether e holds exactly want, compared in constant time under the read lock; a destroyed enclave fails the test.
 func enclaveHolds(t *testing.T, e enclave.ByteAccess, want []byte) bool {
 	t.Helper()
 
@@ -752,20 +705,7 @@ func mustSymmetricState(t *testing.T) *symmetricState {
 	return s
 }
 
-// split is the one place this package takes TWO reservations in a row, so it is
-// the one place a request can be half-satisfied: the first directional
-// transport key is admitted and the second is refused. That leaves a live
-// enclave nothing will ever return unless split releases it on the way out, and
-// the budget it holds is capacity denied to every other connection for the rest
-// of the process's life.
-//
-// The exhaustion tests elsewhere cannot reach it. They size the budget so that
-// the FIRST request is refused, which never allocates anything, so deleting
-// split's cleanup leaves them all green. These two aim at the boundary
-// deliberately -- one page of headroom, exactly enough for the first key and
-// not the second -- and drive it through the public API on both sides, because
-// what a caller must be able to rely on is WriteMessage2 and ReadMessage2
-// failing closed, not an internal helper doing so.
+// split takes two reservations; these tests leave room for exactly one so WriteMessage2 and ReadMessage2 must fail closed and release the first.
 
 func TestResponder_APartiallyAllocatedSplitFailsClosedAndReleasesBoth(t *testing.T) {
 	static, err := GenerateStaticKey()
@@ -779,8 +719,7 @@ func TestResponder_APartiallyAllocatedSplitFailsClosedAndReleasesBoth(t *testing
 	initiator, msg := message1(t, static)
 	defer initiator.Destroy()
 
-	// One page for the responder's schedule and one for the FIRST transport
-	// key. The second has nowhere to go.
+	// One page for the responder schedule and one for the first transport key only.
 	allocator := withBudget(t, scheduleCost+transportKeyCost)
 
 	r := admitResponder(t, static, msg)
@@ -871,24 +810,7 @@ func TestInitiator_APartiallyAllocatedSplitFailsClosedAndReleasesBoth(t *testing
 	}
 }
 
-// An enclave can be destroyed out from under a handshake that is still using
-// it. The realistic cause is a binary's shutdown sweep -- enclave.WipeAll
-// destroys every enclave in the process, and it belongs to the binary, so this
-// library neither calls it nor can stop it -- but any owner of an enclave may
-// Destroy one at any time.
-//
-// The contract #19 asks for is that such a destruction fails THAT connection
-// with a typed error and touches nothing else: no panic, no damage to the
-// handler, and no damage to the handshakes running beside it. That is the
-// property memguard could not offer from the other direction either -- its
-// exhaustion path destroyed every protected buffer in the process, so one
-// connection's bad luck took every other connection's keys with it.
-//
-// Each case below destroys a live handshake's schedule and then makes the call
-// that needs it. The error is ErrProtectedMemory carrying
-// enclave.ErrEnclaveDestroyed, exactly as an exhausted budget carries
-// enclave.ErrBudgetExhausted, so one classification serves a caller for every
-// way protected memory can be unavailable.
+// Destroying a live handshake's schedule must fail that call with ErrProtectedMemory wrapping enclave.ErrEnclaveDestroyed and touch nothing else.
 func TestHandshake_SurvivesItsProtectedMemoryBeingDestroyed(t *testing.T) {
 	// Named explicitly rather than left to the runtime: "returns an error
 	// instead of panicking" is the requirement, so a panic must fail with a
@@ -1068,18 +990,7 @@ func assertHandshakesStillWork(t *testing.T, static *StaticKey) {
 	}
 }
 
-// The static credential is the one piece of protected memory a responder does
-// not allocate and does not own, and it is the one whose destruction is
-// INVISIBLE to the rest of the handshake: crypto/ecdh keeps its own heap copy
-// of the scalar for the key's lifetime, and that copy still answers ECDH after
-// the enclave holding the authoritative scalar has been wiped.
-//
-// So a responder built while the key was alive would, without a guard at the
-// point of use, go on authenticating peers out of a heap copy of a credential
-// the process had already destroyed -- completing handshakes on released
-// credentials instead of failing that one connection. NewResponder's alive()
-// check cannot catch it: it answers for the moment it was read, and the sweep
-// happens afterwards.
+// A responder whose static key was wiped after construction must fail the connection, not authenticate from crypto/ecdh's heap copy.
 func TestResponder_RefusesAStaticCredentialWipedAfterConstruction(t *testing.T) {
 	allocator := withBudget(t, 16*scheduleCost)
 
@@ -1130,8 +1041,7 @@ func TestResponder_RefusesAStaticCredentialWipedAfterConstruction(t *testing.T) 
 		t.Errorf("ReadMessage1 after the failure: got %v, want ErrHandshakeState", err)
 	}
 
-	// ReadMessage1 allocates the key schedule BEFORE it reaches the key
-	// agreement, so the refused connection has a reservation to give back.
+	// ReadMessage1 allocates the schedule before key agreement, so the refused connection has a reservation to return.
 	if got := allocator.InUse(); got != held {
 		t.Errorf("the refused connection leaked %d locked bytes", got-held)
 	}

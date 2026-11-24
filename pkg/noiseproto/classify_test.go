@@ -9,10 +9,7 @@ import (
 	"testing"
 )
 
-// The classifier returns this package's typed error on both classification
-// paths, naming the constructor that failed and keeping the cause reachable --
-// under GODEBUG=fips140=only that cause is the Go Cryptographic Module's own
-// refusal, which an operator needs to see.
+// Both classification paths return this package's error naming the constructor and keeping the cause reachable.
 func TestClassifyDerivationFailure_ReturnsATypedError(t *testing.T) {
 	tests := map[string]struct {
 		fips bool

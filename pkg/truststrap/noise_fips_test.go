@@ -71,10 +71,7 @@ func TestNoiseBootstrapper_FetchCABundle_FIPSRefused(t *testing.T) {
 	}
 }
 
-// The zero-value suite must reach the approved suite under FIPS even when a
-// Noise key is pinned as well: the unavailable suite is skipped, and the
-// migration default of preferring Noise does not apply where it cannot run. The
-// responder serves ONLY P-256, so a bundle can only have arrived over it.
+// Under FIPS the zero suite reaches P-256 even with a Noise key; the server serves only P-256.
 func TestNoiseBootstrapper_DefaultSuiteUnderFIPSSelectsP256(t *testing.T) {
 	bundle := newTestCertBundle(t)
 	_, p256Hex, addr := startTestP256NoiseServer(t, bundle.combinedPEM)

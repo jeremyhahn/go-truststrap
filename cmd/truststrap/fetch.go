@@ -177,9 +177,7 @@ func buildMethodMap(
 	return methods
 }
 
-// fetchDANE retrieves a CA bundle after DANE/TLSA verification. It resolves
-// TLSA records, connects to the server, verifies the TLS certificate against
-// the TLSA records, and returns the CA bundle from the bootstrap endpoint.
+// fetchDANE resolves TLSA records, verifies the server certificate against them and returns the CA bundle from the bootstrap endpoint.
 func fetchDANE(ctx context.Context, serverURL, hostname string, port uint16, dnsServer string) ([]byte, error) {
 	resolverCfg := &dane.ResolverConfig{
 		Server: dnsServer,
@@ -203,8 +201,7 @@ func fetchDANE(ctx context.Context, serverURL, hostname string, port uint16, dns
 		serverURL = fmt.Sprintf("https://%s:%d", hostname, port)
 	}
 
-	// Connect with a TLS config whose sole verifier is DANE/TLSA validation
-	// of the presented chain (RFC 7671).
+	// The only verifier is DANE/TLSA validation of the presented chain (RFC 7671).
 	tlsCfg, err := dane.NewVerifiedTLSConfigFromRecords(records, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
@@ -273,10 +270,7 @@ func fetchSPKI(ctx context.Context, serverURL, pinHex string) ([]byte, error) {
 	return bundle, nil
 }
 
-// fetchDirect retrieves a CA bundle via plain HTTPS with standard
-// certificate verification against the system trust store, matching the
-// semantics of truststrap.DirectBootstrapper. It provides no verification
-// beyond WebPKI and should only be used as a last resort.
+// fetchDirect retrieves a CA bundle over HTTPS with system trust store verification only; a last resort.
 func fetchDirect(ctx context.Context, serverURL string) ([]byte, error) {
 	slog.Debug("direct HTTPS fetch (system trust store)", "url", serverURL)
 

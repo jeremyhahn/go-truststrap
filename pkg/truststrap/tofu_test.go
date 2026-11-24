@@ -15,9 +15,7 @@ import (
 	"time"
 )
 
-// spkiPinForServerCert computes the SPKI pin of the test server's leaf
-// certificate using the same code path as TOFUBootstrapper.captureAndPersistPin:
-// SHA-256(RawSubjectPublicKeyInfo) returned as lower-case hex.
+// spkiPinForServerCert computes the test server leaf's pin as lower-case hex SHA-256 of its SPKI.
 func spkiPinForServerCert(t *testing.T, server *httptest.Server) string {
 	t.Helper()
 	raw := server.TLS.Certificates[0].Certificate[0]
@@ -25,8 +23,7 @@ func spkiPinForServerCert(t *testing.T, server *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("parse server cert: %v", err)
 	}
-	// computeCertFingerprint performs SHA-256(bytes), so passing
-	// RawSubjectPublicKeyInfo produces the SPKI pin.
+	// SHA-256 of RawSubjectPublicKeyInfo is the SPKI pin.
 	return computeCertFingerprint(cert.RawSubjectPublicKeyInfo)
 }
 

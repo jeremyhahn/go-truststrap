@@ -29,7 +29,7 @@ that pass enclaves to these functions must build against go-enclave v0.8.0-alpha
 
 ### Added
 
-- **A public-releasability gate** (#75, owner ruling 2026-09-25).
+- **A public-releasability gate** (#75).
   `internal/labstrings` reads the git index and fails `make test` on any tracked
   line naming the private development fleet (its subnet, hostnames, or the
   owner's home and NFS paths), and on any tracked file that must never be
@@ -164,7 +164,7 @@ memguard (go-qrdb) can now persist a P-256 responder key. Wire formats are uncha
   1.26 cannot build a `go 1.27.0` module under `GOTOOLCHAIN=local`.
 
 - **CI synced from `ci-template` v1 to v1.11, and `nightly.yml` adopted at
-  `nightly-template` v1.4** (#39, operator rulings on the same issue; drift
+  `nightly-template` v1.4** (#39; drift
   outside the marked `CUSTOMIZE` blocks is a defect under devops.md §8). What
   this changes for a pull request:
 
@@ -183,8 +183,7 @@ memguard (go-qrdb) can now persist a P-256 responder key. Wire formats are uncha
     and actionlint's `SC*` rules actually run. Ships with
     `.github/actionlint.yaml`.
   - **`fips` and `trivy` moved off the push path** into the new
-    `.github/workflows/nightly.yml` (schedule + `workflow_dispatch`), per the
-    owner ruling of 2026-08-20. The FIPS mandate is unchanged and the job still
+    `.github/workflows/nightly.yml` (schedule + `workflow_dispatch`). The FIPS mandate is unchanged and the job still
     runs `-tags fips` under `GOFIPS140=latest GODEBUG=fips140=only`, exactly as
     `make test-fips` does; trivy is now installed from a pinned,
     checksum-verified release artifact (`scripts/install-trivy.sh`,
@@ -196,7 +195,7 @@ memguard (go-qrdb) can now persist a P-256 responder key. Wire formats are uncha
     `build`, the `GOSEC_EXCLUDE` justifications, the coverage threshold and the
     test timeout.
   - **Triggers narrowed to `[main]`**: `develop` is not a sanctioned trunk
-    (owner ruling 2026-08-19, GitHub Flow), and nothing else in the repo
+    (GitHub Flow), and nothing else in the repo
     referenced it.
 
 ### Fixed
@@ -241,8 +240,7 @@ downstream FIPS gates go-qrdb #18/#20 and go-xkms #23.
 
 ### Added
 
-- **Per-connection suite negotiation in `pkg/noiseproto/bootstrap`** (#20, owner
-  ruling 2026-08-24, OPTION B). The bootstrap Server/Client now speak either
+- **Per-connection suite negotiation in `pkg/noiseproto/bootstrap`** (#20). The bootstrap Server/Client now speak either
   suite on one listener, selected per connection using p256proto's reserved wire
   bytes (`SuiteNoiseNK = 0x01`, `SuiteP256AESGCM = 0x02`): a client commits to one
   suite and drives that suite's handshake, and the server accepts or refuses. This
@@ -252,7 +250,7 @@ downstream FIPS gates go-qrdb #18/#20 and go-xkms #23.
   bootstrap end to end. Design, wire format, downgrade analysis and key
   persistence: [docs/bootstrap-negotiation.md](docs/bootstrap-negotiation.md).
 
-  - **Selection policy** mirrors the B2/#15 ruling: non-FIPS defaults to Noise
+  - **Selection policy** (#15): non-FIPS defaults to Noise
     with P-256 selectable; under a `-tags fips` build or `GODEBUG=fips140=only`
     the peer REQUIRES P-256 (0x02) and REFUSES Noise (0x01) with a typed
     `ErrFIPSUnsupported` **before any key agreement**.
@@ -295,7 +293,7 @@ MINOR is where added API and behaviour changes live
 ### Added
 
 - **`pkg/p256proto` — `TSBOOT1_P256_AESGCM_SHA256`, the FIPS-approved
-  trust-bootstrap handshake** (#15, owner ruling 2026-08-23). It gives the same
+  trust-bootstrap handshake** (#15). It gives the same
   properties as Noise_NK — anonymous initiator, responder authenticated by a
   static key the initiator already holds, forward secrecy from an
   ephemeral-ephemeral exchange — built entirely from primitives inside the Go
@@ -345,16 +343,14 @@ MINOR is where added API and behaviour changes live
   server/client, and the static-key persistence that needs, follow separately
   so that this change does not overlap the `Server` lifecycle rework in #13.
 
-- **The `p256proto` `Transport` is one-shot per direction** (#17, owner
-  ruling `#18 = A`). A completed handshake yields a `Transport` that seals or
+- **The `p256proto` `Transport` is one-shot per direction** (#17, #18). A completed handshake yields a `Transport` that seals or
   opens exactly one record in each direction; a second use of a direction is
   refused with the typed `ErrTransportConsumed`. This matches the
   trust-bootstrap exchange, which carries a single request and a single
   response, and keeps the AEAD nonce discipline trivially sound without a
   message counter on the wire.
 
-- **The responder admission cap is derived from `RLIMIT_MEMLOCK`** (#17, Codex
-  review 945). A responder locks a key schedule for unauthenticated message 1
+- **The responder admission cap is derived from `RLIMIT_MEMLOCK`** (#17). A responder locks a key schedule for unauthenticated message 1
   input before its tag is checked, and `memguard` exhaustion purges every
   protected buffer in the process and panics. The pre-authentication schedule
   count is bounded by admission control whose ceiling is derived at init from
@@ -367,8 +363,8 @@ MINOR is where added API and behaviour changes live
 
 ### Changed
 
-- **`bootstrap.Server` is now SINGLE-USE, and restart is removed** (#13,
-  owner ruling 2026-08-23). `Start` succeeds at most once; every later call
+- **`bootstrap.Server` is now SINGLE-USE, and restart is removed** (#13).
+  `Start` succeeds at most once; every later call
   returns `ErrServerAlreadyStarted`, including after a `Stop` that drained
   cleanly. A caller that needs to listen again builds a new `Server` — which
   is what the only non-test caller (`truststrap serve`) already did, and what
@@ -427,8 +423,7 @@ MINOR is where added API and behaviour changes live
   an agent token answers `200` on `/v2/` (so `docker login` would *succeed*)
   while the registry's token endpoint refuses it for every scope including
   bare pull. Attempting the push would log in cleanly and then fail, which is
-  a worse signal than skipping. Granting package scope is an owner decision
-  (automatethethings#5). The image is still built and still gated on Trivy
+  a worse signal than skipping. The image is still built and still gated on Trivy
   CRITICAL/HIGH **on both hosts**, so the security gate is unchanged; only
   publication is skipped, and the run summary says so rather than leaving it
   to be inferred from a green run.
@@ -557,7 +552,7 @@ Restoring the capability on an approved P-256 DH is tracked as issue #10.
 - Containerised integration suite wired into the CI gate.
 - `release-alpha` and `deps-latest` Makefile targets
   (conventions/dependency-resolution.md).
-- Codex PR-review SDLC, task-worker and claude-review workflows
+- PR-review, task-worker and claude-review workflows
   (conventions/sdlc.md §8); `.dockerignore`; `workflow_dispatch` trigger.
 - `GOWORK=off` exported in CI, so builds are immune to stray `go.work` files.
 

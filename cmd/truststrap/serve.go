@@ -36,10 +36,7 @@ var (
 	// ErrServerStart is returned when the bootstrap server fails to start.
 	ErrServerStart = errors.New("serve: server start failed")
 
-	// ErrServerStop is returned when the bootstrap server fails to shut down.
-	// It is distinct from ErrServerStart because the two say different things
-	// about the static key: a start failure means no worker ever read it, a
-	// stop failure means one may still be reading it.
+	// ErrServerStop is returned when the bootstrap server fails to shut down; a worker may still hold the static key.
 	ErrServerStop = errors.New("serve: server stop failed")
 )
 
@@ -174,15 +171,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
 
-	// Stop reports the drain directly, so the deadline no longer has to be
-	// inferred from stopCtx: a nil error is the only proof that every handshake
-	// worker exited. On anything else a worker may still be using the key pair,
-	// so the locked pages stay mapped and process exit reclaims them.
+	// Only a nil Stop error proves every handshake worker exited; otherwise the key pages stay mapped until exit.
 	if err := server.Stop(stopCtx); err != nil {
-		// Conservative on every non-nil outcome, not just the expected one: a
-		// nil return is the ONLY proof that no worker still uses the key pair,
-		// so an unrecognised error retains the pages exactly like a known
-		// incomplete drain.
+		// Any non-nil outcome retains the pages.
 		destroyKey = false
 		if !errors.Is(err, bootstrap.ErrShutdownIncomplete) {
 			return commandWrap(op, ErrServerStop, err)
@@ -194,11 +185,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// loadOrGenerateKey attempts to load a Noise static key from the given file
-// path. If the file does not exist, it generates a new key and writes the
-// hex-encoded private key to the file with 0600 permissions. The private key
-// is held in locked memory throughout; the caller owns the returned key and
-// must Destroy it.
+// loadOrGenerateKey loads the Noise static key from path, or generates one and writes it with mode 0600; the caller must Destroy the key.
 func loadOrGenerateKey(keyFile string) (*noiseproto.StaticKey, error) {
 	const op = "loadOrGenerateKey"
 

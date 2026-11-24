@@ -86,9 +86,7 @@ func TestCommandError_Error(t *testing.T) {
 	}
 }
 
-// The detail names the path and the limit and nothing else. A key file's
-// CONTENTS are the private key, so an error about one must never render them
-// (security-review.md: secrets by shape, never by value).
+// The detail names the path and the limit only, never the key file's contents.
 func TestSizeLimitDetail(t *testing.T) {
 	if got, want := sizeLimitDetail("/var/lib/truststrap/noise.key", 128),
 		"/var/lib/truststrap/noise.key exceeds 128 bytes"; got != want {

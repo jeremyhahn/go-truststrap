@@ -17,15 +17,7 @@ type TLSALookuper interface {
 	LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*TLSARecord, error)
 }
 
-// NewVerifiedTLSConfig returns a client *tls.Config whose sole certificate
-// verification is DANE/TLSA validation of the chain presented by the peer.
-// It eagerly resolves TLSA records for "_<port>._tcp.<hostname>." via the
-// provided lookuper so that callers can fall back to another trust strategy
-// before dialing when no DANE-usable records exist.
-//
-// Because TLSA records are resolved at construction time, the returned
-// config is intended for immediate use; construct a fresh config per
-// connection attempt to honor DNS TTLs.
+// NewVerifiedTLSConfig resolves TLSA records now and returns a client config verified only by DANE; build one per connection to honour TTLs.
 func NewVerifiedTLSConfig(ctx context.Context, hostname string, port uint16, lookuper TLSALookuper) (*tls.Config, error) {
 	if lookuper == nil {
 		return nil, ErrResolverConfig
@@ -37,16 +29,7 @@ func NewVerifiedTLSConfig(ctx context.Context, hostname string, port uint16, loo
 	return NewVerifiedTLSConfigFromRecords(records, hostname)
 }
 
-// NewVerifiedTLSConfigFromRecords returns a client *tls.Config whose sole
-// certificate verification is DANE/TLSA validation of the presented chain
-// against the given records. Callers that have already resolved TLSA records
-// (e.g., to also verify a fetched CA bundle) use this constructor directly;
-// NewVerifiedTLSConfig wraps it with the DNS lookup.
-//
-// The returned config uses the documented custom-verifier pattern:
-// InsecureSkipVerify disables WebPKI verification only, the VerifyConnection
-// callback is the sole verifier, and session tickets are disabled so every
-// connection performs a full handshake through the verifier.
+// NewVerifiedTLSConfigFromRecords returns a client config whose only verifier is VerifyConnection against records, with session tickets disabled.
 func NewVerifiedTLSConfigFromRecords(records []*TLSARecord, hostname string) (*tls.Config, error) {
 	if !hasUsableRecords(records) {
 		return nil, ErrNoUsableTLSARecords
@@ -62,17 +45,7 @@ func NewVerifiedTLSConfigFromRecords(records []*TLSARecord, hostname string) (*t
 	}, nil
 }
 
-// VerifyPeerChain verifies a TLS-presented certificate chain against TLSA
-// records per RFC 7671. DANE-EE (usage=3) records match the leaf certificate
-// directly with no PKIX validation and no name check (RFC 7671 Section 5.1).
-// DANE-TA (usage=2) records require the trust anchor certificate to be
-// present in the chain (RFC 7671 Section 5.2.2); the leaf must then chain to
-// that anchor under PKIX validation including a hostname check
-// (RFC 7671 Section 5.2.1). Any single matching record satisfies the policy.
-//
-// Returns ErrNoUsableTLSARecords when no DANE-TA or DANE-EE records are
-// present, ErrInvalidCertificate for an empty chain, and
-// ErrTLSAVerificationFailed when no record matches.
+// VerifyPeerChain verifies a presented chain against TLSA records per RFC 7671 (DANE-EE leaf match without name check, DANE-TA anchor in chain plus PKIX and hostname); any match suffices.
 func VerifyPeerChain(chain []*x509.Certificate, records []*TLSARecord, hostname string) error {
 	if len(chain) == 0 {
 		return ErrInvalidCertificate
@@ -99,9 +72,7 @@ func VerifyPeerChain(chain []*x509.Certificate, records []*TLSARecord, hostname 
 	return ErrTLSAVerificationFailed
 }
 
-// hasUsableRecords reports whether at least one DANE-TA (usage=2) or
-// DANE-EE (usage=3) record is present. PKIX-TA (0) and PKIX-EE (1) records
-// require WebPKI validation and are not usable for bootstrap verification.
+// hasUsableRecords reports whether any DANE-TA or DANE-EE record is present; PKIX usages need WebPKI.
 func hasUsableRecords(records []*TLSARecord) bool {
 	for _, r := range records {
 		if r == nil {
@@ -114,10 +85,7 @@ func hasUsableRecords(records []*TLSARecord) bool {
 	return false
 }
 
-// verifyDANETA performs DANE-TA (usage=2) verification: it locates the trust
-// anchor within the presented chain by TLSA digest match, then PKIX-verifies
-// the leaf against that anchor with the remaining chain certificates as
-// intermediates, a server-auth key usage requirement, and a hostname check.
+// verifyDANETA finds the anchor in the chain by digest, then PKIX-verifies the leaf to it with server-auth usage and a hostname check.
 func verifyDANETA(chain []*x509.Certificate, record *TLSARecord, hostname string) error {
 	anchorIdx := -1
 	for i, cert := range chain {

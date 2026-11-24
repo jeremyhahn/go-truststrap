@@ -1,25 +1,7 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package gitearelease publishes a release to a Gitea instance: it creates (or
-// reuses) the release object for a tag, then uploads every file in dist/ as an
-// asset, replacing an asset of the same name so a re-run converges instead of
-// accumulating duplicates.
-//
-// It exists because softprops/action-gh-release talks to the GitHub Releases
-// API, which Gitea does not serve -- it answers HTTP 405, which is what left
-// v0.2.0-alpha with a published Go module and no Release object (#12). Gitea's
-// own release API under /api/v1 is GitHub-shaped, so the standard library is
-// enough and nothing has to be fetchable from github.com at release time.
-//
-// It replaced .github/scripts/gitea-release.sh in #75, when this repository
-// stopped carrying shell scripts. Two behaviours are deliberately stricter than
-// the script's: a failed lookup of an existing release is an error rather than
-// "no release yet" (only a 404 means absent), and a response that cannot be
-// decoded is an error rather than an empty id.
-//
-// The body is the tag's CHANGELOG section. The token is sent only in the
-// Authorization header; it never appears in a URL, an argument or a log line.
+// Package gitearelease creates or reuses a Gitea release for a tag, with the tag's CHANGELOG section as body, and uploads dist/ as assets, replacing same-named ones.
 package gitearelease
 
 import (
@@ -41,8 +23,7 @@ import (
 // maxErrorBody bounds how much of an error response is quoted back.
 const maxErrorBody = 512
 
-// Config is everything a publish needs. The release workflow supplies it from
-// its environment; see cmd/gitea-release.
+// Config is everything a publish needs.
 type Config struct {
 	// ServerURL is the Gitea instance root, e.g. https://forge.example.com.
 	ServerURL string
@@ -93,10 +74,7 @@ func IsPrerelease(tag string) bool {
 	return strings.Contains(tag, "-")
 }
 
-// Notes returns the CHANGELOG section for exactly version: the lines after its
-// own `## [version]` heading, up to the next second-level heading. The heading
-// match is literal and anchored at column 1, the same test the release
-// workflow's validate job applies.
+// Notes returns the CHANGELOG section under the literal column-1 `## [version]` heading, up to the next second-level heading.
 func Notes(changelog []byte, version string) (string, error) {
 	want := "## [" + version + "]"
 	var (

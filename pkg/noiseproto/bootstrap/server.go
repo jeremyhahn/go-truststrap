@@ -20,36 +20,13 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// Server is a TCP server that accepts Noise_NK handshakes for secure
-// CA bundle bootstrapping. It performs a 2-message NK handshake with
-// each connecting client, then serves encrypted request/response pairs
-// over the established session.
-//
-// A Server is SINGLE-USE. It runs at most one Start-to-Stop lifetime: once
-// Start has succeeded the Server is spent, and every later Start returns
-// ErrServerAlreadyStarted -- including after a Stop that drained cleanly. A
-// caller that needs to listen again builds a new Server, which is what the
-// only non-test caller (truststrap serve) already did.
-//
-// Restart was removed deliberately (issue #13). Supporting it meant every
-// field of the lifecycle could belong to two runs at once, and three of the
-// six defects found reviewing that lifecycle were reachable only through a
-// restart: a reused rate limiter whose cleanup goroutine had already exited,
-// a second run installed alongside the surviving workers of an incomplete
-// shutdown, and a Stop racing the second Start being handed the first run's
-// nil -- this package's certificate that every worker exited -- while a worker
-// was about to read the static key.
+// Server is a single-use TCP bootstrap server serving encrypted request/response pairs after a Noise_NK or P-256 handshake; Start succeeds at most once.
 type Server struct {
 	config  *ServerConfig
 	handler *Handler
 	logger  *slog.Logger
 
-	// mu guards the one lifecycle transition: Start installs the whole running
-	// state and sets started, and Stop and Addr read it. Because the Server is
-	// single-use, every field below is written exactly once -- by the Start that
-	// succeeds, before it releases mu -- and never written again. Workers
-	// therefore read them directly, which keeps this mutex off the connection
-	// path entirely.
+	// mu guards the Start/Stop transition; fields below are written once by the successful Start, so workers read them without the lock.
 	mu          sync.Mutex
 	started     bool
 	listener    net.Listener
@@ -122,15 +99,7 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	}, nil
 }
 
-// Start begins listening for incoming TCP connections and spawns goroutines to
-// handle each one.
-//
-// A Server is single-use: Start succeeds at most once. Every later call returns
-// ErrServerAlreadyStarted, whether the server is still running or has already
-// been stopped.
-//
-// A Start that fails to bind installs nothing and does not consume the Server's
-// one lifetime, so a caller may retry -- typically on a different address.
+// Start listens and serves each connection in a goroutine; it succeeds at most once, and a failed bind can be retried.
 func (s *Server) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,15 +119,7 @@ func (s *Server) Start() error {
 	s.rateLimiter = newRateLimiter(s.config.RateLimit, s.config.RateBurst, 5*time.Minute, 1*time.Minute)
 	s.drained = make(chan struct{})
 
-	// A Stop that observes started must see a non-zero WaitGroup: otherwise it
-	// could Wait on a counter of zero and return nil -- which this package
-	// documents as proof that every worker exited -- while the accept loop is
-	// still starting. What enforces that is mu, not the order of the two lines
-	// below: Start installs the whole running state inside the critical section
-	// and Stop reads started under the same mutex, so Stop sees either no
-	// server at all or one whose accept loop is already registered. From there
-	// acceptLoop registers each connection worker before it can itself exit, so
-	// the counter never reaches zero while more workers can appear.
+	// Holding mu here ensures Stop never waits on a zero WaitGroup while the accept loop is starting.
 	s.wg.Add(1)
 	s.started = true
 
@@ -171,27 +132,7 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the server. It closes the listener to stop
-// accepting new connections, then waits for in-flight connections to drain or
-// the context to expire.
-//
-// A nil return means every handshake worker has exited, and only then is it
-// safe to release material those workers read -- in particular the protected
-// pages holding the static key. If the drain deadline expires first, Stop
-// returns ErrShutdownIncomplete and that material must be retained.
-//
-// Stop may be called concurrently and more than once. The teardown runs once,
-// but each caller waits for the drain under its OWN context: a caller with a
-// short deadline returns ErrShutdownIncomplete on time rather than blocking
-// behind another caller's longer one. Two concurrent callers may therefore see
-// different outcomes, because they asked different questions -- "did it drain
-// within MY deadline?" -- and that is the honest answer to each. What no caller
-// can ever receive is a nil that is not backed by a real drain, which is the
-// property that makes nil safe to act on.
-//
-// Once the drain completes, every later Stop reports it: nil is stable, and a
-// server that has finished draining stays finished. Stop before Start returns
-// ErrServerNotStarted; that is non-nil, so it is never mistaken for a drain.
+// Stop closes the listener and waits for workers under the caller's context; nil means every worker exited, else ErrShutdownIncomplete. Safe to call concurrently; before Start it returns ErrServerNotStarted.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	started := s.started
@@ -212,15 +153,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	case <-drained:
 		return nil
 	case <-ctx.Done():
-		// A select chooses arbitrarily when both cases are ready, so a server
-		// that HAS drained can land here whenever the caller's deadline is
-		// already past. Re-check before reporting otherwise:
-		// ErrShutdownIncomplete instructs the caller to retain the static key's
-		// protected pages, and saying it of a server that finished is a false
-		// report, not a safe default. The re-check is non-blocking, so it
-		// cannot extend the caller past its own deadline, and it reads the same
-		// closed channel as the case above -- it can only turn a false
-		// incomplete into a drain that genuinely happened, never invent one.
+		// Both cases may be ready; re-check the drain without blocking before reporting incomplete.
 		select {
 		case <-drained:
 			return nil
@@ -382,10 +315,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Debug("request served", "remote", remoteAddr, "method", req.Method)
 }
 
-// performHandshake reads the client's first frame, dispatches on the negotiated
-// suite, runs that suite's 2-message handshake as responder, and returns the
-// established session. The first frame is version||suite||body; the version is
-// validated and the suite selects the core (see docs/bootstrap-negotiation.md).
+// performHandshake validates the version||suite||body first frame and runs that suite's responder handshake.
 func (s *Server) performHandshake(conn net.Conn) (secureSession, error) {
 	readDeadline := time.Now().Add(s.config.ReadTimeout)
 	frame1, err := ReadFrame(conn, readDeadline)
@@ -404,10 +334,7 @@ func (s *Server) performHandshake(conn net.Conn) (secureSession, error) {
 	case SuiteP256AESGCM:
 		return s.handshakeP256(conn, frame1)
 	case SuiteNoiseNK:
-		// Refuse the Noise suite before any key agreement when FIPS is
-		// enforced. This is the server half of the downgrade defence: a MITM
-		// that rewrites a client's suite byte to 0x01 cannot make a FIPS server
-		// run X25519.
+		// Refuse Noise before key agreement when FIPS is enforced.
 		if fipsEnforced() {
 			return nil, fmt.Errorf("%w: suite 0x01 refused", ErrFIPSUnsupported)
 		}
@@ -429,10 +356,7 @@ func (s *Server) handshakeP256(conn net.Conn, msg1 []byte) (secureSession, error
 	if err != nil {
 		return nil, handshakeError{Stage: "init responder", Kind: ErrHandshakeFailed, Err: err}
 	}
-	// Releases any locked key schedule and returns its reservation to the
-	// process's locked-memory budget; harmless on the completed path
-	// (WriteMessage2 already released it) and the remedy for a peer that sends a
-	// valid msg1 and then abandons the connection.
+	// Release any locked key schedule; harmless after a completed handshake.
 	defer responder.Destroy()
 
 	if err := responder.ReadMessage1(msg1); err != nil {
@@ -452,13 +376,7 @@ func (s *Server) handshakeP256(conn net.Conn, msg1 []byte) (secureSession, error
 	return &p256Session{t: transport}, nil
 }
 
-// handshakeNoise runs the Noise_NK handshake as responder. frame1 is
-// version||suite||noise_msg1; the two header bytes are stripped from the body
-// and set as the Noise prologue, so a tampered header breaks the transcript.
-//
-// NK pattern:
-//   - Message 1 (client -> server): [e, es]
-//   - Message 2 (server -> client): [e, ee]
+// handshakeNoise runs the Noise_NK handshake (e, es / e, ee) as responder; the version||suite header is the Noise prologue.
 func (s *Server) handshakeNoise(conn net.Conn, frame1 []byte) (secureSession, error) {
 	if s.config.StaticKey == nil {
 		return nil, handshakeError{Stage: "0x01 not configured on this server", Kind: ErrUnsupportedSuite}
@@ -469,12 +387,7 @@ func (s *Server) handshakeNoise(conn net.Conn, frame1 []byte) (secureSession, er
 		return nil, err
 	}
 
-	// Both responder steps are pure computation, so the whole key agreement
-	// runs inside one borrow of the static key and the handshake state -- the
-	// only holder of an alias to its locked pages -- is dropped before the
-	// borrow ends. No network I/O happens under the borrow. If the key has
-	// been destroyed or wiped by a shutdown sweep, the borrow refuses before
-	// flynn/noise runs and THIS connection fails; nothing else is touched.
+	// The key agreement runs inside one borrow of the static key with no network I/O; a destroyed key fails only this connection.
 	var (
 		msg2     []byte
 		cs1, cs2 *noise.CipherState
@@ -506,10 +419,7 @@ func (s *Server) handshakeNoise(conn net.Conn, frame1 []byte) (secureSession, er
 	return &noiseSession{send: cs2, recv: cs1}, nil
 }
 
-// respondNK runs the responder's half of the Noise_NK key agreement over
-// frame1 and returns msg2 with the resulting cipher states. key must be
-// borrowed for the duration of the call; the handshake state that retains it
-// does not outlive the call.
+// respondNK runs the responder's Noise_NK key agreement over frame1 and returns msg2 and the cipher states; key must stay borrowed for the call.
 func respondNK(suite noise.CipherSuite, key noise.DHKey, frame1 []byte) ([]byte, *noise.CipherState, *noise.CipherState, error) {
 	hs, err := noise.NewHandshakeState(noise.Config{
 		CipherSuite:   suite,

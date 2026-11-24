@@ -28,18 +28,7 @@ func borrowedKey() []byte {
 	return make([]byte, hashSize)
 }
 
-// The cipher-construction error paths below cannot be reached with a correct
-// 32-byte key, which is exactly why they are worth testing: an unreachable
-// branch is a branch nobody has checked. The seam is restored by t.Cleanup so
-// a failure here cannot leak into another test.
-//
-// The key-generation error paths are deliberately NOT covered this way. An
-// injected failing io.Reader proves nothing about them: measured on Go 1.26.7,
-// crypto/ecdh's GenerateKey never reads from the supplied reader at all -- zero
-// Read calls, and it returns a valid key -- because it draws from the module's
-// own DRBG. A test that injected one would assert an entropy failure that
-// cannot happen and pass for the wrong reason, so those two branches stay as
-// ordinary defensive error handling with no test pretending to exercise them.
+// Cipher-construction failures are injected through a seam restored by t.Cleanup; crypto/ecdh key generation ignores the reader, so it is not tested this way.
 
 func withFailingAEAD(t *testing.T) {
 	t.Helper()
@@ -264,9 +253,7 @@ func TestHandshake_ReportsACipherFailureLate(t *testing.T) {
 	})
 }
 
-// wrongGeometryAEAD stands in for a construction that expects the CALLER to
-// supply a nonce. Sealing with it through this package's nil-nonce calls would
-// reuse a fixed nonce under every key, so it must be refused at construction.
+// wrongGeometryAEAD expects a caller-supplied nonce and must be refused at construction.
 type wrongGeometryAEAD struct {
 	cipher.AEAD
 

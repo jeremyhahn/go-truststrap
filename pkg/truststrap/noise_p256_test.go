@@ -15,12 +15,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// This file is deliberately untagged: the approved P-256 suite is available in
-// every build, so `make test` and `make test-fips` both execute these real
-// handshakes. Under `make test-fips` -- GOFIPS140=latest GODEBUG=fips140=only
-// with -tags fips -- they are a FIPS-built client completing a real handshake
-// against a real responder and receiving the CA bundle, which is the bar issue
-// #51 set. The Noise/Curve25519 counterparts live in noise_nofips_test.go.
+// Untagged: the P-256 handshakes run under both make test and make test-fips.
 
 // testBundleProvider implements noiseboot.BundleProvider for test servers. It
 // is defined untagged because both this file's P-256 servers and the
@@ -60,10 +55,7 @@ func validP256KeyHex(t *testing.T) string {
 	return hex.EncodeToString(static.PublicBytes())
 }
 
-// startTestP256NoiseServer starts a bootstrap server serving ONLY the approved
-// P-256 suite, and returns it with the responder public key as hex and the
-// listen address. A Noise-suite client is refused by such a server, so any
-// successful fetch against it proves the P-256 suite was the one offered.
+// startTestP256NoiseServer starts a P-256-only server and returns it with the hex public key and address.
 func startTestP256NoiseServer(t *testing.T, bundlePEM []byte) (*noiseboot.Server, string, string) {
 	t.Helper()
 
@@ -285,12 +277,7 @@ func TestAutoBootstrapper_NoiseArm_P256RoundTrip(t *testing.T) {
 	}
 }
 
-// A configured-but-broken key must fail loudly at construction rather than at
-// the first fetch. Length and hex are not enough: the point is parsed with the
-// same parser the transport uses, so a wrong prefix or off-curve coordinates
-// are refused here too -- and refused even when a valid Curve25519 key is
-// configured alongside, because a broken key is never silently dropped in
-// favour of the other suite.
+// A malformed configured key fails at construction, even with a valid key for the other suite.
 func TestNewNoiseBootstrapper_P256KeyValidation(t *testing.T) {
 	valid := validP256KeyHex(t)
 	// Same coordinates as a valid point, so only the prefix byte is wrong.
@@ -457,12 +444,7 @@ func TestNewNoiseBootstrapper_P256OnlyNeedsNoCurve25519Key(t *testing.T) {
 	}
 }
 
-// Suite must actually reach the client config, not merely be validated at
-// construction. Both keys are pinned and the responder serves ONLY P-256, so
-// where X25519 is available the zero value would have offered Noise and been
-// refused: the fetch succeeds only if the pinned suite was carried through.
-// Under FIPS the same run is the approved suite chosen either way, which is
-// why this belongs in the untagged file.
+// A pinned Suite must reach the client: both keys set, server serves only P-256.
 func TestNoiseBootstrapper_PinnedP256IsCarriedThrough(t *testing.T) {
 	bundle := newTestCertBundle(t)
 	_, keyHex, addr := startTestP256NoiseServer(t, bundle.combinedPEM)

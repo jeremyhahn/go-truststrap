@@ -120,9 +120,7 @@ class TrustStrapClient(private val config: TrustStrapConfig) {
         }
     }
 
-    // -------------------------------------------------------------------------
     // DANE
-    // -------------------------------------------------------------------------
 
     private fun fetchWithDANE(): CABundleResult {
         val daneConfig = config.daneConfig
@@ -242,9 +240,7 @@ class TrustStrapClient(private val config: TrustStrapConfig) {
         }
     }
 
-    // -------------------------------------------------------------------------
     // SPKI Pinning
-    // -------------------------------------------------------------------------
 
     private fun fetchWithSPKI(): CABundleResult {
         val spkiConfig = config.spkiConfig

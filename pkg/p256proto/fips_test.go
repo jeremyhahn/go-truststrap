@@ -12,19 +12,7 @@ import (
 	"testing"
 )
 
-// This file is the acceptance criterion for the approved suite, and it is
-// deliberately stronger than "the fips job's X25519 rejections drop to zero".
-// That weaker criterion is satisfied by a build that swaps only the curve and
-// keeps ChaCha20-Poly1305 -- which runs clean under fips140=only because
-// golang.org/x/crypto sits outside the module boundary and the runtime never
-// inspects it, while not being an approved AEAD. A rejection count cannot tell
-// those apart. What can is running the real handshake in the mode where a
-// non-approved primitive fails closed, and asserting that the mode is actually
-// on while it happens.
-//
-// Under `make test-fips` (GOFIPS140=latest GODEBUG=fips140=only) the subtests
-// below assert the approved posture. Outside it they assert the mode is off
-// and skip, so the file never reports a FIPS result it did not measure.
+// Under make test-fips the subtests run the real handshake with fips140=only and assert the mode is on; otherwise they skip.
 
 func TestFIPS_HandshakeCompletesInApprovedMode(t *testing.T) {
 	if !fips140.Enabled() {

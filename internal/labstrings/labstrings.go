@@ -1,87 +1,8 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package labstrings is the release gate that keeps this repository publicly
-// releasable. It reports two things about the files in the git index:
-//
-//   - a line that names a host, an address or a filesystem path belonging to
-//     the private development fleet (Scan, ScanRepo); and
-//   - a tracked file that must never reach the public tree at all -- agent
-//     working files, build output, shell scripts, internal-only workflows
-//     (ForbiddenFiles).
-//
-// WHY THIS IS A GATE AND NOT A CONVENTION. go-truststrap ships publicly: the
-// public GitHub commit for a release is byte-identical to the Gitea tag's tree
-// (version-control.md section 5a), so the Go module zip, the source tarball and
-// the browsable repository are all exactly what is tracked here. Anything
-// committed is published, and publication-time rewriting is ruled out because
-// it would break that content identity. The release-readiness audit (#75) found
-// the private forge address in the CI workflow's comments and in a release
-// helper, a fleet hostname in actionlint's configuration, Gradle test reports
-// carrying lab references, and agent configuration full of owner paths. None of
-// it was load-bearing and nothing prevented any of it. This is what prevents
-// the repeat. The rule and its model are go-quicbaas's
-// docs/release/public-releasability.md; this repository's copy of the page is
-// docs/release/public-releasability.md.
-//
-// WHAT IS REPORTED, and why each class is a leak rather than a style problem:
-//
-//   - ClassLabAddress -- an address on the fleet's subnet. Unreachable for every
-//     public reader, so a copy-pasteable example containing one is broken
-//     documentation, and it publishes the operator's network layout.
-//   - ClassLabHost -- a fleet hostname. Same, plus it names the machines an
-//     attacker would go looking for.
-//   - ClassOwnerPath -- a path under the owner's home directory or the lab's NFS
-//     mount. Meaningless off that one machine, and it leaks the account name.
-//
-// WHAT TO DO WITH A FINDING. In order of preference:
-//
-//   - Use a documentation value: RFC 5737 addresses (192.0.2.0/24,
-//     198.51.100.0/24, 203.0.113.0/24), RFC 2606 names (example.com,
-//     *.example, *.invalid), or a role rather than a machine (`ci-runner-01`,
-//     `forge.internal`).
-//   - Move the value out of the tree: a forge address belongs in a CI
-//     repository variable, a fleet address in the private infra repository.
-//   - If the value IS the point -- provenance for a benchmark, the host a
-//     captured log came from -- waive the line in place (below).
-//
-// TWO WAYS TO ACCEPT A LINE, both explicit:
-//
-//   - An inline waiver: the text `lab-string-ok: <reason>` on the offending
-//     line or the line immediately above it, in whatever comment syntax the
-//     file uses. The justification then lives next to the value it explains.
-//     An empty reason is not a waiver.
-//   - An entry in DefaultAllowList, for whole trees and for files that cannot
-//     carry a comment. Each entry carries the classes it accepts and a reason;
-//     see allowlist.go.
-//
-// A forbidden FILE has no waiver: the fix is to untrack it.
-//
-// THE PATTERNS FILE. The lab's own values cannot be written down in the tree
-// this gate keeps them out of, so the patterns live in an untracked file whose
-// path is in the LABSTRINGS_PATTERNS environment variable (PatternsEnv). It is
-// read once, at startup. Each line is
-//
-//	class<TAB>regexp
-//
-// where class is a label (a lowercase letter, then up to 31 lowercase letters,
-// digits or hyphens) and regexp is RE2 syntax (regexp.Compile). The file states
-// the classes: lab-address, lab-host and owner-path are the ones this package
-// names, with specific guidance, and any other class carries defaultGuidance. Blank lines and lines starting with # are skipped. The
-// literal every match must contain, which the cheap pre-scan searches for, is
-// derived from the regexp. A malformed line is an error naming its line
-// number, and Scan and ScanRepo return it. With the variable unset there are
-// no lab patterns and ScanRepo reports nothing.
-//
-// WHERE THIS LIVES. A package under internal/ because it is repository tooling
-// that no consumer of this library may import, and because `make test` runs
-// `go test ./...`, so the gate runs on every unit-test pass with no Makefile
-// target to remember and no target list to fall off.
-//
-// RESOLUTION is textual, deliberately: it needs no build tags, no module
-// loading and no parser, so it runs on every tree state including one that does
-// not compile, and it covers Markdown, YAML, Dockerfiles and Kotlin as readily
-// as Go.
+// Package labstrings is the public-release gate: it reports lab hosts, addresses and owner paths (Scan, ScanRepo) and tracked files that must not be published (ForbiddenFiles).
+// Patterns come from the untracked file named by LABSTRINGS_PATTERNS, one `class<TAB>regexp` per line; waive a line with `lab-string-ok: <reason>` or an AllowRule.
 package labstrings
 
 import (
@@ -113,15 +34,11 @@ const (
 	// ClassLabHost is a hostname belonging to the development fleet.
 	ClassLabHost Class = "lab-host"
 
-	// ClassOwnerPath is a filesystem path that exists only on the owner's
-	// machine or on the lab's network mount.
+	// ClassOwnerPath is a path that exists only on the owner's machine or the lab's network mount.
 	ClassOwnerPath Class = "owner-path"
 )
 
-// classes is every class this package names, the ones with specific guidance.
-// The patterns file states the classes in force, and may name others; classes
-// is fixed, not derived from the loaded patterns, so an allow-list rule naming
-// one of these stays valid on a machine that has no patterns file.
+// classes is every class this package names; fixed, so allow-list rules stay valid without a patterns file.
 var classes = []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath}
 
 // classLabel is the form a class field in the patterns file must have.
@@ -152,43 +69,24 @@ type Pattern struct {
 	// line, so the report can quote exactly what has to change.
 	Expr *regexp.Regexp
 
-	// Needle is a lowercase literal that every string Expr can match must
-	// contain. It is the cheap precondition the sieve uses: a substring
-	// search runs at memory bandwidth where this regexp runs at a few
-	// megabytes a second, and the whole tree has to be read on every unit
-	// test pass. needleOf derives it from Expr itself, so it cannot drift
-	// from the expression; an Expr with no mandatory literal gets an empty
-	// Needle, which the sieve never skips.
+	// Needle is a lowercase literal every match of Expr contains, derived by needleOf; empty means the sieve never skips.
 	Needle string
 
 	// Guidance is what the engineer who tripped this rule should do instead.
 	Guidance string
 }
 
-// PatternsEnv names the environment variable that holds the path of the
-// patterns file. The file is not tracked: the lab's own values are exactly
-// what this gate keeps out of the public tree, so they cannot be written
-// down in it.
+// PatternsEnv names the environment variable holding the untracked patterns file path.
 const PatternsEnv = "LABSTRINGS_PATTERNS"
 
 // maxPatternsFileSize caps the patterns file: it holds a few dozen lines, and
 // a file far larger than that is not the one the operator meant to name.
 const maxPatternsFileSize = 1 << 20
 
-// patterns is the rule set, loaded once at startup from the file PatternsEnv
-// names. patternsErr is the loader's error, which Scan and ScanRepo return.
-//
-// Note what does not belong in that file: 192.168.0.0/16 at large. Tests
-// across this tree use RFC 1918 literals as opaque addresses that are never
-// dialed, and banning the whole space would bury the real findings under
-// hundreds of them. Name the fleet subnet precisely instead.
+// patterns is the rule set loaded once from the PatternsEnv file; patternsErr is the loader's error, returned by Scan and ScanRepo.
 var patterns, patternsErr = loadPatterns(os.Getenv(PatternsEnv))
 
-// sieveNeedles is every pattern's Needle, in the form the sieve wants them.
-// Almost no file in this tree contains a lab value, and the whole tracked tree
-// is read on every unit-test pass: settling "there is nothing here" has to be
-// cheap, and a substring search is two orders of magnitude cheaper than the
-// patterns themselves.
+// sieveNeedles is every pattern's Needle, for the cheap substring pre-scan.
 var sieveNeedles = needlesOf(patterns)
 
 // loaded is the set of classes the loaded patterns use, and inForce is that
@@ -459,10 +357,7 @@ type Finding struct {
 	Guidance string
 }
 
-// String renders a finding in the file:line:message form every editor and every
-// CI log viewer already knows how to jump to. It names the path, the line and
-// the class only: the matched text and the excerpt around it are the very value
-// that must not be published, and a CI log is published.
+// String renders path:line: class only, never the matched text.
 func (f Finding) String() string {
 	return fmt.Sprintf("%s:%d: [%s]", f.Path, f.Line, f.Class)
 }
@@ -471,19 +366,10 @@ func (f Finding) String() string {
 // more than a megabyte; a report is useless if one finding fills the screen.
 const excerptLimit = 160
 
-// readChunk is the most of any one file the scanner holds in memory at once.
-// Every tracked file is read to its end whatever its size or content -- a gate
-// that skipped large or binary files would pass a tracked capture or blob whose
-// metadata names the fleet -- so the file is streamed, and a line longer than
-// this is scanned as overlapping windows of it.
+// readChunk is the most of one file held in memory; files are streamed to the end and long lines scanned in overlapping windows.
 const readChunk = 64 << 10
 
-// windowLookahead is how many bytes of a window are held back for the next one
-// so that a match starting near the window's end is seen whole, with the byte
-// after it that `\b` needs. It is sized to the longest match of the operator's
-// patterns file (1042 bytes) plus that byte, plus one; the loader refuses a
-// file with a longer match, and TestPatterns_MatchesFitTheWindowOverlap pins
-// that for the test patterns.
+// windowLookahead is the window overlap: the longest allowed match plus context bytes; the loader refuses longer matches.
 const windowLookahead = 1044
 
 // windowLookbehind is how many bytes before a window's own region are kept so
@@ -525,15 +411,7 @@ func TrackedFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// Scan reports the lab values in the named files, which are interpreted relative
-// to root. Rules are validated first: an allow-list that does not say why it
-// allows something is a defect in the gate, not a pass.
-//
-// Every file is read to its end, text or binary, however large: memory stays
-// bounded because the file is streamed. A file listed in the index but absent
-// from the working tree is skipped -- a deletion in progress has no content to
-// publish -- and anything else that cannot be read is a *ReadError, never a
-// pass.
+// Scan reports lab values in the named files under root after validating rules; files absent from the tree are skipped and other read failures are *ReadError.
 func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
 	if patternsErr != nil {
 		return nil, patternsErr
@@ -618,10 +496,7 @@ type lineState struct {
 	carry    []byte
 }
 
-// scanStream applies every pattern whose class is not accepted to every line of
-// r. It holds at most readChunk plus the window overlap in memory, whatever the
-// length of the stream or of any one line in it; a read failure is a
-// *ReadError with no Path, which the caller fills in.
+// scanStream applies every pattern not accepted for the file to each line of r within bounded memory; read failures are *ReadError without Path.
 func scanStream(name string, r io.Reader, accepted map[Class]bool) ([]Finding, error) {
 	br := bufio.NewReaderSize(r, readChunk)
 	var findings []Finding
@@ -649,14 +524,7 @@ func scanStream(name string, r io.Reader, accepted map[Class]bool) ([]Finding, e
 	}
 }
 
-// scanWindow scans one window of the current line. The window is the carry
-// kept from the previous window followed by newly read bytes. It owns the
-// matches that START in its own region: from windowLookbehind into the carry
-// (0 for the line's first window) to windowLookahead short of its end (its end,
-// for the line's last window). Consecutive regions tile the line, and every
-// match starting in a region lies whole inside the window with a byte of
-// context either side, so each match is reported exactly once and exactly as
-// it appears.
+// scanWindow reports the matches that start in this window's own region, so each match is reported once and whole.
 func scanWindow(name string, window []byte, final bool, accepted map[Class]bool, line *lineState) {
 	text := window
 	if final {
@@ -738,10 +606,7 @@ func excerpt(line string) string {
 	return trimmed[:excerptLimit] + " ..."
 }
 
-// Report writes the findings in a form an engineer can act on without opening
-// this file, and returns whether anything was written. Findings are the gate's
-// product: a gate whose output does not say what to do next gets waived
-// wholesale by the next person who trips it.
+// Report writes actionable findings and returns whether anything was written.
 func Report(w io.Writer, findings []Finding) (bool, error) {
 	if len(findings) == 0 {
 		return false, nil

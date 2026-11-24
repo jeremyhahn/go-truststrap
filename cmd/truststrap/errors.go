@@ -43,25 +43,7 @@ var (
 	ErrKeyFileMalformed = errors.New("malformed key file")
 )
 
-// CommandError is this CLI's error type. It carries the operation that failed,
-// the sentinel that classifies it, optional human-readable detail, and any
-// underlying cause.
-//
-// It exists because errors.md section 2 bans fmt.Errorf in cmd/ as well as in
-// pkg/ and sdk/: an error built that way cannot be tested for, cannot carry a
-// code, and reaches a handler as an opaque string to be classified by substring
-// matching. The rule is "no new ones, and convert the ones in a function you
-// touch", so this type arrives with the go-enclave adoption (#19) and the
-// key-file paths that change with it are converted onto it. The remaining
-// fmt.Errorf call sites in this package are untouched by that change and are
-// converted as they are next edited, not in a churn pass of their own.
-//
-// errors.Is matches BOTH the sentinel and the cause, because Unwrap returns
-// them together: errors.Is(err, ErrKeyOperation) classifies, and
-// errors.Is(err, enclave.ErrBudgetExhausted) still reaches the original. It
-// mirrors p256proto.ProtocolError deliberately -- go-truststrap is Layer 0 and
-// cannot import the go-qrdb error framework (conventions/errors.md section 3),
-// so one shape is repeated rather than two invented.
+// CommandError carries the failed operation, the classifying sentinel, optional detail and the cause; errors.Is matches both sentinel and cause.
 type CommandError struct {
 	// Op is the operation that failed, e.g. "readStaticKeyFile".
 	Op string

@@ -34,15 +34,7 @@ type SessionConfig struct {
 	// Supported: noise.HandshakeXX, noise.HandshakeNK
 	Pattern noise.HandshakePattern
 
-	// LocalStaticKey is the persistent local static key pair, its private
-	// scalar held in protected memory. The session borrows it and never
-	// destroys it: its lifetime is the caller's, and it must outlive the
-	// session's handshake.
-	//
-	// If nil, and the pattern gives this side a static key (the XX initiator
-	// or responder, the NK responder), the session generates one with
-	// GenerateStaticKey, owns it, and releases it on Destroy. If the pattern
-	// gives this side no static key -- the NK initiator -- none is generated.
+	// LocalStaticKey is the caller-owned local static key, borrowed and never destroyed; if nil and the pattern needs one, the session generates and owns one.
 	LocalStaticKey *StaticKey
 
 	// PeerStaticKey is the remote party's static public key.
@@ -58,11 +50,7 @@ type SessionConfig struct {
 	Prologue []byte
 }
 
-// Session manages an encrypted Noise protocol session supporting both
-// XX (mutual authentication) and NK (known server key) handshake patterns.
-//
-// A Session must be released with Destroy once it is no longer needed, which
-// frees the static key it generated for itself, if any.
+// Session is a Noise XX or NK session; release it with Destroy.
 type Session struct {
 	mu sync.Mutex
 	// localStatic is nil when the pattern gives this side no static key and
@@ -83,13 +71,7 @@ type Session struct {
 	handshakeDone  atomic.Bool
 }
 
-// NewSession creates a new Noise protocol session from the provided configuration.
-//
-// If no LocalStaticKey is provided and the pattern gives this side a static
-// key, a new Curve25519 key pair is generated straight into protected memory
-// and owned by the session. If the pattern gives this side no static key (the
-// NK initiator), nothing is generated: key material the handshake never uses
-// is not created at all.
+// NewSession creates a session, generating an owned static key in protected memory only when the pattern gives this side one.
 func NewSession(cfg *SessionConfig) (*Session, error) {
 	const op = "NewSession"
 
@@ -121,10 +103,7 @@ func NewSession(cfg *SessionConfig) (*Session, error) {
 	}, nil
 }
 
-// usesLocalStatic reports whether pattern gives the initiator (or responder)
-// a static key: one it is pre-known by, or one it transmits in any of its own
-// messages. Every DH token involving a party's static key presupposes one of
-// the two, so this is exactly the set of roles that need a local static key.
+// usesLocalStatic reports whether pattern gives this role a static key, pre-known or transmitted.
 func usesLocalStatic(pattern noise.HandshakePattern, initiator bool) bool {
 	pre := pattern.ResponderPreMessages
 	if initiator {
@@ -152,14 +131,7 @@ func (s *Session) LocalStaticPublicKey() []byte {
 	return s.localStatic.PublicBytes()
 }
 
-// Destroy releases the session's handshake and transport state and, if the
-// session generated its own static key, that key's protected pages. A
-// caller-supplied LocalStaticKey is never destroyed: its lifetime belongs to
-// the caller. It is idempotent and safe to call on a nil receiver.
-//
-// Destruction is terminal whether or not the session owned a key: afterwards
-// InitHandshake and HandshakeMessage return ErrSessionDestroyed, and Encrypt,
-// Decrypt and ChannelBinding return ErrSessionNotReady.
+// Destroy releases handshake and transport state and any session-generated static key; idempotent, nil-safe and terminal.
 func (s *Session) Destroy() {
 	if s == nil {
 		return
@@ -182,13 +154,7 @@ func (s *Session) Destroy() {
 	}
 }
 
-// withLocalStatic runs fn while the local static key's pages are borrowed, so
-// that every read flynn/noise makes through the alias its handshake state
-// retains happens under the enclave's read lock: a concurrent Destroy or
-// shutdown sweep waits for fn, and one that has already run is reported --
-// wrapped in ErrHandshakeFailed -- instead of letting flynn/noise read unmapped
-// pages. fn's own error is returned unchanged. A session with no local static
-// key has nothing to borrow and runs fn directly.
+// withLocalStatic runs fn while the local static key is borrowed; a destroyed key is reported wrapped in ErrHandshakeFailed.
 func (s *Session) withLocalStatic(op string, fn func(noise.DHKey) error) error {
 	if s.localStatic == nil {
 		return fn(noise.DHKey{})
@@ -225,24 +191,7 @@ func (s *Session) IsHandshakeComplete() bool {
 	return s.handshakeDone.Load()
 }
 
-// ChannelBinding returns the Noise handshake hash for this session: a value
-// both peers compute identically and neither can influence independently. It
-// commits to the ephemeral keys as well as the static ones, so it is unique
-// per session rather than per key pair -- two sessions between the same two
-// identities have different bindings.
-//
-// A caller binds an application-layer artefact to the connection it was
-// produced on by including this value in what it signs or authenticates.
-//
-// It is available only once the handshake has completed; before that it
-// returns ErrSessionNotReady rather than a partial hash, which would commit to
-// a peer that has not yet been authenticated. The returned slice is a fresh
-// copy, so mutating it cannot desynchronize the caller's binding from the
-// session's.
-//
-// The handshake hash is a digest over public handshake transcript data, not
-// key material: retaining it past the handshake discloses nothing and does not
-// weaken the forward secrecy that clearing the handshake state provides.
+// ChannelBinding returns a copy of the handshake hash, unique per session; before the handshake completes it returns ErrSessionNotReady.
 func (s *Session) ChannelBinding() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -266,10 +215,7 @@ func (s *Session) SetPrologue(prologue []byte) {
 	s.prologue = prologue
 }
 
-// InitHandshake initializes the Noise handshake state machine.
-// For XX pattern, both sides exchange static keys during the handshake.
-// For NK pattern, the initiator must have the server's static public key
-// configured via SessionConfig.PeerStaticKey.
+// InitHandshake initializes the handshake state; NK initiators need SessionConfig.PeerStaticKey.
 func (s *Session) InitHandshake() error {
 	const op = "InitHandshake"
 
@@ -319,18 +265,7 @@ func (s *Session) InitHandshake() error {
 	return nil
 }
 
-// HandshakeMessage processes a handshake message exchange.
-//
-// For the initiator: call with nil incoming to produce the first message,
-// then call with each response from the responder.
-//
-// For the responder: call with each received message from the initiator.
-//
-// Returns the outgoing message (may be nil on final read), a boolean
-// indicating whether the handshake is complete, and any error.
-//
-// The method handles varying numbers of handshake messages depending on
-// the pattern. XX requires 3 messages; NK requires 2.
+// HandshakeMessage processes one handshake step (initiator starts with nil) and returns the outgoing message, completion and error; XX takes 3 messages, NK 2.
 func (s *Session) HandshakeMessage(incoming []byte) ([]byte, bool, error) {
 	const op = "HandshakeMessage"
 

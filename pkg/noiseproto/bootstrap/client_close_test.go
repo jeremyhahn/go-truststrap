@@ -14,12 +14,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// These tests pin the one guarantee a caller needs to abandon a stalled peer:
-// Close, from another goroutine, ends a Connect or GetCABundle that is blocked
-// in a read, promptly and without the peer ever answering. The timeouts are
-// deliberately far longer than the test, so a Close that did NOT interrupt
-// would be a hang the result channel's guard reports, not a slow pass. The
-// approved suite is used so both build modes run them.
+// Close from another goroutine must end a Connect or GetCABundle blocked in a read; timeouts far exceed the test, so a miss shows as a hang.
 
 // stallTimeout is the operation timeout the stalled client is given: long
 // enough that only an interrupting Close can end the test in time.

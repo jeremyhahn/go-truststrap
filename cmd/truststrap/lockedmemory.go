@@ -11,50 +11,18 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 )
 
-// The binary's half of the protected-memory contract.
-//
-// RLIMIT_MEMLOCK is a PROCESS-scoped resource, so the only code that can size a
-// budget against it is the code that owns the process. A library holding its
-// own allocator stays inside its own budget while the process's allocators
-// together exceed the one ceiling they share, which is exactly the failure a
-// process allocator exists to prevent. So pkg/p256proto declares no setter and
-// never installs anything: it calls enclave.ProcessAllocator and allocates
-// through what it gets. Installing that allocator, and wiping what is left at
-// exit, are this binary's jobs and nobody else's (owner ruling 2026-09-22 on
-// #19; go-libsignal ruling 2026-08-26).
+// The binary installs the process allocator and wipes it at exit; libraries only allocate through enclave.ProcessAllocator.
 
 const (
-	// lockedMemoryBudgetNumerator and lockedMemoryBudgetDenominator are the
-	// share of the process's discovered RLIMIT_MEMLOCK handed to the allocator.
-	// The remaining quarter is headroom for locked memory taken OUTSIDE the
-	// allocator -- anything a dependency locks for itself -- because the kernel's
-	// refusal is triggered by the whole process reaching the ceiling, not by
-	// the admitted share alone. go-enclave's own default deliberately leaves no
-	// headroom, since headroom is a sizing policy and sizing is this decision.
+	// Three quarters of RLIMIT_MEMLOCK go to the allocator; the rest is headroom for memory locked outside it.
 	lockedMemoryBudgetNumerator   = 3
 	lockedMemoryBudgetDenominator = 4
 
-	// unboundedLockedMemoryBudget is the budget used when no ceiling binds --
-	// RLIM_INFINITY, CAP_IPC_LOCK, or a platform that exposes no limit. There
-	// is no kernel figure to derive from, so this binary names one rather than
-	// running unbounded: a bound that a flood can reach and be refused at is
-	// the whole point, and an unbounded budget admits everything.
+	// unboundedLockedMemoryBudget is the fixed budget when no ceiling binds (RLIM_INFINITY, CAP_IPC_LOCK, no limit).
 	unboundedLockedMemoryBudget int64 = 64 << 20
 )
 
-// installLockedMemoryBudget sizes this process's locked-memory budget from its
-// RLIMIT_MEMLOCK and installs it as the allocator every library admits against.
-//
-// It must run before anything allocates locked memory: installation is one-shot
-// and fails closed with enclave.ErrAllocatorInstalled once any allocator exists,
-// including the default that the first enclave.ProcessAllocator call installs
-// lazily.
-//
-// A zero or unreadable ceiling installs NOTHING and says so through its error.
-// That is not a fallback to unbounded: go-enclave's lazy default is the
-// discovered ceiling itself, which is the same figure the retired hand-rolled
-// cap derived from, so refusing to install leaves the process bounded by the
-// kernel's own answer rather than by a figure this function invented.
+// installLockedMemoryBudget sizes the budget from RLIMIT_MEMLOCK and installs it; it must run before any allocation, and a zero or unreadable ceiling installs nothing and returns an error.
 func installLockedMemoryBudget() error {
 	limit, err := enclave.DiscoverLockedMemoryLimit()
 	if err != nil {
@@ -76,11 +44,7 @@ func installLockedMemoryBudget() error {
 	return enclave.SetAllocator(allocator)
 }
 
-// lockedMemoryBudget derives the budget from a discovered ceiling. It is pure,
-// and separate from the installation it feeds, so the arithmetic can be checked
-// against every shape of ceiling rather than only the one the test host happens
-// to have -- including the zero ceiling, which is the one shape that must NOT
-// produce a budget.
+// lockedMemoryBudget derives the budget from a ceiling; a zero ceiling produces none.
 func lockedMemoryBudget(limit enclave.LockedMemoryLimit) int64 {
 	if !limit.Bounded {
 		return unboundedLockedMemoryBudget
@@ -89,17 +53,8 @@ func lockedMemoryBudget(limit enclave.LockedMemoryLimit) int64 {
 	return limit.Bytes / lockedMemoryBudgetDenominator * lockedMemoryBudgetNumerator
 }
 
-// wipeLockedMemory destroys every enclave this process still holds. It is the
-// orderly-exit sweep: locked memory still held at this point is material that
-// should not outlive the process.
-//
-// Both of its results are reported rather than discarded. The count says
-// whether work outlived the shutdown -- often an ordering problem, sometimes
-// just a read that outlasted the sweep's retry budget -- and the error says
-// something wrote into memory it did not own, which must not vanish behind a
-// successful-looking exit.
-// wipeLockedMemoryTimeout bounds how long the shutdown sweep waits for a
-// borrow or another sweep before it skips the enclave and counts it as held.
+// wipeLockedMemory destroys every enclave still held and reports both the held count and any wipe error.
+// wipeLockedMemoryTimeout bounds how long the sweep waits on a borrow before counting the enclave as held.
 const wipeLockedMemoryTimeout = 2 * time.Second
 
 func wipeLockedMemory() {

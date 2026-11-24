@@ -22,17 +22,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// The binary's protected-memory lifecycle is two promises run() makes: install
-// the process budget BEFORE any command can allocate against it, and sweep
-// every enclave still held once the command returns -- on success AND on
-// failure, since the failure path is the one an early os.Exit would skip.
-//
-// Both are process-scoped and one-shot (SetAllocator refuses a second install,
-// and a lazily installed default counts as the first), so neither can be
-// observed from inside this test process once any other test has touched the
-// allocator. Each case therefore re-executes this test binary, which TestMain
-// routes straight to the helper: a fresh process in which run() is the first
-// thing to reach go-enclave, exactly as it is in the shipped binary.
+// run() installs the budget before any allocation and sweeps enclaves on every exit; each case re-executes the test binary to observe this in a fresh process.
 
 const (
 	// lifecycleHelperEnv selects the helper and carries the mode it runs in.

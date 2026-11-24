@@ -20,10 +20,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// startDualServer starts a non-FIPS bootstrap server that accepts BOTH suites,
-// returning it, the Noise public key, and the P-256 public key. This is the
-// mixed-fleet server a migration runs. The Noise path requires a real X25519
-// key, so this helper is !fips-only.
+// startDualServer starts a server accepting both suites and returns it with both public keys.
 func startDualServer(t *testing.T, bundler *mockCABundler) (*Server, *noiseproto.StaticKey, []byte) {
 	t.Helper()
 
@@ -109,10 +106,7 @@ func TestInterop_DualServerServesBothSuites(t *testing.T) {
 	})
 }
 
-// TestInterop_DowngradeIntoNoiseReaderFails proves the strong downgrade case: on
-// a server that CAN speak both suites, a MITM that flips a P-256 client's suite
-// byte to 0x01 does not produce a working Noise session -- the p256 body is not
-// a valid Noise message 1, so the handshake fails closed.
+// TestInterop_DowngradeIntoNoiseReaderFails checks that flipping a P-256 client's suite byte to 0x01 fails the handshake.
 func TestInterop_DowngradeIntoNoiseReaderFails(t *testing.T) {
 	srv, _, p256Pub := startDualServer(t, p256Bundler(t))
 
@@ -151,11 +145,7 @@ func TestInterop_NoiseSuiteStillWorks(t *testing.T) {
 	}
 }
 
-// A Noise static key that has been destroyed -- by its owner, or by a shutdown
-// sweep (enclave.WipeAll) -- while the server is still running must fail each
-// Noise connection that needs it, and nothing else: the handler survives,
-// keeps serving the other suite, and keeps answering later connections
-// (owner ruling 2026-08-23, point 3).
+// A destroyed Noise static key fails only Noise connections; the server keeps serving.
 func TestServer_NoiseKeyDestroyed_FailsOnlyThatConnection(t *testing.T) {
 	srv, noiseKey, p256Pub := startDualServer(t, p256Bundler(t))
 	noisePub := noiseKey.PublicBytes()

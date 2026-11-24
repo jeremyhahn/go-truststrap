@@ -17,29 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// The residual this package's adoption of go-enclave exists to close: the
-// KERNEL refusing to lock a page even though admission allowed the request.
-//
-// The budget tests elsewhere in this file's package prove the admission half --
-// a request refused before any syscall is made. They cannot reach this half,
-// because an allocator sized under RLIMIT_MEMLOCK never lets a request through
-// to a kernel that would say no. So this one inverts the sizing: the budget is
-// far ABOVE the ceiling, which makes the kernel the only thing left that can
-// refuse.
-//
-// Under memguard that refusal was not survivable. Its allocation path did not
-// report an mlock failure: it purged every protected buffer in the process --
-// tearing key material out of unrelated live handshakes -- and then panicked,
-// so a recover at the connection boundary could not undo the damage. The three
-// things asserted below are exactly the three that changes: the caller gets a
-// typed error, nothing panics, and an unrelated in-flight handshake is
-// untouched and still completes.
-//
-// It runs in a SUBPROCESS. RLIMIT_MEMLOCK is process-wide, so lowering it in
-// the test binary would reach every other test in the package, and a failure
-// between the lowering and the restore would leave the rest of the suite
-// running under a limit it never asked for. A child process cannot leak either
-// way.
+// With a budget above RLIMIT_MEMLOCK the kernel refuses the lock: expect a typed error, no panic, and an unaffected bystander handshake. Runs in a subprocess.
 
 // rlimitChildEnv routes the child invocation of the test below into the body
 // that actually constrains the process.
@@ -120,10 +98,7 @@ func constrainedRLimitChild(t *testing.T) {
 	processAllocator = func() (enclave.Allocator, error) { return allocator, nil }
 	t.Cleanup(func() { processAllocator = prev })
 
-	// Everything that has to lock memory is built BEFORE the ceiling drops,
-	// including the peer messages the flood replays: an initiator locks a
-	// schedule of its own, and preparing one afterwards would measure the wrong
-	// thing.
+	// Build everything that locks memory before lowering the ceiling.
 	static, err := GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
@@ -149,10 +124,7 @@ func constrainedRLimitChild(t *testing.T) {
 
 	lockedBefore := allocator.InUse()
 
-	// From here the process may lock nothing at all. Lowering the SOFT limit
-	// does not unlock what is already locked, so the bystander keeps its pages
-	// while every new request is refused -- which is precisely the shape of a
-	// process that has reached its ceiling with live connections on it.
+	// Lowering the soft limit keeps existing locks, so the bystander keeps its pages.
 	constrained := unix.Rlimit{Cur: 0, Max: original.Max}
 	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &constrained); err != nil {
 		t.Fatalf("setrlimit(RLIMIT_MEMLOCK, 0): %v", err)

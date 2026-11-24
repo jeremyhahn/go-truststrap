@@ -21,13 +21,7 @@ type syncCloser interface {
 // failures.
 var openDir = func(name string) (syncCloser, error) { return os.Open(name) }
 
-// syncDir flushes dir's own entries to disk. The rename that publishes a key
-// file is atomic, but on most filesystems the new directory entry is not
-// durable until the directory itself is synced: a crash before that could roll
-// the server back to its previous identity, or leave the key path absent
-// altogether. A filesystem with no directory-sync operation reports
-// errors.ErrUnsupported, which describes the filesystem rather than a failed
-// write and is the one error tolerated here.
+// syncDir fsyncs dir so the renamed key file is durable; errors.ErrUnsupported is tolerated.
 func syncDir(dir string) error {
 	d, err := openDir(dir)
 	if err != nil {

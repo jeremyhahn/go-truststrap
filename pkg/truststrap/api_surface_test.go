@@ -3,14 +3,7 @@
 
 package truststrap_test
 
-// This file is deliberately untagged and in an external test package: it
-// compiles under both the default and the "fips" build and therefore fails the
-// build if either one drops or changes an exported declaration. docs/fips.md
-// promises that the FIPS exemption removes no API -- a FIPS build refuses at
-// the point of use instead -- and this is what holds that promise to account.
-//
-// Assertions are compile-time only. Behaviour that differs between builds is
-// covered by the fips-tagged tests in each package.
+// Untagged compile-time check that the default and fips builds export the same API (docs/fips.md).
 
 import (
 	"context"
@@ -55,9 +48,7 @@ var (
 	_ error = noiseproto.ErrProtectedMemory
 	_ error = noiseproto.ErrSessionDestroyed
 
-	// Static keys cross the API only in their enclave-backed form, so an
-	// unprotected noise.DHKey cannot be configured (owner ruling 2026-09-22
-	// on #7).
+	// Static keys cross the API only in enclave-backed form.
 	_ = noiseproto.SessionConfig{LocalStaticKey: (*noiseproto.StaticKey)(nil)}
 )
 

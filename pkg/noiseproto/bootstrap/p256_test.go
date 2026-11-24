@@ -25,9 +25,7 @@ func p256Bundler(t *testing.T) *mockCABundler {
 	return &mockCABundler{bundle: pemBytes}
 }
 
-// startP256Server starts a bootstrap server that serves ONLY the approved P-256
-// suite, and returns it with the responder's public key. It is defined untagged
-// so the round-trip runs under make test AND make test-fips.
+// startP256Server starts a P-256-only server and returns its public key; untagged so it runs in both builds.
 func startP256Server(t *testing.T, bundler *mockCABundler) (*Server, []byte) {
 	t.Helper()
 
@@ -108,9 +106,7 @@ func TestP256_BootstrapRoundTrip(t *testing.T) {
 	}
 }
 
-// TestP256_WrongResponderKey proves the initiator authenticates the responder:
-// a client provisioned with a DIFFERENT P-256 public key must not complete the
-// handshake.
+// TestP256_WrongResponderKey checks a client with a different P-256 key cannot complete the handshake.
 func TestP256_WrongResponderKey(t *testing.T) {
 	srv, _ := startP256Server(t, p256Bundler(t))
 

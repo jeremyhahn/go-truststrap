@@ -13,17 +13,11 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
-// ErrConfigRead is returned when a configuration file is present but cannot be
-// opened or parsed. A file the operator named explicitly and that does not
-// exist is also a read failure: silently ignoring it would start the server on
-// values the operator never chose.
+// ErrConfigRead is returned when a configuration file exists, or was named explicitly, and cannot be read or parsed.
 var ErrConfigRead = errors.New("config: read failed")
 
 const (
-	// envPrefix is the product-level environment variable prefix. A key is
-	// settable as TRUSTSTRAP_<PATH>, the path uppercased with each level
-	// separator replaced by an underscore, so serve.listen is
-	// TRUSTSTRAP_SERVE_LISTEN.
+	// envPrefix makes serve.listen settable as TRUSTSTRAP_SERVE_LISTEN.
 	envPrefix = "TRUSTSTRAP"
 
 	// configName is the base name, without extension, of the configuration
@@ -41,14 +35,7 @@ const (
 // operator does not name a file, in descending precedence.
 var configSearchPaths = []string{".", "$HOME/.truststrap", "/etc/truststrap"}
 
-// loadConfig builds the configuration below the flag layer: the defaults, the
-// optional YAML file, and the TRUSTSTRAP_-prefixed environment, in ascending
-// precedence. Flags sit above the returned viper and are applied by the caller
-// under Flags().Changed(); see resolveListenAddr.
-//
-// configFile names a file explicitly. When it is empty, configName is searched
-// for across configSearchPaths and its absence is not an error, because the
-// file is optional.
+// loadConfig layers defaults, the optional YAML file (configFile, else configName on configSearchPaths) and TRUSTSTRAP_ environment; flags are applied by the caller.
 func loadConfig(configFile string) (*viper.Viper, error) {
 	v := viper.New()
 
@@ -81,11 +68,7 @@ func loadConfig(configFile string) (*viper.Viper, error) {
 	return v, nil
 }
 
-// resolveListenAddr applies the documented precedence -- flag, then
-// environment, then file, then default -- to the listen address. The viper
-// instance already resolves the lower three layers; flagChanged is what places
-// the flag above them, and it is the only correct test, because a flag left
-// unset is indistinguishable from one set to its default value.
+// resolveListenAddr applies flag, environment, file, default precedence; flagChanged is the only test that puts the flag on top.
 func resolveListenAddr(flagValue string, flagChanged bool, v *viper.Viper) string {
 	if flagChanged {
 		return flagValue

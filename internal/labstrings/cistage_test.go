@@ -66,12 +66,7 @@ func stagingScript(t *testing.T) string {
 	return script + "\n"
 }
 
-// TestCIStagingStep_GuardsTheEmptySecret answers Codex round 4 on #109: the
-// ci.yml step that stages the labstrings patterns file had no test of its
-// empty-secret guard. The script is read out of the workflow, not copied, so
-// a change to the step is tested as it ships, and it runs the way GitHub
-// Actions runs a `run:` step, with nothing of this process's environment but
-// PATH.
+// TestCIStagingStep_GuardsTheEmptySecret runs ci.yml's labstrings staging step as shipped, with only PATH in its environment.
 func TestCIStagingStep_GuardsTheEmptySecret(t *testing.T) {
 	script := stagingScript(t)
 	bash, err := exec.LookPath("bash")

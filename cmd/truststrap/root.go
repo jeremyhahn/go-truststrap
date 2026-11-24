@@ -75,14 +75,7 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
-// initLogging configures the global slog logger based on CLI flags.
-//
-//	--debug: LevelDebug with source location
-//	default: LevelInfo
-//	--quiet: LevelError (only errors shown)
-//
-// --debug takes precedence over --quiet.
-// --log-format selects the handler: "text" (default) or "json".
+// initLogging sets the slog level (--debug, default info, --quiet; --debug wins) and handler (--log-format text or json).
 func initLogging() {
 	switch {
 	case debug:

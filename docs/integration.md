@@ -19,8 +19,8 @@ The module requires Go 1.27+ and has no CGO dependencies (`CGO_ENABLED=0` compat
 - `github.com/jeremyhahn/go-enclave` -- protected memory for `pkg/p256proto`
   and `pkg/noiseproto`:
   mlock'd, guard-paged, canaried regions whose every failure is a returned
-  error. This is a **first-party module**, so it resolves from the internal
-  Gitea in development and CI (`GOPRIVATE=github.com/jeremyhahn/*` plus git's
+  error. This is a **first-party module**, so it resolves from a private
+  forge in development and CI (`GOPRIVATE=github.com/jeremyhahn/*` plus git's
   `insteadOf` rewrite -- conventions/dependency-resolution.md §6) and from
   GitHub for public builds. Container builds get the same wiring through an
   optional BuildKit secret; see both `Dockerfile`s.

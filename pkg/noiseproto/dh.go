@@ -10,17 +10,9 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// This file and dh_fips.go are the package's entire FIPS boundary: every
-// X25519 operation goes through one of the two helpers below, so a "fips"
-// build swaps this file out and no non-approved key agreement remains. The
-// exported API is unaffected -- the same types, functions and methods exist in
-// both builds; the FIPS build refuses at the point of use. See docs/fips.md.
+// This file and dh_fips.go are the package's FIPS boundary; every X25519 operation goes through the helpers below. See docs/fips.md.
 
-// nkCipherSuite returns the Noise cipher suite used by this package:
-// 25519_ChaChaPoly_SHA256. Its embedded DH function is also what generates a
-// session's static key pair, so this one helper covers both key generation and
-// the handshake. It is a variable so that tests can inject the refusal a FIPS
-// build produces and cover the caller's error path in either build.
+// nkCipherSuite returns the 25519_ChaChaPoly_SHA256 suite used for key generation and handshakes; a variable so tests can inject the FIPS refusal.
 var nkCipherSuite = func() (noise.CipherSuite, error) {
 	return noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256), nil
 }

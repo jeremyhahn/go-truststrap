@@ -34,17 +34,14 @@ func (m *mockTLSAResolver) LookupTLSA(_ context.Context, _ string, _ uint16) ([]
 	return m.records, m.err
 }
 
-// daneTestServer is an HTTPS test server whose serving chain is anchored at
-// a freshly minted CA, so connections pass DANE channel verification against
-// the record returned by tlsaRecord.
+// daneTestServer is an HTTPS test server anchored at a fresh CA matching tlsaRecord.
 type daneTestServer struct {
 	server *httptest.Server
 	caCert *x509.Certificate
 	caPEM  []byte
 }
 
-// tlsaRecord returns a DANE-TA (usage=2) TLSA record matching the SPKI of
-// the server's CA certificate.
+// tlsaRecord returns a DANE-TA record matching the server CA's SPKI.
 func (s *daneTestServer) tlsaRecord() *dane.TLSARecord {
 	sum := sha256.Sum256(s.caCert.RawSubjectPublicKeyInfo)
 	return &dane.TLSARecord{
@@ -55,9 +52,7 @@ func (s *daneTestServer) tlsaRecord() *dane.TLSARecord {
 	}
 }
 
-// newDANETestServer starts an HTTPS test server presenting a leaf+CA chain
-// with loopback IP SANs so DANE-TA verification of the serving channel
-// (including the hostname check) succeeds.
+// newDANETestServer starts an HTTPS server presenting leaf and CA with loopback IP SANs.
 func newDANETestServer(t *testing.T, handler http.Handler) *daneTestServer {
 	t.Helper()
 
@@ -387,8 +382,7 @@ func TestDANEBootstrapper_FetchCABundle_SuccessWithDANEVerification(t *testing.T
 func TestDANEBootstrapper_FetchCABundle_DANEVerificationFails(t *testing.T) {
 	bundle := newTestCertBundle(t)
 
-	// The serving channel passes DANE verification, but the served bundle
-	// contains no certificate matching a DANE-TA record.
+	// The channel passes DANE, but no bundle certificate matches a DANE-TA record.
 	ds := newDANETestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(bundle.combinedPEM)

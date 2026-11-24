@@ -338,12 +338,7 @@ func TestHandshake_ReleasesItsScheduleOnSuccess(t *testing.T) {
 	}
 }
 
-// Destroy latches the handshake as unusable BEFORE releasing its buffers.
-// Without the latch, a later call proceeds to generate an ephemeral, run ECDH
-// and reach the key schedule -- secret-bearing work on an object the caller
-// explicitly discarded -- and then surfaces as a misleading ErrCipher from the
-// destroyed buffers rather than a lifecycle error. Every operation is checked,
-// on both a fresh and a partially progressed handshake.
+// Destroy latches the handshake unusable before releasing buffers; every operation is checked on fresh and progressed handshakes.
 func TestHandshake_DestroyRefusesEveryLaterOperation(t *testing.T) {
 	static, err := GenerateStaticKey()
 	if err != nil {
@@ -439,9 +434,7 @@ func TestHandshake_DestroyRefusesEveryLaterOperation(t *testing.T) {
 		}
 	})
 
-	// The refusal must be the LIFECYCLE error, not a cryptographic one. An
-	// ErrCipher here would mean the call had already run ECDH and reached the
-	// destroyed key schedule before failing.
+	// The refusal must be the lifecycle error, not ErrCipher.
 	t.Run("the refusal is a lifecycle error, not a cipher error", func(t *testing.T) {
 		i := newInitiator(t)
 		i.Destroy()

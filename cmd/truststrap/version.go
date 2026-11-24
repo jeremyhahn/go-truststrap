@@ -11,8 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is set at build time via -ldflags "-X main.version=...".
-// Falls back to reading the VERSION file at runtime.
+// version is set at build time via -ldflags "-X main.version=...", else read from the VERSION file.
 var version string
 
 var versionCmd = &cobra.Command{
@@ -25,16 +24,13 @@ var versionCmd = &cobra.Command{
 	},
 }
 
-// resolveVersion returns the version string, preferring the build-time value
-// and falling back to reading the VERSION file from the working directory or
-// known locations.
+// resolveVersion returns the build-time version, else the VERSION file from the working directory or known locations.
 func resolveVersion() string {
 	if version != "" {
 		return version
 	}
 
-	// Try to read VERSION from the current working directory, then from
-	// the binary's directory if available.
+	// Try the working directory, then the binary's directory.
 	paths := []string{"VERSION"}
 
 	execPath, err := os.Executable()

@@ -23,10 +23,7 @@ const ExemptFile = "releasability-exempt.txt"
 // heuristic git uses to call a file binary.
 const binarySniff = 8 << 10
 
-// MaxTextSize is the largest tracked file the gate accepts as reviewable text.
-// Nothing hand-written in this tree comes near it; a file past it is generated
-// output or a capture, which is exactly what has to be looked at by a person
-// before it is published.
+// MaxTextSize is the largest tracked file accepted as reviewable text.
 const MaxTextSize = 1 << 20
 
 // Exemption is one entry of ExemptFile: an exact tracked path and why it may be
@@ -39,10 +36,7 @@ type Exemption struct {
 	Reason string
 }
 
-// ParseExemptions reads ExemptFile's format: one `<path> <reason>` per line,
-// blank lines and `#` comments ignored. A path with no reason, or a path listed
-// twice, is an *ExemptionError: an unexplained exemption is a silent skip, which
-// is exactly what the list exists to prevent.
+// ParseExemptions reads `<path> <reason>` lines, skipping blanks and # comments; a missing reason or duplicate path is an *ExemptionError.
 func ParseExemptions(r io.Reader) ([]Exemption, error) {
 	var out []Exemption
 	seen := map[string]bool{}
@@ -81,15 +75,7 @@ func LoadExemptions(root string) ([]Exemption, error) {
 	return ParseExemptions(f)
 }
 
-// Unscannable reports every tracked regular file the gate cannot vouch for as
-// text -- binary (a NUL in its first 8 KiB) or larger than MaxTextSize -- that
-// is not listed in exempt, and every exemption that names no such file. The
-// content scan still reads these files; this check exists because a pattern
-// scan of a blob or a huge capture is no evidence it is clean, so publishing one
-// is a decision a person has to write down.
-//
-// A listed file absent from the work tree is skipped, as Scan skips it;
-// anything else that cannot be read is a *ReadError, never a pass.
+// Unscannable reports tracked binary or oversized files not listed in exempt, and exemptions naming no such file; absent files are skipped, other read failures are *ReadError.
 func Unscannable(root string, files []string, exempt []Exemption) ([]ForbiddenFinding, error) {
 	listed := make(map[string]bool, len(exempt))
 	for _, e := range exempt {

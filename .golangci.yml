@@ -5,10 +5,7 @@ version: "2"
 run:
   modules-download-mode: readonly
 linters:
-  # devops.md §8 requires staticcheck, errcheck, unused, ineffassign, misspell
-  # and gocritic to be enabled. The first four are part of golangci-lint v2's
-  # "standard" default set; they are listed explicitly anyway so the mandatory
-  # suite is readable here rather than inferred from the tool's defaults.
+  # The mandatory linters, listed explicitly.
   enable:
     - bodyclose
     - durationcheck

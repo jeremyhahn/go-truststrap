@@ -1,7 +1,7 @@
 ### Changed
 
 - **BREAKING: `pkg/noiseproto` holds Noise static keys in go-enclave, and
-  `memguard` leaves `go.mod`** (#7, owner rulings 2026-08-23 and 2026-09-22;
+  `memguard` leaves `go.mod`** (#7;
   second PR of the go-enclave adoption wave after #19). `StaticKey`'s private
   scalar moves from a memguard `LockedBuffer` to a go-enclave `MemoryEnclave`,
   admitted against the process's locked-memory budget

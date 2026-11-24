@@ -15,10 +15,7 @@ var (
 	// ErrServerAlreadyStarted indicates Start was called on an already-running server.
 	ErrServerAlreadyStarted = errors.New("bootstrap: server already started")
 
-	// ErrShutdownIncomplete indicates Stop's drain deadline expired while
-	// handshake workers were still running. The server is no longer accepting
-	// connections, but material the workers read -- notably the static key's
-	// protected pages -- must be retained rather than destroyed.
+	// ErrShutdownIncomplete indicates Stop's deadline expired with workers running; keep the static key's pages.
 	ErrShutdownIncomplete = errors.New("bootstrap: shutdown incomplete, connections still draining")
 
 	// ErrMaxConnections indicates the server has reached its maximum concurrent connection limit.
@@ -36,10 +33,7 @@ var (
 	// ErrConnectionFailed indicates a TCP connection could not be established.
 	ErrConnectionFailed = errors.New("bootstrap: connection failed")
 
-	// ErrClientClosed indicates Client.Close ended the operation: the socket was
-	// closed while Connect or GetCABundle was in flight, or Close arrived while
-	// Connect was still dialing. It is the Kind of a ClientError whose Err is
-	// the I/O error the closed socket produced, if any.
+	// ErrClientClosed indicates Client.Close ended an in-flight Connect or GetCABundle.
 	ErrClientClosed = errors.New("bootstrap: client closed")
 
 	// ErrAlreadyConnected indicates Connect was called on a client that already
@@ -59,12 +53,7 @@ var (
 	// ErrHandshakeFailed indicates the Noise_NK handshake did not complete successfully.
 	ErrHandshakeFailed = errors.New("bootstrap: handshake failed")
 
-	// ErrFIPSUnsupported indicates the Noise_NK suite (0x01) needs X25519 key
-	// agreement, which is refused whenever FIPS is enforced: a "fips" build (see
-	// docs/fips.md) or a process running under GODEBUG=fips140=only. The
-	// negotiation returns it before any key agreement -- the client refuses to
-	// offer Noise, and the server refuses to accept it -- so a downgrade to
-	// Noise is unreachable against a FIPS peer. See docs/bootstrap-negotiation.md.
+	// ErrFIPSUnsupported indicates the Noise suite was refused because FIPS is enforced; both ends refuse it before key agreement.
 	ErrFIPSUnsupported = errors.New("bootstrap: X25519 is unavailable under FIPS; the P-256 suite is required")
 
 	// ErrUnsupportedSuite indicates the client's first frame declared a suite
@@ -79,11 +68,7 @@ var (
 	ErrRateLimited = errors.New("bootstrap: rate limited")
 )
 
-// ClientError is returned by Client.Connect and Client.GetCABundle when an
-// operation fails at a named stage. Kind is the sentinel that classifies the
-// failure -- ErrConnectionFailed, ErrHandshakeFailed, ErrClientClosed,
-// ErrInvalidRequest -- and Err the underlying cause, if any. Unwrap exposes
-// both, so errors.Is matches the sentinel and the cause alike.
+// ClientError reports a Connect or GetCABundle failure at a named stage; errors.Is matches both Kind and Err.
 type ClientError struct {
 	// Stage names where the operation failed, e.g. "dial", "read msg2",
 	// "write request".
@@ -122,16 +107,7 @@ func (e ServerError) Error() string {
 	return "bootstrap: server error: " + e.Message
 }
 
-// handshakeError is returned by the server's per-connection handshake when it
-// fails at a named stage. It has the same shape as ClientError for the same
-// reason: Kind classifies the failure (ErrHandshakeFailed, ErrUnsupportedSuite)
-// and Err carries the cause -- for the P-256 suite that is p256proto's typed
-// error, which itself wraps go-enclave's ErrBudgetExhausted or
-// ErrLockedMemoryUnavailable when the process budget refused the connection.
-// Unwrap exposes both, so errors.Is reaches the sentinel and the cause alike.
-//
-// It is unexported because it never leaves the server: the connection handler
-// logs it and closes that one connection.
+// handshakeError is a server handshake failure at a named stage; errors.Is matches both Kind and Err. Logged per connection, never returned.
 type handshakeError struct {
 	// Stage names where the handshake failed, e.g. "process msg1".
 	Stage string
@@ -157,10 +133,7 @@ func (e handshakeError) Unwrap() []error {
 	return []error{e.Kind, e.Err}
 }
 
-// configError is returned by NewServer when a ServerConfig cannot be used. Kind
-// classifies it (ErrHandshakeFailed for a missing or dead static key,
-// ErrMaxConnections for an out-of-range limit) and Detail says what was wrong.
-// It is unexported because callers classify with errors.Is against Kind.
+// configError is returned by NewServer for an unusable ServerConfig; callers classify with errors.Is against Kind.
 type configError struct {
 	// Kind is the sentinel classifying the failure.
 	Kind error

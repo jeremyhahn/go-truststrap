@@ -12,10 +12,7 @@ import (
 // The sentinels classify a failure; ProtocolError carries the detail. Callers
 // test with errors.Is against a sentinel and never against a message.
 var (
-	// ErrInvalidPublicKey indicates a peer's public key could not be decoded
-	// as a point on P-256. Decoding is the validation: crypto/ecdh rejects
-	// points that are not on the curve, so a decode failure is where an
-	// invalid-curve attack stops.
+	// ErrInvalidPublicKey indicates a peer public key is not a valid P-256 point.
 	ErrInvalidPublicKey = errors.New("p256proto: invalid public key")
 
 	// ErrInvalidPrivateKey indicates a static private key could not be decoded
@@ -38,10 +35,7 @@ var (
 	// no negotiation, so this is a misconfigured or hostile peer.
 	ErrUnsupportedSuite = errors.New("p256proto: unsupported cipher suite")
 
-	// ErrAuthentication indicates an AEAD tag did not verify. In a handshake
-	// this means the peer did not hold the expected static key, or the
-	// transcripts diverged -- a tampered suite byte, a different responder
-	// static key, or a modified message.
+	// ErrAuthentication indicates an AEAD tag did not verify: wrong static key or diverged transcript.
 	ErrAuthentication = errors.New("p256proto: authentication failed")
 
 	// ErrHandshakeState indicates a handshake method was called out of order.
@@ -51,34 +45,10 @@ var (
 	// or was constructed with a geometry this protocol cannot use.
 	ErrCipher = errors.New("p256proto: cipher construction failed")
 
-	// ErrTransportConsumed indicates a Transport direction was used more than
-	// the approved exchange permits. TSBOOT1 is one request and one response per
-	// connection, so each Transport seals exactly once and opens exactly once. A
-	// second Seal, or a second successful Open (a replayed authenticated frame),
-	// returns this instead of completing -- the one-request/one-response contract
-	// is enforced by the code, not merely documented (owner ruling on #18). A
-	// frame that fails authentication does NOT consume the single Open, so a
-	// garbage or forged frame cannot deny the legitimate one.
+	// ErrTransportConsumed indicates a second Seal or a second successful Open on a Transport; failed Opens do not consume it.
 	ErrTransportConsumed = errors.New("p256proto: transport direction already used")
 
-	// ErrProtectedMemory indicates locked memory could not be allocated, filled
-	// or read. It classifies every refusal from go-enclave and always carries
-	// the enclave error as its cause, so errors.Is reaches the allocator's own
-	// sentinel too: enclave.ErrBudgetExhausted when the process's locked-memory
-	// budget refused the allocation before any was requested,
-	// enclave.ErrLockedMemoryUnavailable when the kernel refused the lock
-	// despite admission, and enclave.ErrEnclaveDestroyed for a buffer already
-	// released.
-	//
-	// Responder.ReadMessage1 returns it for the one connection that was
-	// refused, having locked nothing and mutated no state. It is not a protocol
-	// failure: the caller drops that connection and keeps serving, and every
-	// other in-flight handshake is untouched. That is what keeps a
-	// connect-cost flood of unauthenticated message 1 values from becoming a
-	// denial of service (see protected.go).
-	//
-	// It replaces ErrResourceExhausted, which classified the hand-rolled
-	// concurrency cap retired in the go-enclave adoption (#19).
+	// ErrProtectedMemory indicates locked memory could not be allocated, filled or read; it wraps the go-enclave error and fails only that connection.
 	ErrProtectedMemory = errors.New("p256proto: protected memory unavailable")
 
 	// ErrBufferSize indicates a caller-supplied destination buffer was too
@@ -87,15 +57,7 @@ var (
 	ErrBufferSize = errors.New("p256proto: destination buffer too small")
 )
 
-// ProtocolError is this package's error type. It carries the operation that
-// failed, the sentinel that classifies it, and any underlying cause.
-//
-// errors.Is matches BOTH the sentinel and the cause, because Unwrap returns
-// them together: errors.Is(err, ErrAuthentication) classifies, and
-// errors.Is(err, someLowerLevelError) still reaches the original. This is the
-// Layer 0 equivalent of the go-qrdb error framework, which this package cannot
-// import -- go-truststrap has no local dependencies and must not fork qrdb's
-// (conventions/errors.md, and the SDK Consumption Rule in the agent spec).
+// ProtocolError carries the failed operation, the classifying sentinel and the cause; errors.Is matches both.
 type ProtocolError struct {
 	// Op is the operation that failed, e.g. "ReadMessage1".
 	Op string

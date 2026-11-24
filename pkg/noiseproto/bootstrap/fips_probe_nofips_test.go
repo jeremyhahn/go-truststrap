@@ -16,35 +16,20 @@ import (
 	"testing"
 )
 
-// The suite selector decides availability by probing the process, so the three
-// ways a process can lose X25519 -- or not -- are pinned separately here:
-//
-//   - GODEBUG=fips140=on loads the Go Cryptographic Module but still permits
-//     non-approved algorithms, so Noise stays available and stays the default.
-//   - GODEBUG=fips140=only refuses X25519 at runtime, so Noise is refused and
-//     P-256 is required, even in a binary built without -tags fips.
-//   - -tags fips is covered by negotiation_fips_test.go, which runs only in that
-//     build.
-//
-// The two runtime modes are fixed at process start, so each runs in a child
-// copy of this test binary with the GODEBUG it needs. The child runs the real
-// handshake against a real server; the parent only checks that it passed.
+// fips140=on keeps Noise available; fips140=only refuses it at runtime. Each mode runs in a child test process.
 
 // fipsChildEnv marks a process as the child of a runtime-mode test and names
 // the scenario it runs.
 const fipsChildEnv = "TRUSTSTRAP_FIPS140_CHILD"
 
-// runInFIPS140Mode re-executes this test binary with GODEBUG=fips140=<mode>,
-// narrowed to the calling test, and fails if the child does. The child sees
-// fipsChildEnv set and runs the scenario in-process.
+// runInFIPS140Mode re-executes this test binary with GODEBUG=fips140=<mode> for the calling test and fails if the child does.
 func runInFIPS140Mode(t *testing.T, mode string) {
 	t.Helper()
 
 	// The command is this test binary and the arguments are this test's own
 	// name: nothing here comes from outside the process.
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v") //nolint:gosec // re-executes the test binary itself
-	// os/exec keeps the last value for a duplicated key, so this overrides any
-	// GODEBUG the parent was started with.
+	// The last duplicate key wins, overriding the parent's GODEBUG.
 	cmd.Env = append(os.Environ(), fipsChildEnv+"="+mode, "GODEBUG=fips140="+mode)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -66,10 +51,7 @@ func TestProbe_MatchesX25519Availability(t *testing.T) {
 	}
 }
 
-// TestProbe_PermissiveRuntimeKeepsNoise pins GODEBUG=fips140=on: the module is
-// loaded, crypto/fips140.Enabled reports true, and X25519 is still permitted --
-// so a Noise-only client completes, and a client holding both keys with no
-// explicit suite still defaults to Noise rather than being switched to P-256.
+// TestProbe_PermissiveRuntimeKeepsNoise checks that under fips140=on Noise still works and stays the default.
 func TestProbe_PermissiveRuntimeKeepsNoise(t *testing.T) {
 	if os.Getenv(fipsChildEnv) == "" {
 		runInFIPS140Mode(t, "on")
@@ -100,10 +82,7 @@ func TestProbe_PermissiveRuntimeKeepsNoise(t *testing.T) {
 	})
 }
 
-// TestProbe_RuntimeOnlyEnforcementRequiresP256 pins GODEBUG=fips140=only with
-// no build tag, the shape a release pipeline that sets GOFIPS140 and nothing
-// else produces: X25519 is refused at runtime, so the Noise suite must be
-// refused before any handshake and the approved suite must complete.
+// TestProbe_RuntimeOnlyEnforcementRequiresP256 checks that under fips140=only without the build tag Noise is refused and P-256 completes.
 func TestProbe_RuntimeOnlyEnforcementRequiresP256(t *testing.T) {
 	if os.Getenv(fipsChildEnv) == "" {
 		runInFIPS140Mode(t, "only")

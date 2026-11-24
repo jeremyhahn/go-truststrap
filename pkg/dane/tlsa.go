@@ -33,10 +33,7 @@ var matcherFuncs = map[uint8]MatcherFunc{
 	MatchingSHA512: func(d []byte) []byte { h := sha512.Sum512(d); return h[:] },
 }
 
-// ComputeTLSAData computes the TLSA Certificate Association Data for the given
-// certificate using the specified selector and matching type. The selector
-// determines which part of the certificate is used (full cert or SPKI), and
-// the matching type determines the hash algorithm applied.
+// ComputeTLSAData computes the association data for cert with the given selector and matching type.
 func ComputeTLSAData(cert *x509.Certificate, selector, matchingType uint8) ([]byte, error) {
 	if cert == nil {
 		return nil, ErrInvalidCertificate
@@ -53,10 +50,7 @@ func ComputeTLSAData(cert *x509.Certificate, selector, matchingType uint8) ([]by
 	return matcherFn(selected), nil
 }
 
-// VerifyTLSA verifies a single certificate against a single TLSA record.
-// It computes the expected association data from the certificate using the
-// record's selector and matching type, then compares using constant-time
-// comparison to prevent timing attacks.
+// VerifyTLSA verifies one certificate against one TLSA record in constant time.
 func VerifyTLSA(cert *x509.Certificate, record *TLSARecord) error {
 	if cert == nil {
 		return ErrInvalidCertificate
@@ -74,10 +68,7 @@ func VerifyTLSA(cert *x509.Certificate, record *TLSARecord) error {
 	return nil
 }
 
-// VerifyTLSABundle verifies that at least one certificate in the bundle matches
-// at least one TLSA record. This supports scenarios where multiple certificates
-// (e.g., a chain) may be presented and any valid match satisfies the DANE policy.
-// Returns nil on success, ErrTLSAVerificationFailed if no match is found.
+// VerifyTLSABundle returns nil if any certificate matches any record, else ErrTLSAVerificationFailed.
 func VerifyTLSABundle(certs []*x509.Certificate, records []*TLSARecord) error {
 	if len(certs) == 0 {
 		return ErrInvalidCertificate
