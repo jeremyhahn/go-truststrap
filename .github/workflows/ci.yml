@@ -313,6 +313,11 @@ jobs:
 
       - name: actionlint
         run: actionlint
+      # The code-review template's tests: drafts, only code reviewed, the trusted-PR guard.
+      - name: Code review template tests
+        run: |
+          python3 -I .github/workflows/testdata/code-review-v51213-tests.py .github/workflows/code-review.yml
+          python3 -I .github/workflows/testdata/code-review-v51214-tests.py .github/workflows/code-review.yml
 
       # automerge v13.2's approver-list check, run as the workflow runs it
       # (Codex round 5 on #109): the handbook template's regression cases,
