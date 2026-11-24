@@ -93,15 +93,7 @@ func TestStaticKey_Destroy(t *testing.T) {
 	nilKey.Destroy()
 }
 
-// TestStaticKey_DestroyPreventsAuthentication proves a destroyed key cannot
-// authenticate: it releases crypto/ecdh's private key so no ECDH can run, and
-// NewResponder refuses it, so it can neither create nor complete a responder
-// handshake. The public identity survives (it is not secret).
-//
-// Mutation: make Destroy skip `k.priv = nil` and the white-box assertion below
-// goes red -- a destroyed key would otherwise still complete a handshake through
-// crypto/ecdh's retained private key, which is exactly the use-after-Destroy
-// this guards.
+// TestStaticKey_DestroyPreventsAuthentication checks a destroyed key releases its ecdh key and is refused by NewResponder, while PublicBytes survives.
 func TestStaticKey_DestroyPreventsAuthentication(t *testing.T) {
 	key, err := GenerateStaticKey()
 	if err != nil {

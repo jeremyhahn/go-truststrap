@@ -188,8 +188,7 @@ func (b *AutoBootstrapper) Close() error {
 	return nil
 }
 
-// tryMethod creates a bootstrapper from the factory, applies a per-method
-// timeout, and attempts to fetch the CA bundle.
+// tryMethod creates the method's bootstrapper and fetches the CA bundle under a per-method timeout.
 func (b *AutoBootstrapper) tryMethod(
 	ctx context.Context,
 	method Method,

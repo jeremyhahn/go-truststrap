@@ -48,11 +48,7 @@ const (
 	noiseOpGetCABundle = "get_ca_bundle"
 )
 
-// Suite identifiers for NoiseConfig.Suite. They are the bootstrap wire's own
-// suite bytes, re-exported here so a caller configuring this facade needs no
-// import of the transport packages beneath it. The values are single-sourced in
-// pkg/p256proto, so the layers cannot drift apart. See
-// docs/bootstrap-negotiation.md.
+// Suite identifiers for NoiseConfig.Suite, the bootstrap wire's suite bytes from pkg/p256proto.
 const (
 	// SuiteNoiseNK selects Noise_NK_25519_ChaChaPoly_SHA256. It is not
 	// FIPS-approved: the pattern mandates X25519 key agreement.
@@ -120,19 +116,12 @@ type NoiseBootstrapper struct {
 	config noiseboot.ClientConfig
 	logger *slog.Logger
 
-	// mu guards fetch: the one fetch in flight, or nil when idle. Close
-	// revokes the fetch, cancels its context and closes its client's socket,
-	// which ends whichever read the fetch is blocked in; the fetch then finds
-	// its ownership revoked, reports ErrClosed, and releases its own client on
-	// the way out, so nothing is left for a later fetch to collide with.
+	// mu guards fetch, the one fetch in flight; Close revokes it and closes its socket.
 	mu    sync.Mutex
 	fetch *noiseFetch
 }
 
-// noiseFetch is one in-flight FetchCABundle: the transport client it drives,
-// the cancellation Close uses to interrupt it, and the hook that closes the
-// client's socket when the fetch's context ends -- so a caller's own cancel
-// interrupts a blocked read exactly as Close does.
+// noiseFetch is one in-flight FetchCABundle: its client, its cancel func and the hook that closes the socket when its context ends.
 type noiseFetch struct {
 	client *noiseboot.Client
 	cancel context.CancelFunc
@@ -204,10 +193,7 @@ func NewNoiseBootstrapper(cfg *NoiseConfig) (*NoiseBootstrapper, error) {
 	}, nil
 }
 
-// decodeNoiseServerKey decodes one hex-encoded server public key and checks its
-// size. An empty string decodes to no key: that suite is simply not offered.
-// Anything else that does not decode to exactly size bytes is a configuration
-// defect, because a key of the wrong size cannot belong to either suite.
+// decodeNoiseServerKey decodes one hex key of exactly size bytes; empty means the suite is not offered.
 func decodeNoiseServerKey(field, keyHex string, size int) ([]byte, error) {
 	if keyHex == "" {
 		return nil, nil
@@ -225,11 +211,7 @@ func decodeNoiseServerKey(field, keyHex string, size int) ([]byte, error) {
 	return key, nil
 }
 
-// decodeNoiseP256ServerKey decodes the hex-encoded P-256 responder point and
-// parses it with crypto/ecdh, the same parser the transport uses at connect
-// time. A point with the wrong prefix, or coordinates that are not on the
-// curve, is therefore refused here with ErrInvalidConfig rather than after a
-// connection has been dialed. An empty string decodes to no key.
+// decodeNoiseP256ServerKey decodes and parses the P-256 point with crypto/ecdh; empty means no key.
 func decodeNoiseP256ServerKey(keyHex string) ([]byte, error) {
 	key, err := decodeNoiseServerKey(noiseFieldServerP256StaticKey, keyHex, noiseP256PublicKeySize)
 	if err != nil || key == nil {
@@ -381,12 +363,7 @@ func (b *NoiseBootstrapper) begin(ctx context.Context) (*noiseFetch, context.Con
 	return f, fetchCtx, nil
 }
 
-// connect completes the selected suite's handshake for f. The suite is chosen
-// by the transport layer, which refuses one that is unavailable in this process
-// before any bytes are sent. A handshake ended -- or, in the narrow window
-// before this returns, completed -- after Close revoked the fetch is reported as
-// ErrClosed rather than used; the connection is closed by end, which is
-// deferred by the caller in every case.
+// connect runs the selected suite's handshake for f; a handshake that ends after Close revoked f reports ErrClosed.
 func (b *NoiseBootstrapper) connect(f *noiseFetch, ctx context.Context) error {
 	if err := b.outcome(f, ctx, f.client.Connect(ctx)); err != nil {
 		return err
@@ -395,14 +372,7 @@ func (b *NoiseBootstrapper) connect(f *noiseFetch, ctx context.Context) error {
 	return nil
 }
 
-// outcome maps the result of one leg of f onto its ownership and context. A
-// leg of a fetch that Close has revoked reports ErrClosed -- as a
-// NoiseInterruptedError carrying the transport error the closed socket
-// produced, if any -- whether the leg failed or completed. A leg of a fetch
-// still owned that failed after its context ended reports the context's error
-// -- the caller's cancellation, or the OperationTimeout -- the same way, since
-// the transport saw only the socket that the context's end closed. Otherwise
-// the leg's own result.
+// outcome reports ErrClosed for a revoked fetch, the context error for an ended one, else the leg's own result.
 func (b *NoiseBootstrapper) outcome(f *noiseFetch, ctx context.Context, err error) error {
 	if !b.owns(f) {
 		if err != nil {
@@ -424,11 +394,7 @@ func (b *NoiseBootstrapper) owns(f *noiseFetch) bool {
 	return b.fetch == f
 }
 
-// end releases f: it is deregistered if still in flight, its context and the
-// hook on it are released, and its client -- and so any connection the
-// transport established -- is closed. It runs on every path out of a fetch, so
-// the fetch's own goroutine always closes what it opened, whether or not Close
-// got there first.
+// end deregisters f, releases its context and closes its client; it runs on every path out of a fetch.
 func (b *NoiseBootstrapper) end(f *noiseFetch) {
 	b.mu.Lock()
 	if b.fetch == f {

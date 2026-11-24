@@ -154,8 +154,7 @@ func runDANEFetch(cmd *cobra.Command, args []string) error {
 		serverURL = fmt.Sprintf("https://%s:%d", hostname, port)
 	}
 
-	// Construct a TLS config whose sole verifier is DANE/TLSA validation
-	// of the presented chain (RFC 7671).
+	// The only verifier is DANE/TLSA validation of the presented chain (RFC 7671).
 	tlsCfg, err := dane.NewVerifiedTLSConfigFromRecords(records, hostname)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)

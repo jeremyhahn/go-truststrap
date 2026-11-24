@@ -47,12 +47,7 @@ func unsetEnv(t *testing.T, key string) {
 	})
 }
 
-// setListenFlag sets --listen the way an operator would -- through the flag
-// set, so the flag is marked changed and the flag layer actually applies --
-// and restores both the value and the changed bit when the test ends.
-// Assigning the bound variable directly is not equivalent: an unset flag does
-// not take precedence over configuration, which is the whole point of the
-// Changed() test.
+// setListenFlag sets --listen through the flag set so it is marked changed, and restores value and changed bit at cleanup.
 func setListenFlag(t *testing.T, addr string) {
 	t.Helper()
 

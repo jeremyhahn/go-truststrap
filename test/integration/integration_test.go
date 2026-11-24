@@ -44,13 +44,7 @@ var (
 	corednsCmd *exec.Cmd
 )
 
-// TestMain orchestrates integration test infrastructure:
-// 1. Locate project root and CLI binary
-// 2. Generate fresh fixtures into a temporary directory
-// 3. Load metadata and CA bundle
-// 4. Start CoreDNS
-// 5. Run tests
-// 6. Tear down CoreDNS
+// TestMain locates the CLI, generates fixtures, starts CoreDNS, runs the tests and stops CoreDNS.
 func TestMain(m *testing.M) {
 	var err error
 
@@ -104,11 +98,7 @@ func TestMain(m *testing.M) {
 		fail("reading CA bundle: %v", err)
 	}
 
-	// The suite needs a real CoreDNS to serve the TLSA records the DANE
-	// resolver validates. Say so plainly rather than failing later inside
-	// exec.Start with a bare "file not found": this suite ran green on one
-	// workstation and nowhere else precisely because the dependency was
-	// implicit. `make integration-test` builds an image that has it.
+	// The suite needs coredns on PATH; `make integration-test` builds an image that has it.
 	if _, err := exec.LookPath("coredns"); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR: coredns is not on PATH.")
 		fmt.Fprintln(os.Stderr, "  The integration suite drives a real CoreDNS instance.")
@@ -295,9 +285,7 @@ func TestDANEShow(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // CLI: dane generate (single record, default DANE-TA 2 1 1)
-// ---------------------------------------------------------------------------
 
 func TestDANEGenerate(t *testing.T) {
 	serverCert := filepath.Join(testdataDir, "server.pem")
@@ -317,19 +305,14 @@ func TestDANEGenerate(t *testing.T) {
 		t.Fatalf("expected TLSA 2 1 1 record in output:\n%s", stdout)
 	}
 
-	// The DANE-TA SPKI hash of the server cert should NOT match the DANE-TA
-	// hash from metadata (which is from the CA cert). They are different certs.
-	// But the hash in the output IS the SPKI hash of the server cert, which
-	// should match the DANE-EE hash (same cert, same SPKI, same algo).
+	// The output hash is the server cert's SPKI hash, so it matches DANE-EE, not the CA's DANE-TA.
 	if !strings.Contains(stdout, metaDANEEEHash) {
 		t.Fatalf("DANE generate hash does not match expected server SPKI hash %s:\n%s",
 			metaDANEEEHash, stdout)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: dane generate --all (all common DANE-TA combinations)
-// ---------------------------------------------------------------------------
+// CLI: dane generate --all
 
 func TestDANEGenerateAll(t *testing.T) {
 	serverCert := filepath.Join(testdataDir, "server.pem")
@@ -367,9 +350,7 @@ func TestDANEGenerateAll(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: dane verify (DANE-EE: server cert verified against real DNS)
-// ---------------------------------------------------------------------------
+// CLI: dane verify (DANE-EE)
 
 func TestDANEVerifyServerCert(t *testing.T) {
 	dnsServer := "127.0.0.1:" + metaDNSPort
@@ -397,9 +378,7 @@ func TestDANEVerifyServerCert(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: dane verify (DANE-TA: CA cert verified against real DNS)
-// ---------------------------------------------------------------------------
+// CLI: dane verify (DANE-TA)
 
 func TestDANEVerifyCACert(t *testing.T) {
 	dnsServer := "127.0.0.1:" + metaDNSPort
@@ -434,8 +413,7 @@ func TestDANEVerifyCACert(t *testing.T) {
 func TestDANEVerifyMismatch(t *testing.T) {
 	dnsServer := "127.0.0.1:" + metaDNSPort
 
-	// Port 8443 has DANE-EE (server cert hash).
-	// Verify with CA cert — should FAIL because the SPKI hash won't match.
+	// Port 8443 has DANE-EE for the server cert, so the CA cert must fail.
 	caCert := filepath.Join(testdataDir, "ca.pem")
 	_, stderr, err := runCLI(t, "dane", "verify",
 		"--hostname", metaHostname,
@@ -454,9 +432,7 @@ func TestDANEVerifyMismatch(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: dane fetch (real DNS + real HTTPS with DANE TLSA verification)
-// ---------------------------------------------------------------------------
+// CLI: dane fetch
 
 func TestDANEFetch(t *testing.T) {
 	dnsServer := "127.0.0.1:" + metaDNSPort
@@ -467,9 +443,7 @@ func TestDANEFetch(t *testing.T) {
 	// Start a real HTTPS server serving the CA bundle with real TLS cert.
 	serverURL := startHTTPSServer(t, certFile, keyFile, caFile)
 
-	// DANE fetch: resolves TLSA records from CoreDNS, then connects to the
-	// HTTPS server and verifies the TLS certificate against the TLSA records.
-	// Port 8443 in DNS has DANE-EE (3 1 1) matching the server cert SPKI.
+	// Resolve TLSA from CoreDNS and verify the HTTPS server; port 8443 has DANE-EE 3 1 1.
 	stdout := runCLIMustSucceed(t, "--debug", "dane", "fetch",
 		"--hostname", metaHostname,
 		"--port", "8443",
@@ -490,9 +464,7 @@ func TestDANEFetch(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: spki show (compute SPKI pin from real certificate)
-// ---------------------------------------------------------------------------
+// CLI: spki show
 
 func TestSPKIShow(t *testing.T) {
 	serverCert := filepath.Join(testdataDir, "server.pem")
@@ -526,9 +498,7 @@ func TestSPKIShow(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: spki fetch (real HTTPS with SPKI pin verification)
-// ---------------------------------------------------------------------------
+// CLI: spki fetch
 
 func TestSPKIFetch(t *testing.T) {
 	certFile := filepath.Join(testdataDir, "server.pem")
@@ -538,8 +508,7 @@ func TestSPKIFetch(t *testing.T) {
 	// Start a real HTTPS server with real TLS.
 	serverURL := startHTTPSServer(t, certFile, keyFile, caFile)
 
-	// SPKI fetch: connects to the HTTPS server and verifies the TLS
-	// certificate's SPKI SHA-256 hash matches the expected pin.
+	// The server's SPKI SHA-256 must match the pin.
 	stdout := runCLIMustSucceed(t, "--debug", "spki", "fetch",
 		"--server-url", serverURL,
 		"--pin", metaSPKIPin,
@@ -579,9 +548,7 @@ func TestAutoFetchNoise(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: fetch --method-order dane (auto-fetch via DANE)
-// ---------------------------------------------------------------------------
+// CLI: fetch --method-order dane
 
 func TestAutoFetchDANE(t *testing.T) {
 	dnsServer := "127.0.0.1:" + metaDNSPort
@@ -608,9 +575,7 @@ func TestAutoFetchDANE(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CLI: fetch --method-order spki (auto-fetch via SPKI pin)
-// ---------------------------------------------------------------------------
+// CLI: fetch --method-order spki
 
 func TestAutoFetchSPKI(t *testing.T) {
 	certFile := filepath.Join(testdataDir, "server.pem")

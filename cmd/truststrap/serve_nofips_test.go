@@ -81,16 +81,13 @@ func TestRunServe_ValidBundleAndKeyLoadsSuccessfully(t *testing.T) {
 	setListenFlag(t, "127.0.0.1:0") // OS assigns a free port
 	serveMaxConnections = 10
 
-	// runServe blocks on a signal after starting the server. Run it in a
-	// goroutine and send SIGINT after a small delay to trigger graceful
-	// shutdown.
+	// runServe blocks on a signal; run it in a goroutine and send SIGINT.
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- runServe(serveCmd, nil)
 	}()
 
-	// Wait for the server goroutine to start and register its signal
-	// handler, then send SIGINT to ourselves.
+	// Wait for the signal handler, then send SIGINT.
 	time.Sleep(100 * time.Millisecond)
 	syscall.Kill(syscall.Getpid(), syscall.SIGINT)
 

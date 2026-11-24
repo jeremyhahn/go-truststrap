@@ -13,19 +13,7 @@ permissions:
   packages: write
 
 jobs:
-  # Nothing publishes until the tag, the VERSION file and the CHANGELOG agree.
-  #
-  # This exists because they silently diverged: VERSION read 0.1.2-alpha while
-  # v0.1.3-alpha and v0.1.4-alpha were both released, so binaries built from
-  # either tag reported 0.1.2-alpha through -X main.version -- two different
-  # releases identifying themselves as the same version, with nothing in CI
-  # noticing. conventions/release-versioning.md §2 names this as the known gap
-  # ("two sources of truth, and nothing reconciles them"); this job closes it
-  # for this repo.
-  #
-  # The tag is v-prefixed and VERSION is not. That asymmetry is portfolio-wide
-  # and deliberate, so the check strips the prefix rather than demanding they
-  # be spelled identically.
+  # Nothing publishes until the tag (without its v prefix), the VERSION file and the CHANGELOG agree.
   validate:
     name: Validate release metadata
     runs-on: ubuntu-latest
@@ -79,10 +67,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          # `--` ends option parsing, so an artifact whose name begins with a
-          # dash is hashed rather than read as a flag (SC2035). `./*` would do
-          # the same, but it would also write "./truststrap-…" into the
-          # published SHA256SUMS.txt — this keeps the file's existing format.
+          # `--` ends option parsing so a dash-prefixed artifact name is hashed, not read as a flag.
           sha256sum -- * > SHA256SUMS.txt
 
       - name: Create GitHub Release
@@ -92,21 +77,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-      # softprops/action-gh-release talks to the GitHub Releases API, which
-      # Gitea does not serve: on the v0.2.0-alpha tag it got HTTP 405 three
-      # times and aborted the job, so the tag published as a Go module while
-      # the Release object and its binaries never appeared (#12). Gitea serves
-      # a GitHub-shaped equivalent under /api/v1.
-      #
-      # AGENT_TOKEN, not GITHUB_TOKEN: the only Actions secrets that exist
-      # portfolio-wide are AGENT_TOKEN and AGENT_SIGNING_KEY, and AGENT_TOKEN is
-      # this repo's own agent identity. It is also the credential the publisher
-      # was actually proven with — see the release job's verification note.
-      #
-      # The publisher is Go (internal/gitearelease) since #75, which removed
-      # every shell script from this repository; it replaced
-      # .github/scripts/gitea-release.sh with the same API calls. setup-go ran
-      # above, so `go run` needs nothing else on the runner.
+      # Publishes through the forge's /api/v1 releases API with internal/gitearelease and AGENT_TOKEN.
       - name: Create Gitea Release
         if: github.server_url != 'https://github.com'
         env:
@@ -126,10 +97,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ghcr.io on GitHub, Gitea's own registry (same host and port as its web
-      # UI) on the internal network — derived, never hardcoded (devops.md §2).
-      # ghcr.io does not exist on the internal network, so a release built there
-      # had nowhere to push (lessons.md).
+      # ghcr.io on GitHub; otherwise the forge's own registry, derived from the server URL.
       - name: Resolve registry
         id: registry
         run: |
@@ -150,21 +118,7 @@ jobs:
             type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
-      # The root Dockerfile's `go mod download` resolves the internal first-party
-      # module go-enclave from Gitea, which the build container cannot reach on
-      # its own (dependency-resolution.md section 6). A job environment does not
-      # cross into a docker build, so stage the credential as a BuildKit secret
-      # file under RUNNER_TEMP -- deliberately OUTSIDE the build context, so a
-      # `COPY . .` cannot bake it into a layer (.dockerignore is the second
-      # guard) -- and expose its PATH as a step output. Read GIT_CONFIG_KEY_0
-      # straight from the shell environment, NEVER through ${{ env.X }}: that
-      # expression reads this workflow's own env: block, which does not define
-      # it, and would quietly write a blank (the build then dies on an
-      # unrelated-looking "unknown revision"). The path is an output rather than
-      # env for the same class of reason -- ${{ runner.temp }} can resolve empty
-      # inside an action's input expressions. On github.com the variable does not
-      # exist, the file is written empty, and the Dockerfile's secret mount is
-      # optional, so the build resolves from the public proxy.
+      # Stage the module credential as a BuildKit secret file outside the build context; empty on github.com, where the mount is optional.
       - name: Stage module-fetch credentials
         id: gomodauth
         run: |
@@ -172,10 +126,7 @@ jobs:
           umask 077
           : > "${RUNNER_TEMP}/gomodauth.secret"
           if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-            # ONLY the tokenised insteadOf key, as raw data with no trailing
-            # newline -- never as `export NAME=value` shell. The Dockerfile reads
-            # it with a quoted command substitution, so a credential containing
-            # shell metacharacters is assigned literally, never executed.
+            # Write only the tokenised insteadOf key, raw with no trailing newline, never as shell.
             printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
             echo "staged Gitea module credential"
           else
@@ -183,9 +134,7 @@ jobs:
           fi
           echo "path=${RUNNER_TEMP}/gomodauth.secret" >> "$GITHUB_OUTPUT"
 
-      # devops.md §8: every container image is gated on CRITICAL/HIGH *before*
-      # it reaches a registry. Build the amd64 leg locally, scan it, then
-      # publish the multi-arch manifest from the same layer cache.
+      # Scan the amd64 image for CRITICAL/HIGH before publishing the multi-arch manifest.
       - name: Build image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -200,46 +149,17 @@ jobs:
             gomodauth=${{ steps.gomodauth.outputs.path }}
           cache-from: type=gha
 
-      # The trivy CLI works identically on both hosts; trivy-action's setup
-      # cannot authenticate to github.com from a Gitea runner. Installed the
-      # same way ci.yml does it rather than resolving the version through the
-      # unauthenticated api.github.com JSON endpoint, which rate-limits and
-      # then fails closed on a release that has nothing wrong with it.
+      # Install the trivy CLI the same way ci.yml does.
       - name: Install trivy CLI
         run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
-        # --ignore-unfixed on the OS layer, ratified 2026-08-14 (devops.md §8):
-        # base images carry hundreds of unfixable advisories at any moment, so a
-        # raw gate would be permanently red and would train people to ignore it.
-        # This gate means "a rebuild fixes this" — actionable, so enforceable.
+        # --ignore-unfixed on the OS layer: the gate fails only on what a rebuild fixes.
         run: trivy image --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 go-truststrap:scan
 
-      # Everything above this line is a hard gate and runs on BOTH hosts: a
-      # Dockerfile that does not build, or an image carrying a fixable
-      # CRITICAL/HIGH, fails the job on Gitea too. Neither step needs a registry
-      # (the scan build is push: false, load: true), which is what keeps the
-      # gate meaningful on an instance we cannot publish to.
+      # Everything above is a hard gate on every forge and needs no registry.
 
-      # Publication is GitHub-only, and that is measured rather than assumed.
-      # No token available to a Gitea run can push to this registry:
-      #
-      #   - the ephemeral Actions token failed login outright on the
-      #     v0.2.0-alpha run: `Get ".../v2/": unauthorized`;
-      #   - AGENT_TOKEN, this repo's agent identity, is worse than it looks. It
-      #     answers 200 on `/v2/` — so `docker login` would SUCCEED — but the
-      #     registry's token endpoint refuses it for every scope including bare
-      #     pull: `GET /v2/token?service=container_registry&scope=...` returns
-      #     `{"errors":[{"code":"UNAUTHORIZED"}]}`, and starting a blob upload
-      #     returns 401. Agent tokens carry write:issue,write:repository and no
-      #     package scope at all.
-      #
-      # An attempted push would therefore log in cleanly and then fail, which is
-      # a worse signal than not trying. Granting package scope to agent
-      # identities is a security-boundary decision for the owner
-      # (automatethethings#5); until it is made, skipping is the honest state.
-      # A push would also need `insecure-registries` on every participating
-      # daemon, since the registry is plain HTTP (infra/gitea/docs/lessons.md).
+      # Publication is GitHub-only: forge agent tokens carry no package scope.
       - name: Log in to the container registry
         if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3

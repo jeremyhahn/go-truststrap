@@ -60,8 +60,7 @@ func (b *EmbeddedBootstrapper) Close() error {
 	return nil
 }
 
-// parsePEMCertificates parses all CERTIFICATE PEM blocks from the given data.
-// Returns parsed x509.Certificate objects and their corresponding DER bytes.
+// parsePEMCertificates parses every CERTIFICATE block, returning the certificates and their DER.
 func parsePEMCertificates(pemData []byte) ([]*x509.Certificate, [][]byte, error) {
 	var certs []*x509.Certificate
 	var derCerts [][]byte

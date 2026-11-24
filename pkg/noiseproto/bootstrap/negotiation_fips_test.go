@@ -16,11 +16,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// Under a FIPS build the negotiation must refuse the Noise suite BEFORE any key
-// agreement even when the server holds a Noise static key, and must still serve
-// the approved P-256 suite. This is the downgrade-resistance property that the
-// P-256-less refusal in dh_fips_test.go does not exercise: here the server COULD
-// run Noise if policy allowed, and policy does not.
+// Under FIPS the server must refuse Noise before key agreement even with a Noise key, and still serve P-256.
 func TestFIPS_ServerRefusesNoiseDespiteKeyAndServesP256(t *testing.T) {
 	p256Static, err := p256proto.GenerateStaticKey()
 	if err != nil {
@@ -134,9 +130,7 @@ func TestFIPS_ClientDefaultSelectsP256(t *testing.T) {
 	}
 }
 
-// TestFIPS_ProbeRefusesNoise executes the real fipsEnforced probe (not the
-// withFIPS seam). In a fips build dh_fips.go makes the cipher suite refuse, so
-// the probe must report the Noise suite unavailable whatever GODEBUG says.
+// TestFIPS_ProbeRefusesNoise runs the real fipsEnforced probe, which must refuse Noise in a fips build.
 func TestFIPS_ProbeRefusesNoise(t *testing.T) {
 	if !fipsEnforced() {
 		t.Fatal("fipsEnforced() = false in a fips build, want true")

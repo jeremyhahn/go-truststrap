@@ -38,8 +38,7 @@ const changelog = `# Changelog
 - shipped-entry
 `
 
-// fakeGitea is the slice of Gitea's release API the publisher uses, recording
-// what it was asked so a test can assert on the conversation.
+// fakeGitea is the release API subset the publisher uses, recording each request.
 type fakeGitea struct {
 	mu       sync.Mutex
 	releases map[string]int64 // tag -> id

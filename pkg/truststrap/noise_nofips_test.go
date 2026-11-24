@@ -308,12 +308,7 @@ func TestNoiseBootstrapper_Handshake_Success(t *testing.T) {
 	}
 }
 
-// Outside FIPS the zero-value suite must still choose Noise when its key is
-// configured: that is the live first-contact path for current consumers and #51
-// must not move it. The P-256 key pinned alongside is a valid point that
-// belongs to no server -- and the server under test serves ONLY Noise -- so
-// had the selector reached for the approved suite the handshake would fail
-// instead of quietly passing.
+// Outside FIPS the zero suite still chooses Noise when its key is set; the server serves only Noise.
 func TestNoiseBootstrapper_DefaultSuiteSelectsNoise(t *testing.T) {
 	bundle := newTestCertBundle(t)
 

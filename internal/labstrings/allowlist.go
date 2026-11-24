@@ -22,8 +22,8 @@ type AllowRule struct {
 	Path string
 
 	// Classes are the classes this rule accepts in those files. Naming them
-	// keeps the rule narrow: a tree allowed to mention a fleet hostname is
-	// not thereby allowed to hardcode the owner's home directory.
+	// keeps the rule narrow: a tree allowed to mention a lab hostname is
+	// not thereby allowed to hardcode a home directory.
 	Classes []Class
 
 	// Reason says why publishing this value is acceptable, or who owns
@@ -31,14 +31,11 @@ type AllowRule struct {
 	Reason string
 }
 
-// DefaultAllowList is the accepted set for THIS repository. Every entry is a
-// deliberate decision, and the list is meant to stay short.
+// DefaultAllowList is the accepted set for this repository; it is meant to stay short.
 //
-// The release-readiness change (#75) removed the values themselves everywhere
-// they appeared rather than listing them here. A value that genuinely has to
-// stay is waived in place with `lab-string-ok: <reason>`, next to the line it
-// explains; an entry here is for a whole tree or a file that cannot carry a
-// comment, and it has to say why.
+// A value that has to stay is waived in place with `lab-string-ok: <reason>`,
+// next to the line it explains; an entry here is for a whole tree or a file that
+// cannot carry a comment, and it has to say why.
 var DefaultAllowList = []AllowRule{
 	{
 		Path:    "internal/labstrings/*_test.go",
@@ -76,10 +73,7 @@ func ValidateAllowList(rules []AllowRule) error {
 	return nil
 }
 
-// validatePattern checks every segment of a path pattern up front. Matching
-// stops at the first segment that does not match, so a malformed segment
-// further along would otherwise never be evaluated -- and a pattern that can
-// never match is a rule that silently does nothing.
+// validatePattern checks every segment up front, so a pattern that can never match is rejected.
 func validatePattern(pattern string) error {
 	for _, segment := range strings.Split(pattern, "/") {
 		if segment == "**" {

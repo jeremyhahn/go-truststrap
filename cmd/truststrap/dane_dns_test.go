@@ -31,8 +31,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 )
 
-// testInfra holds references to a local DNS server and TLS server for DANE
-// integration-like tests within the unit test framework.
+// testInfra holds a local DNS server and TLS server for DANE tests.
 type testInfra struct {
 	dnsAddr    string
 	httpsURL   string

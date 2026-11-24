@@ -962,10 +962,7 @@ func TestSession_ChannelBinding_NKAgreesAcrossPeers(t *testing.T) {
 }
 
 func TestSession_ChannelBinding_DiffersPerSession(t *testing.T) {
-	// The point of binding to the handshake hash rather than to the static
-	// keys: two sessions between the SAME pair of identities must not share a
-	// binding, otherwise an answer produced on one session is replayable on
-	// the other.
+	// Two sessions between the same identities must have different bindings.
 	initiatorKey, err := GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(initiatorKey.Destroy)

@@ -84,13 +84,7 @@ func TestHandshakeError(t *testing.T) {
 // TestHandshakeP256_BudgetRefusalFailsOneConnection.
 const budgetChildEnv = "TRUSTSTRAP_BUDGET_CHILD"
 
-// A genuine message 1 against a process whose locked-memory budget admits
-// nothing must fail that one connection with an error that errors.Is resolves
-// to ErrHandshakeFailed AND to the go-enclave refusal beneath it -- the typed
-// chain end to end, not only the wrapper in isolation.
-//
-// Quiescing the budget is process-wide, so the scenario runs in a child copy of
-// this test binary where no other test shares the allocator.
+// A budget that admits nothing must fail the connection with an error matching both ErrHandshakeFailed and the enclave refusal; runs in a child process.
 func TestHandshakeP256_BudgetRefusalFailsOneConnection(t *testing.T) {
 	if os.Getenv(budgetChildEnv) == "" {
 		self, err := os.Executable()

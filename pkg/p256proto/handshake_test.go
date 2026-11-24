@@ -77,9 +77,7 @@ func TestHandshake_CompletesAndAgreesKeys(t *testing.T) {
 			msg1[0], msg1[1], Version, SuiteP256AESGCM)
 	}
 
-	// Agreeing keys is the whole point: prove it by round-tripping in BOTH
-	// directions, which is the only observable that says the two schedules
-	// produced the same bytes.
+	// Round-trip both directions to prove both schedules agree.
 	plaintext := []byte("ca bundle request")
 	ad := []byte("frame header")
 
@@ -100,8 +98,7 @@ func TestHandshake_CompletesAndAgreesKeys(t *testing.T) {
 	}
 }
 
-// Forward secrecy needs a fresh ephemeral per connection. Two handshakes
-// against the SAME static key must not produce the same transport keys.
+// Two handshakes against the same static key must yield different transport keys.
 func TestHandshake_EphemeralsAreFreshPerConnection(t *testing.T) {
 	static, err := GenerateStaticKey()
 	if err != nil {
@@ -136,9 +133,7 @@ func TestHandshake_EphemeralsAreFreshPerConnection(t *testing.T) {
 	}
 }
 
-// The responder is authenticated by a static key the initiator already holds.
-// An initiator provisioned with a DIFFERENT key must fail, and it must fail at
-// the tag rather than completing against an impostor.
+// An initiator with a different static key must fail at the tag.
 func TestHandshake_WrongResponderStaticKeyFails(t *testing.T) {
 	real, err := GenerateStaticKey()
 	if err != nil {
@@ -213,12 +208,7 @@ func TestHandshake_RejectsForeignSuiteAndVersion(t *testing.T) {
 	}
 }
 
-// Downgrade defence 3, the half the rejection above cannot reach: the header
-// is in the TRANSCRIPT, so even a header the responder would accept fails if
-// the two peers disagree about what was sent. Rewriting the header to the same
-// accepted values on a message built with different ones is the only way to
-// separate "rejected by the check" from "caught by the transcript", so this
-// drives the symmetric state directly.
+// A rewritten header the responder would accept must still fail through the transcript; drives the symmetric state directly.
 func TestHandshake_HeaderIsBoundIntoTheTranscript(t *testing.T) {
 	sealed := func(header []byte) []byte {
 		s := mustSymmetricState(t)
@@ -542,10 +532,7 @@ func TestHandshake_OutOfOrderCalls(t *testing.T) {
 // accepted either. crypto/ecdh does the rejecting; this asserts we surface it
 // as a typed error rather than proceeding.
 func TestNewInitiator_RejectsUnusableResponderKeys(t *testing.T) {
-	// An X25519 public key is 32 arbitrary bytes. Constructing one literally
-	// rather than through ecdh.X25519() keeps this test runnable under
-	// GODEBUG=fips140=only, where key generation on that curve is refused --
-	// the wrong-length rejection under test has nothing to do with the mode.
+	// A literal 32-byte X25519 key keeps this test runnable under fips140=only.
 	x25519 := bytes.Repeat([]byte{0x09}, 32)
 
 	onCurve, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -588,14 +575,7 @@ func TestNewResponder_RejectsNilStaticKey(t *testing.T) {
 	}
 }
 
-// The transcript is what binds the exchange, so it is asserted element by
-// element against the formula in docs/approved-handshake.md rather than only
-// through its effects. Two mutants motivated this: dropping the pre-message
-// mix of the responder's static key, and dropping the mix of the
-// version||suite header, BOTH left every other test in this package green.
-// The wrong-static-key test cannot see the first because the es agreement
-// already diverges, and the suite-rejection test cannot see the second because
-// the explicit check fires first -- each defence was hiding the other.
+// Asserts the transcript element by element against docs/approved-handshake.md.
 func TestHandshake_TranscriptBindsEveryWireElement(t *testing.T) {
 	static, err := GenerateStaticKey()
 	if err != nil {

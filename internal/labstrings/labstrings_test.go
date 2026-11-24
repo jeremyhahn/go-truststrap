@@ -787,10 +787,7 @@ func TestLoadPatterns_TakesTheFilesClassSet(t *testing.T) {
 		t.Fatalf("findings = %v, want one %s", findings, extra)
 	}
 
-	// notes.md is a file, so a path under it fails Lstat with ENOTDIR, a
-	// ReadError: reaching the filesystem at all shows the file was read.
-	// Accepted for one loaded class of two, it is read; accepted for both,
-	// it is skipped.
+	// A path under the file notes.md fails with ENOTDIR, showing whether the file was read.
 	partial := []AllowRule{{Path: "notes.md/**", Classes: []Class{extra}, Reason: "a fixture tree"}}
 	if _, err := Scan(root, []string{"notes.md/thing"}, partial); err == nil {
 		t.Error("a file accepted for only some loaded classes was not read")

@@ -49,20 +49,11 @@ type Client struct {
 	config *ClientConfig
 	logger *slog.Logger
 
-	// mu guards conn and session. It is held for state transitions only, never
-	// across socket I/O: Connect publishes the socket under mu before the
-	// handshake and GetCABundle takes its own reference under mu before the
-	// exchange, so Close can take mu while either is blocked in a read, close
-	// the socket, and thereby end it.
+	// mu guards conn and session for state transitions only, never across socket I/O.
 	mu      sync.Mutex
 	conn    net.Conn
 	session secureSession
-	// gen counts Close calls. Connect and GetCABundle read it when they begin
-	// and carry that reading through the operation: a Close since then is what
-	// ErrClientClosed reports, and a Connect whose dial completes after one
-	// refuses the socket rather than running a handshake nobody will use.
-	// Each attempt holds its own reading, so a Connect that begins after the
-	// Close cannot revive an earlier attempt's socket.
+	// gen counts Close calls; an operation that sees it change reports ErrClientClosed.
 	gen uint64
 
 	// reqMu serialises GetCABundle calls, which share one session whose cipher
@@ -122,8 +113,7 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 // client that has been closed may Connect again. Failures are ClientError
 // values naming the stage.
 func (c *Client) Connect(ctx context.Context) error {
-	// Choose the suite BEFORE dialing so a FIPS client refusing Noise, or a
-	// misconfigured selection, fails without opening a connection.
+	// Choose the suite before dialing.
 	suite, err := selectClientSuite(c.config)
 	if err != nil {
 		return err
@@ -291,11 +281,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// closedErr classifies an I/O failure at stage for an operation that began at
-// gen reading attempt. If Close has been called since, the failure is the
-// closure it is: a ClientError of Kind ErrClientClosed wrapping err. Otherwise
-// err is reported as the connection failure it is, unless it already carries
-// its own classification.
+// closedErr reports an I/O failure as ErrClientClosed if Close ran since gen, else as a connection failure unless already classified.
 func (c *Client) closedErr(attempt uint64, stage string, err error) error {
 	c.mu.Lock()
 	closed := c.gen != attempt
@@ -319,13 +305,7 @@ func (c *Client) clientDeadline(ctx context.Context) time.Time {
 	return time.Now().Add(c.config.ConnectTimeout)
 }
 
-// handshakeNoise executes the 2-message Noise_NK handshake as initiator. The
-// first frame is version||SuiteNoiseNK||noise_msg1, and the two header bytes are
-// also set as the Noise prologue so a MITM cannot rewrite them undetected.
-//
-// NK pattern:
-//   - Message 1 (client -> server): [e, es]
-//   - Message 2 (server -> client): [e, ee]
+// handshakeNoise runs the Noise_NK handshake (e, es / e, ee) as initiator; the version||suite header is also the Noise prologue.
 func (c *Client) handshakeNoise(ctx context.Context, conn net.Conn) (secureSession, error) {
 	cipherSuite, err := nkCipherSuite()
 	if err != nil {

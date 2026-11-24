@@ -174,15 +174,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
 
-	// Stop reports the drain directly, so the deadline no longer has to be
-	// inferred from stopCtx: a nil error is the only proof that every handshake
-	// worker exited. On anything else a worker may still be using the key pair,
-	// so the locked pages stay mapped and process exit reclaims them.
+	// Only a nil Stop error proves every handshake worker exited; otherwise the key pages stay mapped until exit.
 	if err := server.Stop(stopCtx); err != nil {
-		// Conservative on every non-nil outcome, not just the expected one: a
-		// nil return is the ONLY proof that no worker still uses the key pair,
-		// so an unrecognised error retains the pages exactly like a known
-		// incomplete drain.
+		// Any non-nil outcome retains the pages.
 		destroyKey = false
 		if !errors.Is(err, bootstrap.ErrShutdownIncomplete) {
 			return commandWrap(op, ErrServerStop, err)
@@ -194,11 +188,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// loadOrGenerateKey attempts to load a Noise static key from the given file
-// path. If the file does not exist, it generates a new key and writes the
-// hex-encoded private key to the file with 0600 permissions. The private key
-// is held in locked memory throughout; the caller owns the returned key and
-// must Destroy it.
+// loadOrGenerateKey loads the Noise static key from path, or generates one and writes it with mode 0600; the caller must Destroy the key.
 func loadOrGenerateKey(keyFile string) (*noiseproto.StaticKey, error) {
 	const op = "loadOrGenerateKey"
 

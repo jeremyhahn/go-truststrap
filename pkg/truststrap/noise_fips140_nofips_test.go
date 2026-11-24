@@ -17,26 +17,19 @@ import (
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
-// The facade defers suite selection to the transport, whose probe decides by
-// what this process can run. The two runtime FIPS modes are fixed at process
-// start, so each scenario runs in a child copy of this test binary under the
-// GODEBUG it needs and drives a real handshake through the facade. The -tags
-// fips build is covered by noise_fips_test.go.
+// Each runtime FIPS mode runs in a child test process; -tags fips is covered by noise_fips_test.go.
 
 // fips140ChildEnv marks a process as the child of a runtime-mode test.
 const fips140ChildEnv = "TRUSTSTRAP_FACADE_FIPS140_CHILD"
 
-// runFacadeInFIPS140Mode re-executes this test binary with
-// GODEBUG=fips140=<mode>, narrowed to the calling test, and fails if the child
-// does.
+// runFacadeInFIPS140Mode re-executes this test binary with GODEBUG=fips140=<mode> for the calling test.
 func runFacadeInFIPS140Mode(t *testing.T, mode string) {
 	t.Helper()
 
 	// The command is this test binary and the arguments are this test's own
 	// name: nothing here comes from outside the process.
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v") //nolint:gosec // re-executes the test binary itself
-	// os/exec keeps the last value for a duplicated key, so this overrides any
-	// GODEBUG the parent was started with.
+	// The last duplicate key wins, overriding the parent's GODEBUG.
 	cmd.Env = append(os.Environ(), fips140ChildEnv+"="+mode, "GODEBUG=fips140="+mode)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -47,11 +40,7 @@ func runFacadeInFIPS140Mode(t *testing.T, mode string) {
 	}
 }
 
-// Under GODEBUG=fips140=on the module is loaded but X25519 is still permitted,
-// so the facade must behave exactly as it does outside FIPS: a Noise-only
-// configuration completes, and one holding both keys with no explicit suite
-// still offers Noise. The responder serves ONLY Noise, so had the selector
-// reached for P-256 the handshake would fail rather than quietly pass.
+// Under fips140=on the facade still offers Noise; the server serves only Noise.
 func TestNoiseBootstrapper_PermissiveFIPSRuntime_KeepsNoise(t *testing.T) {
 	if os.Getenv(fips140ChildEnv) == "" {
 		runFacadeInFIPS140Mode(t, "on")
@@ -88,10 +77,7 @@ func TestNoiseBootstrapper_PermissiveFIPSRuntime_KeepsNoise(t *testing.T) {
 	}
 }
 
-// Under GODEBUG=fips140=only with no build tag -- the shape a pipeline that
-// sets GOFIPS140 and nothing else produces -- X25519 is refused at runtime, so
-// the facade must refuse a Noise-only configuration with the typed sentinel
-// before dialing and must complete the approved suite when its key is pinned.
+// Under fips140=only a Noise-only config is refused before dialing and pinned P-256 completes.
 func TestNoiseBootstrapper_RuntimeOnlyFIPS_RequiresP256(t *testing.T) {
 	if os.Getenv(fips140ChildEnv) == "" {
 		runFacadeInFIPS140Mode(t, "only")

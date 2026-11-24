@@ -66,14 +66,7 @@ var (
 	ErrSessionDestroyed = errors.New("noise: session destroyed")
 )
 
-// noiseError is this package's error type (conventions/errors.md §2): it
-// carries the operation that failed, the sentinel that classifies it, an
-// optional detail, and an optional cause. errors.Is matches both the sentinel
-// and the cause, because Unwrap returns them together -- so a caller can test
-// for ErrProtectedMemory and for enclave.ErrEnclaveDestroyed on the same error.
-//
-// It is unexported because callers classify with errors.Is against the
-// sentinels, never by type.
+// noiseError carries the operation, classifying sentinel, detail and cause; errors.Is matches sentinel and cause.
 type noiseError struct {
 	// Op names the operation that failed, e.g. "GenerateStaticKey".
 	Op string

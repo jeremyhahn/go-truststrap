@@ -59,8 +59,7 @@ func TestTransport_RejectsTamperedFramesAndAssociatedData(t *testing.T) {
 	}
 }
 
-// A frame from ANOTHER session must not open: the two handshakes agreed
-// different keys, so cross-session replay fails.
+// A frame from another session must not open.
 func TestTransport_RejectsFramesFromAnotherSession(t *testing.T) {
 	initiatorA, _, _, _ := handshake(t)
 	_, responderB, _, _ := handshake(t)
@@ -98,8 +97,7 @@ func TestTransport_SealsOnce(t *testing.T) {
 	}
 }
 
-// Open is one-shot: a replayed authenticated frame is refused. This is the
-// finding from Codex review 935 (owner ruling on #18) made a test.
+// Open is one-shot: a replayed authenticated frame is refused.
 func TestTransport_OpenRejectsAReplayedFrame(t *testing.T) {
 	initiator, responder, _, _ := handshake(t)
 

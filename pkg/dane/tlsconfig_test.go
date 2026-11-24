@@ -35,9 +35,7 @@ type testPKI struct {
 	tlsCert tls.Certificate
 }
 
-// newTestPKI mints an ECDSA P-256 CA and a server leaf with the given DNS
-// SAN. The tls.Certificate presents the full leaf+CA chain so DANE-TA
-// verification can locate the anchor within the chain.
+// newTestPKI mints a P-256 CA and leaf with the given DNS SAN, presenting leaf and CA.
 func newTestPKI(t *testing.T, dnsName string) *testPKI {
 	t.Helper()
 
@@ -100,8 +98,7 @@ func (p *testPKI) leafCert(t *testing.T) *x509.Certificate {
 	return leaf
 }
 
-// tlsaFor builds a TLSA record for the given certificate using
-// selector=SPKI and matching=SHA-256.
+// tlsaFor builds an SPKI SHA-256 TLSA record for cert.
 func tlsaFor(t *testing.T, usage uint8, cert *x509.Certificate) *TLSARecord {
 	t.Helper()
 	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
@@ -156,8 +153,7 @@ func TestNewVerifiedTLSConfig_DANEEESuccess(t *testing.T) {
 	pki := newTestPKI(t, "cp.test")
 	lookuper := &fakeLookuper{records: []*TLSARecord{tlsaFor(t, UsageDANEEE, pki.leafCert(t))}}
 
-	// DANE-EE skips the hostname check (RFC 7671 Section 5.1); a hostname
-	// that does not match the leaf SAN must still verify.
+	// DANE-EE skips the hostname check (RFC 7671 §5.1).
 	cfg, err := NewVerifiedTLSConfig(context.Background(), "other.test", 443, lookuper)
 	if err != nil {
 		t.Fatalf("NewVerifiedTLSConfig: %v", err)
@@ -239,9 +235,7 @@ func TestVerifyPeerChain_EmptyChain(t *testing.T) {
 }
 
 func TestVerifyPeerChain_AnchorNotSigner(t *testing.T) {
-	// The chain contains the leaf of one PKI plus the CA of another. The
-	// TLSA record matches that CA, but it did not sign the leaf, so DANE-TA
-	// chain verification must fail.
+	// The TLSA record matches a CA that did not sign the leaf, so DANE-TA must fail.
 	serving := newTestPKI(t, "cp.test")
 	other := newTestPKI(t, "cp.test")
 

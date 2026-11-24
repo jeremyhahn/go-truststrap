@@ -194,15 +194,7 @@ func TestStaticKey_DerivationFailureClassification(t *testing.T) {
 // TestGenerateStaticKey_FIPSOnlyRefusalIsNotAKeySize.
 const fipsOnlyChildEnv = "NOISEPROTO_TEST_FIPS140_ONLY_CHILD"
 
-// The untagged counterpart of TestStaticKey_FIPSRefusalNotWrapped. With no
-// "fips" build tag X25519 is compiled in, and the refusal comes from the Go
-// Cryptographic Module at run time under GODEBUG=fips140=only rather than from
-// dh_fips.go at build time. Nothing is injected here -- this is the module's own
-// refusal, which is what makes it the counterpart and not a restatement.
-//
-// GODEBUG is read once at process start, so the mode cannot be entered from
-// inside a running test: the parent re-executes this same test binary with the
-// variable set, and the child does the asserting.
+// Untagged counterpart of TestStaticKey_FIPSRefusalNotWrapped: the module's runtime refusal under fips140=only, checked in a child process.
 func TestGenerateStaticKey_FIPSOnlyRefusalIsNotAKeySize(t *testing.T) {
 	if os.Getenv(fipsOnlyChildEnv) == "1" {
 		assertFIPSOnlyRefusal(t)

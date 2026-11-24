@@ -145,8 +145,7 @@ func TestThePlantedViolationIsCaught(t *testing.T) {
 	}
 }
 
-// TestThePlantedForbiddenFileIsCaught proves the forbidden-file half can fail,
-// with one file of each kind the #75 ruling removed.
+// TestThePlantedForbiddenFileIsCaught proves the forbidden-file check fails on one file of each kind.
 func TestThePlantedForbiddenFileIsCaught(t *testing.T) {
 	planted := []string{
 		"CLAUDE.md",
@@ -334,10 +333,7 @@ func TestThePlantedShellScriptIsCaught(t *testing.T) {
 	}
 }
 
-// TestShellScripts_AnUnreadableFileIsATypedError keeps a gate that could not
-// look from passing as a gate that looked and found nothing. The failure is a
-// tracked path whose parent is a regular file: stat reports ENOTDIR, which is
-// not "absent", for every user including root, so the case needs no guard.
+// TestShellScripts_AnUnreadableFileIsATypedError checks an unreadable path (ENOTDIR, even as root) is an error, not a pass.
 func TestShellScripts_AnUnreadableFileIsATypedError(t *testing.T) {
 	root, _ := writeTree(t, map[string]string{"blocker": "not a directory\n"})
 	_, err := ShellScripts(root, []string{"blocker/inner"})

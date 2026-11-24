@@ -72,8 +72,7 @@ type TLSAResolver interface {
 	LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*dane.TLSARecord, error)
 }
 
-// contentTypePEMCertChain is the MIME type every bootstrapper reports for a
-// PEM-encoded CA bundle.
+// contentTypePEMCertChain is the MIME type reported for a PEM CA bundle.
 const contentTypePEMCertChain = "application/pem-certificate-chain"
 
 // The certificate store types accepted in CABundleRequest.StoreType. Matching

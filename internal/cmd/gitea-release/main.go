@@ -1,21 +1,20 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Command gitea-release publishes the release for the current tag to the Gitea
-// instance the workflow runs on. It is what the "Create Gitea Release" step of
-// .github/workflows/release.yml runs:
+// Command gitea-release publishes the release for the current tag to the forge
+// instance the workflow runs on. The release workflow runs it as:
 //
 //	go run ./internal/cmd/gitea-release
 //
-// Required environment -- the first two are set by Actions on every run:
+// Required environment; the first two are set by Actions on every run:
 //
-//	GITHUB_SERVER_URL   the Gitea instance root
+//	GITHUB_SERVER_URL   the forge instance root
 //	GITHUB_REPOSITORY   owner/name
 //	RELEASE_TOKEN         a token with write access to the repository
 //	TAG                 the tag being released, e.g. v0.4.0
 //
 // It reads CHANGELOG.md and dist/ from the working directory. See package
-// internal/gitearelease for what it does and why.
+// internal/gitearelease for what it does.
 package main
 
 import (

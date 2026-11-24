@@ -31,23 +31,7 @@ const (
 	fixtureValidity  = 10 * 365 * 24 * time.Hour
 )
 
-// generateFixtures writes the suite's PKI, Noise key, CoreDNS zone and
-// metadata into dir. It replaced testdata/gen.sh in #75, when this repository
-// stopped carrying shell scripts, and produces the same set of files:
-//
-//	ca.pem, ca.key          self-signed root CA (RSA 4096)
-//	server.pem, server.key  server certificate signed by the CA (RSA 2048),
-//	                        SAN example.com, localhost, 127.0.0.1
-//	noise-static.key        Noise static key, written by the CLI under test
-//	db.example.com          zone with the DANE-EE / DANE-TA TLSA records
-//	Corefile                CoreDNS configuration serving that zone
-//	metadata.env            the values the tests assert against
-//
-// Test key material is generated on every run and never committed
-// (security-review.md section 3). The SPKI pin and the TLSA hashes are
-// computed here in Go rather than read back from the CLI, so the tests that
-// compare the CLI's output against metadata.env check it against an
-// independent computation. openssl is no longer needed.
+// generateFixtures writes a fresh CA, server certificate, CoreDNS zone with TLSA records, Corefile and metadata.env into dir; pins and hashes are computed independently of the CLI.
 func generateFixtures(dir, cli string) error {
 	now := time.Now()
 
@@ -131,9 +115,7 @@ func generateFixtures(dir, cli string) error {
 		return fmt.Errorf("truststrap noise show printed no public key:\n%s", showOut)
 	}
 
-	// DANE-EE (usage 3) pins the server's SPKI, DANE-TA (usage 2) the CA's;
-	// selector 1 (SPKI), matching type 1 (SHA-256) for both. The SPKI pin is
-	// the same digest of the server's key.
+	// DANE-EE (3 1 1) pins the server SPKI, DANE-TA (2 1 1) the CA's; the SPKI pin is the server digest.
 	eeHash := spkiSHA256(serverCert)
 	taHash := spkiSHA256(caCert)
 
@@ -188,8 +170,7 @@ _8445._tcp  IN  TLSA  2 1 1 %[3]s
 	return nil
 }
 
-// spkiSHA256 is the lowercase hex SHA-256 of a certificate's
-// SubjectPublicKeyInfo -- the TLSA 1 1 digest and the SPKI pin.
+// spkiSHA256 is the lowercase hex SHA-256 of a certificate's SPKI: the TLSA 1 1 digest and the pin.
 func spkiSHA256(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	return hex.EncodeToString(sum[:])

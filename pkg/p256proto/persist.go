@@ -71,10 +71,7 @@ func DecodeStaticKey(encoded enclave.ByteAccess) (key *StaticKey, err error) {
 	}
 	defer joinDestroy(&err, scalar)
 
-	// The decode runs inside both borrows, so the plaintext scalar goes from one
-	// set of locked pages to the other with no heap intermediate. The borrows
-	// are closed before NewStaticKey runs: it takes its own borrow on scalar,
-	// and a second read lock taken while a writer waits would deadlock.
+	// Decode inside both borrows; close them before NewStaticKey takes its own.
 	if err := borrow(op, encoded, func(src []byte) error {
 		return borrow(op, scalar, func(dst []byte) error {
 			if _, decodeErr := hex.Decode(dst, src); decodeErr != nil {

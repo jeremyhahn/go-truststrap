@@ -313,8 +313,7 @@ func TestAutoBootstrapper_FetchCABundle_AllFail(t *testing.T) {
 func TestAutoBootstrapper_FetchCABundle_FallbackToSecondMethod(t *testing.T) {
 	bundle := newTestCertBundle(t)
 
-	// First server (for DANE) - unreachable.
-	// Second server (for Direct) - works.
+	// The DANE server is unreachable; the Direct server works.
 	directServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(bundle.combinedPEM)
@@ -381,8 +380,7 @@ func TestAutoBootstrapper_FetchCABundle_SkipsUnconfiguredMethods(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Use default order (DANE, Noise, SPKI, Direct) but only configure Direct.
-	// DANE, Noise, and SPKI should be silently skipped.
+	// Default order with only Direct configured: the others are skipped.
 	bs, err := NewAutoBootstrapper(&AutoConfig{
 		Direct: &DirectConfig{
 			ServerURL: server.URL,
@@ -404,8 +402,7 @@ func TestAutoBootstrapper_FetchCABundle_SkipsUnconfiguredMethods(t *testing.T) {
 }
 
 func TestAutoBootstrapper_FetchCABundle_FactoryError(t *testing.T) {
-	// Create an AutoBootstrapper with a factory that returns an error.
-	// This exercises the "create %s bootstrapper" error path in tryMethod.
+	// A factory that errors exercises tryMethod's create error path.
 	bs := &AutoBootstrapper{
 		factories: map[Method]methodFactory{
 			MethodDirect: func() (Bootstrapper, error) {

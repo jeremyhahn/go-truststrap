@@ -424,9 +424,7 @@ func TestNoiseBootstrapper_Connect_Success(t *testing.T) {
 	}
 }
 
-// Close while a fetch is in flight revokes it: the fetch is no longer owned,
-// its context is cancelled, and a handshake that returns afterwards is reported
-// as ErrClosed. Close itself does not touch the client.
+// Close during a fetch revokes it and cancels its context; a later handshake result is ErrClosed.
 func TestNoiseBootstrapper_Close_RevokesFetchInFlight(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	bs, err := NewNoiseBootstrapper(&NoiseConfig{

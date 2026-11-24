@@ -204,16 +204,12 @@ func (b *TOFUBootstrapper) captureAndPersistPin(ctx context.Context) (*Pin, erro
 	return pin, nil
 }
 
-// captureCert dials the server using the custom-verifier pattern (mirroring
-// DANE and SPKI strategies). The VerifyConnection callback captures the leaf
-// certificate DER bytes. No application data is exchanged; the connection is
-// closed immediately after the TLS handshake completes.
+// captureCert completes a TLS handshake only to capture the leaf certificate DER; no application data is exchanged.
 func (b *TOFUBootstrapper) captureCert(ctx context.Context) ([]byte, error) {
 	captured := make(chan []byte, 1)
 
 	//nolint:gosec // custom-verifier pattern: InsecureSkipVerify disables WebPKI only;
-	// VerifyConnection captures the leaf certificate for TOFU pin recording.
-	// No application data is exchanged over this connection.
+	// Capture the leaf certificate; no application data is exchanged.
 	captureTLS := &tls.Config{
 		MinVersion:             tls.VersionTLS12,
 		InsecureSkipVerify:     true,
@@ -246,8 +242,7 @@ func (b *TOFUBootstrapper) captureCert(ctx context.Context) ([]byte, error) {
 	}
 }
 
-// fetchWithPin fetches the CA bundle using strict SPKI pin verification,
-// mirroring the SPKIBootstrapper's fetch logic.
+// fetchWithPin fetches the CA bundle with strict SPKI verification, as SPKIBootstrapper does.
 func (b *TOFUBootstrapper) fetchWithPin(ctx context.Context, pin string, req *CABundleRequest) (*CABundleResponse, error) {
 	storeType := ""
 	algorithm := ""

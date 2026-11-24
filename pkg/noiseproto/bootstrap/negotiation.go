@@ -12,10 +12,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// The bootstrap wire negotiates one of two suites per connection. The suite
-// bytes are p256proto's reserved identifiers, re-exported here so the wire is
-// single-sourced and the two packages can never disagree on a value. See
-// docs/bootstrap-negotiation.md.
+// Suite bytes are p256proto's identifiers, re-exported so both packages agree. See docs/bootstrap-negotiation.md.
 const (
 	// SuiteNoiseNK selects Noise_NK_25519_ChaChaPoly_SHA256 (not FIPS-approved).
 	SuiteNoiseNK = p256proto.SuiteNoiseNK
@@ -43,26 +40,7 @@ func NoiseSuiteHeader() []byte {
 	return []byte{protocolVersion, SuiteNoiseNK}
 }
 
-// fipsEnforced reports whether the Noise/X25519 suite must be refused because
-// this process cannot run it. It is decided by probing, not by predicate: the
-// Noise cipher suite is constructed and an X25519 key pair generated through
-// the same code path the handshake takes, and any failure means the suite is
-// unavailable. That is true when the binary was built -tags fips (dh_fips.go
-// makes nkCipherSuite refuse) and when it runs under GODEBUG=fips140=only
-// (the Go Cryptographic Module rejects X25519 at runtime) -- and, deliberately,
-// NOT under GODEBUG=fips140=on, which loads the module but still permits
-// non-approved algorithms, so X25519 remains available and refusing it there
-// would be policy the module does not impose. crypto/fips140.Enabled is true in
-// both runtime modes and so cannot tell them apart; the probe can.
-//
-// Both ends consult it: the negotiation requires the approved P-256 suite
-// (0x02) and refuses Noise (0x01) BEFORE any key agreement, which is what makes
-// a downgrade to Noise unreachable against a FIPS peer. The probe costs one
-// scalar multiplication per call and is not cached, so the nkCipherSuite test
-// seam stays honest.
-//
-// It is a variable so a non-FIPS test can drive the refusal branches without a
-// separate FIPS build, mirroring nkCipherSuite. Tests restore it with a defer.
+// fipsEnforced probes whether X25519 works in this process (fails under -tags fips and fips140=only, not fips140=on); a variable for tests.
 var fipsEnforced = func() bool {
 	return !noiseSuiteAvailable()
 }
@@ -78,11 +56,7 @@ func noiseSuiteAvailable() bool {
 	return err == nil
 }
 
-// secureSession is the post-handshake encrypted channel, abstracting the two
-// suites so the request/response exchange is written once. The bootstrap
-// protocol is exactly one request and one response per connection, which both
-// backings satisfy: a Noise CipherState pair, or a p256proto one-shot Transport
-// whose single Seal and single Open enforce that contract by construction.
+// secureSession is the post-handshake channel for one request and one response, backed by Noise CipherStates or a p256proto Transport.
 type secureSession interface {
 	// Encrypt seals one outbound message under this peer's sending key.
 	Encrypt(plaintext []byte) ([]byte, error)
@@ -119,11 +93,7 @@ func (s *p256Session) Decrypt(ciphertext []byte) ([]byte, error) {
 	return s.t.Open(ciphertext, nil)
 }
 
-// selectClientSuite chooses the single suite this client offers for the
-// connection. The client commits to one suite and drives that suite's
-// handshake; there is no negotiation round-trip a MITM could strip. The policy
-// mirrors the B2/#15 selection ruling: non-FIPS defaults to Noise with P-256
-// selectable, FIPS requires P-256 and refuses Noise.
+// selectClientSuite picks the one suite this client offers: Noise by default, P-256 when selected or under FIPS.
 func selectClientSuite(cfg *ClientConfig) (byte, error) {
 	switch cfg.Suite {
 	case SuiteP256AESGCM:

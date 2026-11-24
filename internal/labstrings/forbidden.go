@@ -29,10 +29,8 @@ type ForbiddenRule struct {
 	Reason string
 }
 
-// DefaultForbidden is the set of files this repository must not track. Each
-// entry is an owner ruling on #75 (2026-09-25) or the checklist item it
-// enforces; none has a waiver, because the remedy is always to untrack the
-// file.
+// DefaultForbidden is the set of files this repository must not track. None
+// has a waiver: the remedy is always to untrack the file.
 var DefaultForbidden = []ForbiddenRule{
 	{
 		Path: "CLAUDE.md",
@@ -127,9 +125,7 @@ func ForbiddenFiles(files []string, rules []ForbiddenRule) ([]ForbiddenFinding, 
 	return findings, nil
 }
 
-// shellInterpreters are the interpreters whose scripts the #75 ruling removed.
-// A name rule cannot find them all: an init script or a build wrapper carries no
-// extension, so ShellScripts reads the interpreter line instead.
+// shellInterpreters are the interpreter names ShellScripts looks for in a first line.
 var shellInterpreters = map[string]bool{
 	"sh": true, "ash": true, "dash": true, "bash": true, "ksh": true,
 	"mksh": true, "zsh": true, "csh": true, "tcsh": true, "fish": true,

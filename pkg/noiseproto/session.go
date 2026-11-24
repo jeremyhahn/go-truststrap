@@ -121,10 +121,7 @@ func NewSession(cfg *SessionConfig) (*Session, error) {
 	}, nil
 }
 
-// usesLocalStatic reports whether pattern gives the initiator (or responder)
-// a static key: one it is pre-known by, or one it transmits in any of its own
-// messages. Every DH token involving a party's static key presupposes one of
-// the two, so this is exactly the set of roles that need a local static key.
+// usesLocalStatic reports whether pattern gives this role a static key, pre-known or transmitted.
 func usesLocalStatic(pattern noise.HandshakePattern, initiator bool) bool {
 	pre := pattern.ResponderPreMessages
 	if initiator {
@@ -182,13 +179,7 @@ func (s *Session) Destroy() {
 	}
 }
 
-// withLocalStatic runs fn while the local static key's pages are borrowed, so
-// that every read flynn/noise makes through the alias its handshake state
-// retains happens under the enclave's read lock: a concurrent Destroy or
-// shutdown sweep waits for fn, and one that has already run is reported --
-// wrapped in ErrHandshakeFailed -- instead of letting flynn/noise read unmapped
-// pages. fn's own error is returned unchanged. A session with no local static
-// key has nothing to borrow and runs fn directly.
+// withLocalStatic runs fn while the local static key is borrowed; a destroyed key is reported wrapped in ErrHandshakeFailed.
 func (s *Session) withLocalStatic(op string, fn func(noise.DHKey) error) error {
 	if s.localStatic == nil {
 		return fn(noise.DHKey{})

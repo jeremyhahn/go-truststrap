@@ -202,10 +202,7 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 		return nil, fmt.Errorf("%w: no DANE-TA (usage=2) records found", ErrDANEVerificationFailed)
 	}
 
-	// Step 2: Fetch CA bundle over DANE-verified HTTPS. The serving TLS
-	// chain must itself match the TLSA records — without this, an
-	// interceptor could serve a poisoned bundle that merely contains the
-	// genuine (public) trust-anchor certificate alongside attacker CAs.
+	// Step 2: the serving chain must match the TLSA records, or an interceptor could add CAs to the bundle.
 	tlsCfg, err := dane.NewVerifiedTLSConfigFromRecords(records, b.hostname)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDANEVerificationFailed, err)
@@ -240,8 +237,7 @@ func (b *DANEBootstrapper) FetchCABundle(ctx context.Context, req *CABundleReque
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is from operator-provided config, not user input
 	if err != nil {
-		// A handshake rejected by the DANE verifier is a trust failure,
-		// not a transport failure.
+		// A handshake the DANE verifier rejects is a trust failure.
 		if errors.Is(err, dane.ErrTLSAVerificationFailed) {
 			return nil, fmt.Errorf("%w: %w", ErrDANEVerificationFailed, err)
 		}

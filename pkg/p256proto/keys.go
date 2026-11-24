@@ -11,8 +11,8 @@ import (
 )
 
 // StaticKey is a responder's long-term P-256 key pair. The initiator is
-// provisioned with the public half out of band -- that provisioning is what a
-// trust bootstrap is -- and authenticates the responder by it.
+// provisioned with the public half out of band and authenticates the
+// responder by it.
 //
 // # Protected memory
 //
@@ -20,87 +20,47 @@ import (
 // this StaticKey owns for its whole lifetime: mlock'd pages outside the Go heap,
 // fenced by guard pages, canary-protected, kept out of core dumps, frozen
 // read-only once the scalar is final, and wiped on Destroy. Nothing in this
-// package -- the static scalar, the chaining/AEAD/transport keys it derives, or
-// any HKDF/ECDH intermediate -- is held on the ordinary Go heap
-// (conventions/security-review.md section 6). Persistence reads the encoded form
-// straight from this locked backing (see EncodeStaticKey); the scalar never
-// passes through an ordinary heap []byte in this package's code.
+// package (the static scalar, the chaining/AEAD/transport keys it derives, or
+// any HKDF/ECDH intermediate) is held on the ordinary Go heap. Persistence
+// reads the encoded form straight from this locked backing (see
+// EncodeStaticKey).
 //
 // The pages are admitted against the process's one locked-memory budget before
 // they are requested, and every refusal is a returned error rather than a
-// process-wide purge -- see protected.go.
+// process-wide purge; see protected.go.
 //
 // Every StaticKey must be released with Destroy once it is no longer needed.
 // Destroy frees the locked pages, and it clears crypto/ecdh's retained private
-// key without synchronisation, so it must not run while a handshake still holds
+// key without synchronization, so it must not run while a handshake still holds
 // the key.
 //
-// The enclave being destroyed by anything ELSE -- a shutdown sweep
-// (enclave.WipeAll), or another owner of the same enclave -- is handled rather
-// than forbidden: every use of the private half runs inside a borrow (see
-// withScalar), so such a destruction either waits for the operation in flight
-// or fails that one handshake with ErrProtectedMemory. It never lets a
-// handshake complete against a credential the process has already wiped, which
-// crypto/ecdh's surviving heap copy would otherwise permit.
+// Destruction of the enclave by anything else (a shutdown sweep,
+// enclave.WipeAll, or another owner of the same enclave) is handled: every use
+// of the private half runs inside a borrow (see withScalar), so such a
+// destruction either waits for the operation in flight or fails that one
+// handshake with ErrProtectedMemory. It never lets a handshake complete
+// against a credential the process has already wiped.
 //
-// # The one residual
+// # Residual
 //
-// crypto/ecdh's PrivateKey keeps its OWN copy of the scalar on the ordinary heap
+// crypto/ecdh's PrivateKey keeps its own copy of the scalar on the ordinary heap
 // for the key's lifetime, and crypto/aes expands a key into its own round-key
 // schedule likewise. Neither type exposes an API to place that copy in locked
-// memory or to wipe it. Reimplementing P-256 or AES to avoid it would put the
-// primitives outside the Go Cryptographic Module and forfeit the FIPS validation
-// this suite exists to obtain -- a worse trade. This residual is inherent to the
-// standard library's API, not to the storage primitive, so adopting go-enclave
-// did not close it and nothing short of leaving the validated module would.
+// memory or to wipe it, and reimplementing P-256 or AES would leave the Go
+// Cryptographic Module.
 type StaticKey struct {
 	priv   *ecdh.PrivateKey
 	scalar enclave.ByteAccess
-	// pub is the uncompressed public point, cached at construction. It is not
-	// secret, so it is an ordinary slice, and it is kept separate from priv so
-	// PublicBytes still returns the key's identity after Destroy has released
-	// the private half.
+	// pub is the uncompressed public point, kept so PublicBytes works after Destroy.
 	pub []byte
 }
 
-// alive reports whether the private half is still usable: a StaticKey whose
-// Destroy has run authenticates nothing. NewResponder uses it to refuse a key
-// that is already dead when a handshake is constructed.
-//
-// It is a POINT-IN-TIME answer and deliberately not the guard on the key's use:
-// a predicate read before an operation speaks for the moment it was read, and
-// the enclave can be destroyed between that read and the ECDH. withScalar is
-// the authoritative guard, because it makes the check and the use one borrow.
+// alive reports whether the private half is usable now; withScalar is the authoritative guard.
 func (k *StaticKey) alive() bool {
 	return k != nil && k.priv != nil && k.scalar != nil && k.scalar.IsAlive()
 }
 
-// withScalar runs fn while holding a read borrow on the enclave that owns this
-// key's private scalar, so a credential that has already been released is
-// reported rather than used, and one released CONCURRENTLY waits for fn to
-// finish rather than vanishing underneath it.
-//
-// It is the guard every use of the private half goes through, and it is needed
-// even though fn does not read the locked bytes. crypto/ecdh keeps its own heap
-// copy of the scalar for the key's lifetime -- the residual documented on
-// StaticKey -- and that copy outlives the enclave whenever the enclave is
-// destroyed by something that does not go through StaticKey.Destroy. A shutdown
-// sweep (enclave.WipeAll, which belongs to the consuming binary) is the
-// realistic case, and any other owner of the enclave is another. Without this
-// borrow a Responder built before such a sweep would keep authenticating peers
-// out of that heap copy after the protected credential it is supposed to live
-// in had been wiped -- outliving exactly the lifetime this package promises,
-// and completing a handshake on released credentials rather than failing that
-// one connection.
-//
-// A destroyed enclave surfaces as ErrProtectedMemory carrying
-// enclave.ErrEnclaveDestroyed, the same classification every other way
-// protected memory can be unavailable takes, so a caller drops that connection
-// on one test.
-//
-// Checking and using under one borrow is what makes this a guard rather than
-// another alive() -- a predicate read before the operation answers for the
-// moment it was read, not for the moment the key is used.
+// withScalar runs fn under a read borrow of the scalar's enclave; a destroyed enclave is ErrProtectedMemory wrapping enclave.ErrEnclaveDestroyed.
 func (k *StaticKey) withScalar(op string, fn func(priv *ecdh.PrivateKey) error) error {
 	if k == nil {
 		return failure(op, ErrProtectedMemory, "static key is nil")
@@ -244,10 +204,7 @@ func (k *StaticKey) Destroy() {
 		_ = k.scalar.Destroy()
 		k.scalar = nil
 	}
-	// Drop crypto/ecdh's retained private key. Its internal heap copy of the
-	// scalar cannot be wiped through any API (the residual on StaticKey), but
-	// clearing the reference makes the key unusable and lets the copy be
-	// reclaimed.
+	// Drop crypto/ecdh's private key so it is unusable and reclaimable.
 	k.priv = nil
 }
 
@@ -262,10 +219,7 @@ func (k *StaticKey) PublicBytes() []byte {
 	return out
 }
 
-// decodePublicKey parses an uncompressed P-256 point. crypto/ecdh rejects
-// points that are not on the curve, wrong-length inputs and the compressed
-// form, so this decode IS the validation and there is no second parser to
-// disagree with it.
+// decodePublicKey parses an uncompressed P-256 point; crypto/ecdh rejects off-curve, wrong-length and compressed input.
 func decodePublicKey(op string, raw []byte) (*ecdh.PublicKey, error) {
 	if len(raw) != PublicKeySize {
 		return nil, failure(op, ErrInvalidPublicKey, sizeDetail(len(raw), PublicKeySize))

@@ -55,10 +55,9 @@ var (
 	// the approved exchange permits. TSBOOT1 is one request and one response per
 	// connection, so each Transport seals exactly once and opens exactly once. A
 	// second Seal, or a second successful Open (a replayed authenticated frame),
-	// returns this instead of completing -- the one-request/one-response contract
-	// is enforced by the code, not merely documented (owner ruling on #18). A
-	// frame that fails authentication does NOT consume the single Open, so a
-	// garbage or forged frame cannot deny the legitimate one.
+	// returns this instead of completing. A frame that fails authentication does
+	// not consume the single Open, so a garbage or forged frame cannot deny the
+	// legitimate one.
 	ErrTransportConsumed = errors.New("p256proto: transport direction already used")
 
 	// ErrProtectedMemory indicates locked memory could not be allocated, filled
@@ -73,12 +72,7 @@ var (
 	// Responder.ReadMessage1 returns it for the one connection that was
 	// refused, having locked nothing and mutated no state. It is not a protocol
 	// failure: the caller drops that connection and keeps serving, and every
-	// other in-flight handshake is untouched. That is what keeps a
-	// connect-cost flood of unauthenticated message 1 values from becoming a
-	// denial of service (see protected.go).
-	//
-	// It replaces ErrResourceExhausted, which classified the hand-rolled
-	// concurrency cap retired in the go-enclave adoption (#19).
+	// other in-flight handshake is untouched (see protected.go).
 	ErrProtectedMemory = errors.New("p256proto: protected memory unavailable")
 
 	// ErrBufferSize indicates a caller-supplied destination buffer was too

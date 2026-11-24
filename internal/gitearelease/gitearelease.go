@@ -1,22 +1,14 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package gitearelease publishes a release to a Gitea instance: it creates (or
-// reuses) the release object for a tag, then uploads every file in dist/ as an
+// Package gitearelease publishes a release to a Gitea-compatible forge: it creates
+// (or reuses) the release object for a tag, then uploads every file in dist/ as an
 // asset, replacing an asset of the same name so a re-run converges instead of
-// accumulating duplicates.
+// accumulating duplicates. It uses the forge's /api/v1 release API with the
+// standard library only.
 //
-// It exists because softprops/action-gh-release talks to the GitHub Releases
-// API, which Gitea does not serve -- it answers HTTP 405, which is what left
-// v0.2.0-alpha with a published Go module and no Release object (#12). Gitea's
-// own release API under /api/v1 is GitHub-shaped, so the standard library is
-// enough and nothing has to be fetchable from github.com at release time.
-//
-// It replaced .github/scripts/gitea-release.sh in #75, when this repository
-// stopped carrying shell scripts. Two behaviours are deliberately stricter than
-// the script's: a failed lookup of an existing release is an error rather than
-// "no release yet" (only a 404 means absent), and a response that cannot be
-// decoded is an error rather than an empty id.
+// A failed lookup of an existing release is an error (only a 404 means absent),
+// and a response that cannot be decoded is an error rather than an empty id.
 //
 // The body is the tag's CHANGELOG section. The token is sent only in the
 // Authorization header; it never appears in a URL, an argument or a log line.

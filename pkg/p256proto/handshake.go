@@ -42,19 +42,12 @@ func (i *Initiator) Destroy() {
 		return
 	}
 
-	// Latch BEFORE releasing. Nothing may read these buffers afterwards, so a
-	// later handshake call must be refused outright rather than proceeding to
-	// generate an ephemeral, run ECDH and reach the key schedule -- which is
-	// secret-bearing work on an object the caller has explicitly discarded,
-	// and which surfaces as a misleading ErrCipher instead of a lifecycle
-	// error.
+	// Latch before releasing so later calls fail with a lifecycle error.
 	i.destroyed = true
 	i.sym.Destroy()
 }
 
-// unusable reports why this handshake can no longer be used, or nil if it can.
-// Both terminal states answer with ErrHandshakeState: from a caller's point of
-// view a spent handshake is a spent handshake, and the detail says which.
+// unusable reports why this handshake can no longer be used (ErrHandshakeState), or nil.
 func (i *Initiator) unusable(op string) error {
 	switch {
 	case i.destroyed:
@@ -66,10 +59,7 @@ func (i *Initiator) unusable(op string) error {
 	return nil
 }
 
-// fail latches a terminal failure: the key schedule is released immediately
-// rather than waiting for a caller to notice, and any later call reports that
-// this handshake is spent. Guard errors do NOT come through here -- a
-// caller-ordering mistake must not destroy a handshake that is still valid.
+// fail latches a terminal failure and releases the key schedule; guard errors do not come here.
 func (i *Initiator) fail(err error) error {
 	i.failed = true
 	i.sym.Destroy()
@@ -90,10 +80,7 @@ func NewInitiator(responderStatic []byte) (*Initiator, error) {
 		return nil, err
 	}
 
-	// The initiator's key schedule is locked here rather than deferred: its
-	// handshake is outbound and not reachable by unauthenticated peers, so
-	// there is nothing to defer it past. A locked-memory refusal is reported as
-	// ErrProtectedMemory instead of ending the process (see protected.go).
+	// The initiator locks its key schedule now; refusal is ErrProtectedMemory.
 	sym, err := newSymmetricState("NewInitiator")
 	if err != nil {
 		return nil, err
@@ -327,17 +314,7 @@ func (r *Responder) ReadMessage1(msg []byte) error {
 		return r.fail(err)
 	}
 
-	// The cheap checks have passed and nothing has been locked or folded into
-	// the transcript yet. Locking the key schedule is the responder's one
-	// pre-authentication allocation -- the tag is checked below -- so it is the
-	// allocation the process's locked-memory budget has to refuse. A refusal
-	// fails THIS connection closed with ErrProtectedMemory (carrying
-	// enclave.ErrBudgetExhausted or enclave.ErrLockedMemoryUnavailable),
-	// having locked nothing and mutated no state, so a connect-cost flood
-	// costs one connection each rather than the process: no other live
-	// handshake is disturbed and nothing panics (see protected.go). A refused
-	// allocation is not this handshake's fault, so it does not latch the
-	// handshake failed.
+	// Lock the key schedule now; a budget refusal fails only this connection with ErrProtectedMemory and does not latch failure.
 	if err := r.sym.lockSchedule("ReadMessage1"); err != nil {
 		return err
 	}
@@ -346,16 +323,7 @@ func (r *Responder) ReadMessage1(msg []byte) error {
 	r.peer = peer
 	r.sym.mixHash(peer.Bytes())
 
-	// The key agreement runs inside a borrow of the static credential's
-	// protected storage. NewResponder checked the key was alive when this
-	// responder was built, and that answer is stale by the time the peer's
-	// first message arrives: the enclave can be destroyed in between -- a
-	// shutdown sweep is the realistic way -- while crypto/ecdh's own heap copy
-	// of the scalar survives it. Re-reading a predicate here would have the
-	// same problem one instruction later; the borrow is what makes the check
-	// and the use one thing. A released credential fails THIS connection with
-	// ErrProtectedMemory rather than authenticating a peer against a key the
-	// process has already wiped. See StaticKey.withScalar.
+	// Run the key agreement inside a borrow of the static key, so a wiped key fails this connection with ErrProtectedMemory.
 	var es []byte
 
 	if err := r.static.withScalar("ReadMessage1", func(priv *ecdh.PrivateKey) error {

@@ -99,9 +99,7 @@ func VerifyPeerChain(chain []*x509.Certificate, records []*TLSARecord, hostname 
 	return ErrTLSAVerificationFailed
 }
 
-// hasUsableRecords reports whether at least one DANE-TA (usage=2) or
-// DANE-EE (usage=3) record is present. PKIX-TA (0) and PKIX-EE (1) records
-// require WebPKI validation and are not usable for bootstrap verification.
+// hasUsableRecords reports whether any DANE-TA or DANE-EE record is present; PKIX usages need WebPKI.
 func hasUsableRecords(records []*TLSARecord) bool {
 	for _, r := range records {
 		if r == nil {
@@ -114,10 +112,7 @@ func hasUsableRecords(records []*TLSARecord) bool {
 	return false
 }
 
-// verifyDANETA performs DANE-TA (usage=2) verification: it locates the trust
-// anchor within the presented chain by TLSA digest match, then PKIX-verifies
-// the leaf against that anchor with the remaining chain certificates as
-// intermediates, a server-auth key usage requirement, and a hostname check.
+// verifyDANETA finds the anchor in the chain by digest, then PKIX-verifies the leaf to it with server-auth usage and a hostname check.
 func verifyDANETA(chain []*x509.Certificate, record *TLSARecord, hostname string) error {
 	anchorIdx := -1
 	for i, cert := range chain {
