@@ -13,7 +13,10 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
-// ErrConfigRead is returned when a configuration file exists, or was named explicitly, and cannot be read or parsed.
+// ErrConfigRead is returned when a configuration file is present but cannot be
+// opened or parsed. A file the operator named explicitly and that does not
+// exist is also a read failure: silently ignoring it would start the server on
+// values the operator never chose.
 var ErrConfigRead = errors.New("config: read failed")
 
 const (

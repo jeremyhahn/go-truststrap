@@ -15,7 +15,10 @@ var (
 	// ErrServerAlreadyStarted indicates Start was called on an already-running server.
 	ErrServerAlreadyStarted = errors.New("bootstrap: server already started")
 
-	// ErrShutdownIncomplete indicates Stop's deadline expired with workers running; keep the static key's pages.
+	// ErrShutdownIncomplete indicates Stop's drain deadline expired while
+	// handshake workers were still running. The server is no longer accepting
+	// connections, but material the workers read -- notably the static key's
+	// protected pages -- must be retained rather than destroyed.
 	ErrShutdownIncomplete = errors.New("bootstrap: shutdown incomplete, connections still draining")
 
 	// ErrMaxConnections indicates the server has reached its maximum concurrent connection limit.
@@ -33,7 +36,10 @@ var (
 	// ErrConnectionFailed indicates a TCP connection could not be established.
 	ErrConnectionFailed = errors.New("bootstrap: connection failed")
 
-	// ErrClientClosed indicates Client.Close ended an in-flight Connect or GetCABundle.
+	// ErrClientClosed indicates Client.Close ended the operation: the socket was
+	// closed while Connect or GetCABundle was in flight, or Close arrived while
+	// Connect was still dialing. It is the Kind of a ClientError whose Err is
+	// the I/O error the closed socket produced, if any.
 	ErrClientClosed = errors.New("bootstrap: client closed")
 
 	// ErrAlreadyConnected indicates Connect was called on a client that already
@@ -53,7 +59,12 @@ var (
 	// ErrHandshakeFailed indicates the Noise_NK handshake did not complete successfully.
 	ErrHandshakeFailed = errors.New("bootstrap: handshake failed")
 
-	// ErrFIPSUnsupported indicates the Noise suite was refused because FIPS is enforced; both ends refuse it before key agreement.
+	// ErrFIPSUnsupported indicates the Noise_NK suite (0x01) needs X25519 key
+	// agreement, which is refused whenever FIPS is enforced: a "fips" build (see
+	// docs/fips.md) or a process running under GODEBUG=fips140=only. The
+	// negotiation returns it before any key agreement -- the client refuses to
+	// offer Noise, and the server refuses to accept it -- so a downgrade to
+	// Noise is unreachable against a FIPS peer. See docs/bootstrap-negotiation.md.
 	ErrFIPSUnsupported = errors.New("bootstrap: X25519 is unavailable under FIPS; the P-256 suite is required")
 
 	// ErrUnsupportedSuite indicates the client's first frame declared a suite
@@ -68,7 +79,11 @@ var (
 	ErrRateLimited = errors.New("bootstrap: rate limited")
 )
 
-// ClientError reports a Connect or GetCABundle failure at a named stage; errors.Is matches both Kind and Err.
+// ClientError is returned by Client.Connect and Client.GetCABundle when an
+// operation fails at a named stage. Kind is the sentinel that classifies the
+// failure -- ErrConnectionFailed, ErrHandshakeFailed, ErrClientClosed,
+// ErrInvalidRequest -- and Err the underlying cause, if any. Unwrap exposes
+// both, so errors.Is matches the sentinel and the cause alike.
 type ClientError struct {
 	// Stage names where the operation failed, e.g. "dial", "read msg2",
 	// "write request".

@@ -32,7 +32,8 @@ var (
 	// bootstrapper constructor.
 	ErrBundlerNil = errors.New("truststrap: bundler is nil")
 
-	// ErrDANEVerificationFailed indicates DANE/TLSA verification of the retrieved CA bundle failed.
+	// ErrDANEVerificationFailed indicates DANE/TLSA verification of the
+	// retrieved CA bundle failed.
 	ErrDANEVerificationFailed = errors.New("truststrap: dane verification failed")
 
 	// ErrDNSLookupFailed indicates the DNS lookup for TLSA records failed.
@@ -87,7 +88,8 @@ func (e InvalidPinError) Error() string {
 	return fmt.Sprintf("truststrap: invalid pin: %s", e.Reason)
 }
 
-// TOFURejectedError is returned when ConfirmFunc rejects a newly captured pin; the pin is not persisted.
+// TOFURejectedError is returned when the ConfirmFunc rejects a newly captured
+// TOFU pin. The pin is not persisted when this error occurs.
 type TOFURejectedError struct {
 	// Host is the server hostname whose pin was rejected.
 	Host string
@@ -135,7 +137,12 @@ func (e TOFUPinStoreRequiredError) Error() string {
 	return "truststrap: tofu pin store is required"
 }
 
-// NoiseConfigError is a NewNoiseBootstrapper configuration failure; it wraps ErrInvalidConfig and the cause.
+// NoiseConfigError is returned by NewNoiseBootstrapper when a NoiseConfig
+// field is missing, malformed, or inconsistent with the rest of the
+// configuration. It wraps ErrInvalidConfig, so errors.Is(err, ErrInvalidConfig)
+// holds for every construction failure, and Err (when set) so the underlying
+// cause -- a hex decode failure, an off-curve point, an unsupported suite --
+// remains reachable through errors.Is and errors.As.
 type NoiseConfigError struct {
 	// Field is the NoiseConfig field that was rejected.
 	Field string
@@ -162,7 +169,10 @@ func (e NoiseConfigError) Unwrap() []error {
 	return []error{ErrInvalidConfig, e.Err}
 }
 
-// NoiseFetchError is a FetchCABundle failure at a named stage; it wraps ErrFetchFailed and the transport error.
+// NoiseFetchError is returned by NoiseBootstrapper.FetchCABundle when a fetch
+// fails at a named stage. It wraps ErrFetchFailed and the underlying transport
+// error, so callers keep matching the sentinel while the typed cause -- for
+// example noiseproto/bootstrap.ErrFIPSUnsupported -- stays reachable.
 type NoiseFetchError struct {
 	// Op is the stage that failed: "connect" or "get_ca_bundle".
 	Op string
@@ -181,7 +191,12 @@ func (e NoiseFetchError) Unwrap() []error {
 	return []error{ErrFetchFailed, e.Err}
 }
 
-// NoiseInterruptedError is the cause when Close (Reason ErrClosed) or the context ended a fetch; errors.Is matches Reason and Err.
+// NoiseInterruptedError is the cause inside a NoiseFetchError when a fetch was
+// ended from outside rather than by the peer: by Close, in which case Reason is
+// ErrClosed, or by its context, in which case Reason is the context's error
+// (context.Canceled, or context.DeadlineExceeded once OperationTimeout has
+// elapsed). Err is the transport error the closed socket produced. Unwrap
+// exposes both, so errors.Is matches the reason and the transport cause alike.
 type NoiseInterruptedError struct {
 	// Reason is ErrClosed or the context's error.
 	Reason error

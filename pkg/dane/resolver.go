@@ -33,7 +33,10 @@ type Resolver struct {
 	server string
 }
 
-// NewResolver validates cfg and applies defaults (5 s timeout; RequireAD true for a zero config).
+// NewResolver creates a new DANE resolver with the given configuration.
+// It validates the configuration and applies sensible defaults for any
+// unset fields (timeout defaults to 5 seconds, RequireAD defaults to true
+// for a zero-value config).
 func NewResolver(cfg *ResolverConfig) (*Resolver, error) {
 	if cfg == nil {
 		return nil, ErrResolverConfig
@@ -96,7 +99,10 @@ func NewResolver(cfg *ResolverConfig) (*Resolver, error) {
 	}, nil
 }
 
-// LookupTLSA queries _<port>._tcp.<hostname>. (RFC 6698 §3), requiring the AD flag when RequireAD is set.
+// LookupTLSA queries DNS for TLSA records associated with the given hostname
+// and port. The DNS name is constructed as "_<port>._tcp.<hostname>." per
+// RFC 6698 Section 3. If RequireAD is set in the resolver configuration,
+// the response must have the Authenticated Data flag set.
 func (r *Resolver) LookupTLSA(ctx context.Context, hostname string, port uint16) ([]*TLSARecord, error) {
 	if hostname == "" {
 		return nil, ErrInvalidHostname

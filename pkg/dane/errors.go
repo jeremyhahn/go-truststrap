@@ -1,7 +1,9 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package dane provides RFC 6698 DANE/TLSA record generation, lookup and verification.
+// Package dane provides RFC 6698 DANE/TLSA verification primitives for
+// DNS-Based Authentication of Named Entities (DANE). It supports TLSA record
+// generation, lookup, and verification against X.509 certificates.
 package dane
 
 import "errors"
@@ -24,7 +26,8 @@ var (
 	// ErrTLSAVerificationFailed indicates no certificate matched any TLSA record.
 	ErrTLSAVerificationFailed = errors.New("dane: TLSA verification failed")
 
-	// ErrNoUsableTLSARecords indicates no DANE-TA (2) or DANE-EE (3) records are available.
+	// ErrNoUsableTLSARecords indicates no DANE-TA (usage=2) or DANE-EE
+	// (usage=3) records are available for bootstrap verification.
 	ErrNoUsableTLSARecords = errors.New("dane: no DANE-TA or DANE-EE TLSA records found")
 
 	// ErrUnsupportedSelector indicates the TLSA selector field value is not supported.

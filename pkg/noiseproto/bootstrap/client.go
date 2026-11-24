@@ -37,7 +37,14 @@ const (
 	stageParseResponse   = "parse response"
 )
 
-// Client fetches the CA bundle from a bootstrap server over a Noise_NK or P-256 session; Close from any goroutine ends a blocked read.
+// Client connects to a Noise_NK bootstrap server over TCP, performs a
+// 2-message NK handshake, and sends encrypted requests to retrieve the
+// CA certificate bundle.
+//
+// Close may be called from any goroutine at any time, including while Connect
+// or GetCABundle is blocked in a socket read: it closes the socket, which ends
+// that read with an error, so a caller can abandon a stalled peer without
+// waiting for the operation's deadline.
 type Client struct {
 	config *ClientConfig
 	logger *slog.Logger
@@ -55,7 +62,12 @@ type Client struct {
 	reqMu sync.Mutex
 }
 
-// NewClient creates a client; at least one exact-size server key (ServerStaticKey or ServerP256StaticKey) is required, and the suite is chosen at Connect.
+// NewClient creates a new bootstrap client with the given configuration. At
+// least one server key must be configured: ServerStaticKey (32-byte Curve25519,
+// Noise suite) or ServerP256StaticKey (uncompressed P-256 point, approved
+// suite). A configured key must be the exact size for its suite. The suite the
+// client offers is chosen at Connect per Suite and FIPS policy
+// (see docs/bootstrap-negotiation.md).
 func NewClient(cfg *ClientConfig) (*Client, error) {
 	noiseLen := len(cfg.ServerStaticKey)
 	p256Len := len(cfg.ServerP256StaticKey)
@@ -93,7 +105,13 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 	}, nil
 }
 
-// Connect dials and runs the selected suite's handshake as initiator; a concurrent Close makes it fail with ErrClientClosed, and failures are ClientError values naming the stage.
+// Connect establishes a TCP connection to the bootstrap server and performs
+// the selected suite's handshake as the initiator. The context controls the
+// dial, and its deadline bounds the handshake; a Close from another goroutine
+// ends a handshake blocked on the peer, and Connect then fails with
+// ErrClientClosed rather than keeping a socket Close has already closed. A
+// client that has been closed may Connect again. Failures are ClientError
+// values naming the stage.
 func (c *Client) Connect(ctx context.Context) error {
 	// Choose the suite before dialing.
 	suite, err := selectClientSuite(c.config)

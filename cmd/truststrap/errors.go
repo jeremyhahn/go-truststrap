@@ -43,7 +43,14 @@ var (
 	ErrKeyFileMalformed = errors.New("malformed key file")
 )
 
-// CommandError carries the failed operation, the classifying sentinel, optional detail and the cause; errors.Is matches both sentinel and cause.
+// CommandError is this CLI's error type. It carries the operation that failed,
+// the sentinel that classifies it, optional human-readable detail, and any
+// underlying cause.
+//
+// errors.Is matches both the sentinel and the cause, because Unwrap returns
+// them together: errors.Is(err, ErrKeyOperation) classifies, and
+// errors.Is(err, enclave.ErrBudgetExhausted) still reaches the original. It
+// has the same shape as p256proto.ProtocolError.
 type CommandError struct {
 	// Op is the operation that failed, e.g. "readStaticKeyFile".
 	Op string

@@ -36,7 +36,10 @@ var (
 	// ErrServerStart is returned when the bootstrap server fails to start.
 	ErrServerStart = errors.New("serve: server start failed")
 
-	// ErrServerStop is returned when the bootstrap server fails to shut down; a worker may still hold the static key.
+	// ErrServerStop is returned when the bootstrap server fails to shut down.
+	// It is distinct from ErrServerStart because the two say different things
+	// about the static key: a start failure means no worker ever read it, a
+	// stop failure means one may still be reading it.
 	ErrServerStop = errors.New("serve: server stop failed")
 )
 

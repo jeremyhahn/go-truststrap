@@ -1,7 +1,40 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package truststrap retrieves a CA bundle before TLS trust exists, via DANE, Noise, SPKI pinning, TOFU, direct HTTPS or an embedded call; AutoBootstrapper tries DANE, Noise, SPKI, Direct in order.
+// Package truststrap provides CA bundle retrieval for trust store population
+// before TLS is available. This is the chicken-and-egg problem: you need the
+// CA certificate to establish TLS, but the CA certificate is on the server
+// behind TLS.
+//
+// Five implementations are provided:
+//
+//   - DANEBootstrapper: Uses DANE/TLSA DNS verification. The client resolves
+//     TLSA records for the server hostname, fetches the CA bundle over a
+//     DANE-verified HTTPS connection (the serving TLS chain must match the
+//     TLSA records per RFC 7671), and additionally verifies the bundle
+//     against DANE-TA records. This is the strongest verification method.
+//
+//   - NoiseBootstrapper: Uses the Noise_NK protocol over raw TCP. The client
+//     only needs the server's 32-byte Curve25519 public key (distributed
+//     out-of-band). This is the preferred method for structurally secure
+//     bootstrapping when DANE is not available.
+//
+//   - SPKIBootstrapper: Uses SPKI-pinned TLS. The client connects over
+//     TLS but verifies the server certificate against a known SHA-256 SPKI
+//     pin rather than trusting a CA. This is the fallback for environments
+//     where Noise is not available.
+//
+//   - DirectBootstrapper: Uses plain HTTPS with the system trust store. This
+//     is a last-resort fallback that provides no additional verification
+//     beyond standard TLS with the OS CA bundle.
+//
+//   - EmbeddedBootstrapper: Direct in-process call for library consumers.
+//     When the key management system runs embedded (same process), no network
+//     is needed.
+//
+// The AutoBootstrapper provides a convenience mechanism that tries multiple
+// methods in priority order (DANE, Noise, SPKI, Direct) and returns the
+// first successful result.
 package truststrap
 
 import (

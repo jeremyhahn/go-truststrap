@@ -19,7 +19,8 @@ const (
 	// direct HTTPS bootstrapper.
 	DefaultDirectTimeout = 10 * time.Second
 
-	// DefaultDirectBundlePath is the default REST path of the bootstrap CA bundle endpoint.
+	// DefaultDirectBundlePath is the default REST API path for the
+	// bootstrap CA bundle endpoint.
 	DefaultDirectBundlePath = "/v1/ca/bootstrap"
 
 	// directMaxResponseSize is the maximum allowed response body size (1 MB).
@@ -32,7 +33,8 @@ type DirectConfig struct {
 	// (e.g., "https://kms.example.com:8443"). Required.
 	ServerURL string
 
-	// BundlePath is the REST path of the CA bundle endpoint. Default: "/v1/ca/bootstrap".
+	// BundlePath is the REST API path for the CA bundle endpoint.
+	// Default: "/v1/ca/bootstrap".
 	BundlePath string
 
 	// ConnectTimeout is the HTTP request timeout. Default: 10s.
@@ -42,7 +44,10 @@ type DirectConfig struct {
 	Logger *slog.Logger
 }
 
-// DirectBootstrapper fetches over plain HTTPS with the system trust store; a last resort.
+// DirectBootstrapper implements Bootstrapper using plain HTTPS with the
+// system trust store. This is a last-resort fallback that relies on the
+// operating system's pre-installed CA certificates to validate the server.
+// It provides no additional verification beyond standard TLS.
 type DirectBootstrapper struct {
 	serverURL  string
 	bundlePath string

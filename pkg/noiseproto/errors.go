@@ -1,7 +1,10 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package noiseproto provides Noise XX and NK handshakes over Curve25519, ChaChaPoly and SHA-256.
+// Package noiseproto provides reusable Noise protocol primitives for encrypted
+// session establishment using Curve25519, ChaChaPoly, and SHA-256.
+// It supports the XX (mutual authentication) and NK (known server key)
+// handshake patterns from the Noise Protocol Framework specification.
 package noiseproto
 
 import (
@@ -38,10 +41,23 @@ var (
 	// the requested output.
 	ErrInvalidBufferSize = errors.New("noise: invalid buffer size")
 
-	// ErrFIPSUnsupported indicates X25519 is refused: always in a fips build, and by the StaticKey constructors under fips140=only. See docs/fips.md.
+	// ErrFIPSUnsupported indicates the operation needs X25519 key agreement,
+	// which is refused whenever FIPS is enforced: a "fips" build, where the
+	// primitive is not compiled in at all (dh_fips.go), or any build running
+	// under GODEBUG=fips140=only, where the Go Cryptographic Module rejects
+	// X25519 at run time. Every entry point of this package that performs key
+	// agreement returns it in a "fips" build; the StaticKey constructors return
+	// it under fips140=only too, wrapping the module's own refusal. See
+	// docs/fips.md.
 	ErrFIPSUnsupported = errors.New("noise: X25519 is unavailable under FIPS")
 
-	// ErrProtectedMemory indicates a private scalar could not be placed in or read from locked memory; it wraps the go-enclave error.
+	// ErrProtectedMemory indicates a static key's private scalar could not be
+	// placed in, or read from, locked memory. It always wraps the go-enclave
+	// error that caused it, so errors.Is also reaches
+	// enclave.ErrBudgetExhausted (the process's locked-memory budget refused
+	// the allocation), enclave.ErrLockedMemoryUnavailable (the kernel refused
+	// the lock despite admission) or enclave.ErrEnclaveDestroyed (the key was
+	// destroyed, or wiped by a shutdown sweep, before it was used).
 	ErrProtectedMemory = errors.New("noise: protected memory unavailable")
 
 	// ErrSessionDestroyed indicates an operation was attempted on a Session

@@ -12,13 +12,15 @@ import (
 	"strings"
 )
 
-// ComputeSPKIPin returns the hex SHA-256 of a certificate's SubjectPublicKeyInfo.
+// ComputeSPKIPin computes the SHA-256 hash of a certificate's SubjectPublicKeyInfo (SPKI).
+// Returns the hex-encoded hash string.
 func ComputeSPKIPin(cert *x509.Certificate) string {
 	hash := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	return hex.EncodeToString(hash[:])
 }
 
-// VerifySPKIPin returns nil if any certificate in the chain matches the pin, else ErrSPKIPinMismatch.
+// VerifySPKIPin verifies that at least one certificate in the chain matches
+// the expected SPKI SHA-256 pin. Returns nil on match, ErrSPKIPinMismatch otherwise.
 func VerifySPKIPin(certs []*x509.Certificate, expectedPin string) error {
 	if expectedPin == "" {
 		return ErrNoPinConfigured
@@ -35,7 +37,20 @@ func VerifySPKIPin(certs []*x509.Certificate, expectedPin string) error {
 	return ErrSPKIPinMismatch
 }
 
-// NewPinnedTLSConfig returns a TLS config verified only by VerifyConnection against the SPKI pin, with session tickets disabled so resumption cannot skip it.
+// NewPinnedTLSConfig creates a TLS configuration that verifies the server's
+// certificate against the provided SPKI SHA-256 pin instead of using the
+// system certificate store.
+//
+// This is used for bootstrap scenarios where the CA certificate is not yet
+// available (chicken-and-egg problem). The pin is distributed out-of-band
+// and provides cryptographic assurance that we are connecting to the right server.
+//
+// The returned config uses the same custom-verifier pattern as the DANE and
+// TOFU strategies: InsecureSkipVerify disables WebPKI verification only,
+// VerifyConnection is the sole verifier, and session tickets are disabled so
+// every connection performs a full handshake through it. VerifyPeerCertificate
+// alone is not enough — it is skipped on a resumed session, which would let a
+// resumed connection bypass the pin entirely.
 func NewPinnedTLSConfig(expectedPin string) (*tls.Config, error) {
 	if expectedPin == "" {
 		return nil, ErrNoPinConfigured

@@ -20,7 +20,15 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 )
 
-// Server is a single-use TCP bootstrap server serving encrypted request/response pairs after a Noise_NK or P-256 handshake; Start succeeds at most once.
+// Server is a TCP server that accepts Noise_NK handshakes for secure
+// CA bundle bootstrapping. It performs a 2-message NK handshake with
+// each connecting client, then serves encrypted request/response pairs
+// over the established session.
+//
+// A Server is single-use. It runs at most one Start-to-Stop lifetime: once
+// Start has succeeded the Server is spent, and every later Start returns
+// ErrServerAlreadyStarted, including after a Stop that drained cleanly. A
+// caller that needs to listen again builds a new Server.
 type Server struct {
 	config  *ServerConfig
 	handler *Handler
@@ -99,7 +107,15 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	}, nil
 }
 
-// Start listens and serves each connection in a goroutine; it succeeds at most once, and a failed bind can be retried.
+// Start begins listening for incoming TCP connections and spawns goroutines to
+// handle each one.
+//
+// A Server is single-use: Start succeeds at most once. Every later call returns
+// ErrServerAlreadyStarted, whether the server is still running or has already
+// been stopped.
+//
+// A Start that fails to bind installs nothing and does not consume the Server's
+// one lifetime, so a caller may retry -- typically on a different address.
 func (s *Server) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,7 +148,27 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop closes the listener and waits for workers under the caller's context; nil means every worker exited, else ErrShutdownIncomplete. Safe to call concurrently; before Start it returns ErrServerNotStarted.
+// Stop gracefully shuts down the server. It closes the listener to stop
+// accepting new connections, then waits for in-flight connections to drain or
+// the context to expire.
+//
+// A nil return means every handshake worker has exited, and only then is it
+// safe to release material those workers read -- in particular the protected
+// pages holding the static key. If the drain deadline expires first, Stop
+// returns ErrShutdownIncomplete and that material must be retained.
+//
+// Stop may be called concurrently and more than once. The teardown runs once,
+// but each caller waits for the drain under its OWN context: a caller with a
+// short deadline returns ErrShutdownIncomplete on time rather than blocking
+// behind another caller's longer one. Two concurrent callers may therefore see
+// different outcomes, because they asked different questions -- "did it drain
+// within MY deadline?" -- and that is the honest answer to each. What no caller
+// can ever receive is a nil that is not backed by a real drain, which is the
+// property that makes nil safe to act on.
+//
+// Once the drain completes, every later Stop reports it: nil is stable, and a
+// server that has finished draining stays finished. Stop before Start returns
+// ErrServerNotStarted; that is non-nil, so it is never mistaken for a drain.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	started := s.started

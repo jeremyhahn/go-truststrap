@@ -1,7 +1,9 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package spkipin computes and verifies SHA-256 SPKI pins for bootstrapping PKI trust.
+// Package spkipin provides SPKI pin computation and verification for TLS
+// certificate pinning. It implements SHA-256 Subject Public Key Info pinning
+// as a trust-on-first-use mechanism for bootstrapping PKI trust.
 package spkipin
 
 import "errors"

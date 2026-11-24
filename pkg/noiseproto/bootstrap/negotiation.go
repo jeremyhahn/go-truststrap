@@ -30,7 +30,12 @@ const (
 	suiteHeaderSize = 2
 )
 
-// NoiseSuiteHeader returns a copy of the version||suite header a Noise client prepends to its first frame and sets as the prologue.
+// NoiseSuiteHeader returns the two-byte version||suite header a Noise-suite
+// client prepends to its first frame AND sets as the Noise prologue. A consumer
+// that drives the Noise handshake itself, rather than through Client, must use
+// it for both so the bytes match the server's prologue and a tampered header
+// breaks the transcript. The returned slice is a fresh copy. See
+// docs/bootstrap-negotiation.md.
 func NoiseSuiteHeader() []byte {
 	return []byte{protocolVersion, SuiteNoiseNK}
 }

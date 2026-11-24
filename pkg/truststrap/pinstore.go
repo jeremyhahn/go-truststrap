@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-// Pin is a TOFU-pinned server identity used for strict SPKI verification after first contact.
+// Pin records a TOFU-pinned server identity. Once captured on first contact,
+// it is used for strict SPKI verification on all subsequent connections.
 type Pin struct {
 	// Host is the server hostname.
 	Host string `json:"host"`
@@ -21,7 +22,8 @@ type Pin struct {
 	// Port is the server port (1-65535).
 	Port int `json:"port"`
 
-	// SPKISHA256 is the 64-character hex SHA-256 of the server leaf's SubjectPublicKeyInfo.
+	// SPKISHA256 is the hex-encoded SHA-256 hash of the server leaf
+	// certificate's SubjectPublicKeyInfo (SPKI). 64 hex characters.
 	SPKISHA256 string `json:"spki_sha256"`
 
 	// CertFingerprint is the hex-encoded SHA-256 hash of the server leaf
@@ -67,7 +69,8 @@ func validatePin(p *Pin) error {
 	return nil
 }
 
-// PinStore persists and retrieves TOFU pins by host and port; implementations must be safe for concurrent use.
+// PinStore persists and retrieves TOFU pins by host and port.
+// Implementations must be safe for concurrent use.
 type PinStore interface {
 	// Get retrieves the pin for the given host and port.
 	// Returns PinNotFoundError when no pin has been recorded.

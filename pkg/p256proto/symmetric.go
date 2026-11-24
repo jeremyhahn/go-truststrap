@@ -69,7 +69,14 @@ func newSymmetricState(op string) (*symmetricState, error) {
 	return s, nil
 }
 
-// Destroy wipes and releases the schedule; idempotent, nil-safe and safe before lockSchedule.
+// Destroy wipes the chaining and AEAD keys and releases their locked pages,
+// returning the reservation to the process's locked-memory budget. It is
+// idempotent and safe on a nil receiver, and safe before the schedule has been
+// locked -- a nil schedule is skipped. Nothing may read the
+// schedule afterwards.
+//
+// The enclave's Destroy error is not returned: the next enclave.WipeAll
+// reports every corruption Destroy detected.
 func (s *symmetricState) Destroy() {
 	if s == nil || s.schedule == nil {
 		return

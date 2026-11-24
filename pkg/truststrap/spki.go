@@ -14,7 +14,8 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 )
 
-// DefaultSPKITimeout is the default HTTP request timeout for the SPKI bootstrapper.
+// DefaultSPKITimeout is the default HTTP request timeout for the
+// SPKI-pinned TLS bootstrapper.
 const DefaultSPKITimeout = 10 * time.Second
 
 // SPKIConfig configures the SPKI-pinned TLS bootstrapper.
@@ -23,7 +24,9 @@ type SPKIConfig struct {
 	// (e.g., "https://kms.example.com:8443").
 	ServerURL string
 
-	// SPKIPinSHA256 is the server's 64-character hex SHA-256 SPKI pin, distributed out of band.
+	// SPKIPinSHA256 is the hex-encoded SHA-256 hash of the server's
+	// Subject Public Key Info (SPKI). This 64-character hex string is
+	// distributed out-of-band for trust-on-first-use.
 	SPKIPinSHA256 string
 
 	// ConnectTimeout is the HTTP request timeout.
@@ -36,13 +39,17 @@ type SPKIConfig struct {
 	BundlePath string
 }
 
-// SPKIBootstrapper fetches over TLS verified against a pre-shared SHA-256 SPKI pin instead of the system trust store.
+// SPKIBootstrapper implements Bootstrapper using SPKI-pinned TLS.
+// It connects to the server over TLS and verifies the server
+// certificate against a pre-shared SHA-256 SPKI pin rather than using
+// the system CA trust store.
 type SPKIBootstrapper struct {
 	client *spkipin.Client
 	logger *slog.Logger
 }
 
-// NewSPKIBootstrapper creates an SPKI bootstrapper; the pin must be 64 hex characters.
+// NewSPKIBootstrapper creates a new SPKI-pinned TLS bootstrapper.
+// The SPKI pin must be a 64-character hex-encoded SHA-256 hash.
 func NewSPKIBootstrapper(cfg *SPKIConfig) (*SPKIBootstrapper, error) {
 	if cfg == nil {
 		return nil, ErrInvalidConfig
@@ -81,7 +88,9 @@ func NewSPKIBootstrapper(cfg *SPKIConfig) (*SPKIBootstrapper, error) {
 	}, nil
 }
 
-// FetchCABundle retrieves the CA bundle over SPKI-pinned TLS, passing store type and algorithm filters as query parameters.
+// FetchCABundle retrieves the CA bundle via SPKI-pinned TLS. The server
+// certificate is verified against the configured SPKI pin. Optional
+// filters for store type and algorithm are passed as query parameters.
 func (b *SPKIBootstrapper) FetchCABundle(ctx context.Context, req *CABundleRequest) (*CABundleResponse, error) {
 	storeType := ""
 	algorithm := ""

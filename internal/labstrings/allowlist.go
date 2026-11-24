@@ -8,14 +8,22 @@ import (
 	"strings"
 )
 
-// AllowRule accepts one class of lab value in the files its path pattern matches; every field, including the reason, is required.
+// AllowRule accepts one class of lab value in the files its path pattern
+// matches. It exists for the cases an inline waiver cannot reach: a whole tree
+// of them, or a file whose syntax has no comments.
+//
+// Every field is required. A rule with no reason is rejected by
+// ValidateAllowList, because the reason is the entire difference between an
+// allow-list and a blindfold.
 type AllowRule struct {
 	// Path is a slash-separated pattern. `*` matches within one path
 	// segment; a `**` segment matches any number of segments, including
 	// none. An exact path matches only itself.
 	Path string
 
-	// Classes are the classes this rule accepts in those files.
+	// Classes are the classes this rule accepts in those files. Naming them
+	// keeps the rule narrow: a tree allowed to mention a lab hostname is
+	// not thereby allowed to hardcode a home directory.
 	Classes []Class
 
 	// Reason says why publishing this value is acceptable, or who owns
@@ -23,7 +31,11 @@ type AllowRule struct {
 	Reason string
 }
 
-// DefaultAllowList is this repository's accepted set; single lines are waived in place with `lab-string-ok: <reason>`.
+// DefaultAllowList is the accepted set for this repository; it is meant to stay short.
+//
+// A value that has to stay is waived in place with `lab-string-ok: <reason>`,
+// next to the line it explains; an entry here is for a whole tree or a file that
+// cannot carry a comment, and it has to say why.
 var DefaultAllowList = []AllowRule{
 	{
 		Path:    "internal/labstrings/*_test.go",

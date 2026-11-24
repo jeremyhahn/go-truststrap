@@ -11,7 +11,18 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 )
 
-// Transport carries application data after the handshake with independent directional keys; each seals once and opens once (ErrTransportConsumed), and failed Opens do not consume.
+// Transport carries application data once the handshake has completed. The two
+// directions use independent keys, so a frame replayed back at its sender
+// decrypts under neither.
+//
+// The approved exchange is exactly one request and one response per connection,
+// and this is enforced: each Transport seals once and opens once. A second Seal
+// returns ErrTransportConsumed and encrypts nothing; a second successful Open (a
+// replayed authenticated frame) returns ErrTransportConsumed rather than the
+// plaintext. A frame that fails authentication does not consume the single
+// Open, so a garbage or forged frame cannot deny the legitimate one. Because
+// each directional key seals a single frame, its 96-bit random nonce (drawn by
+// NewGCMWithRandomNonce) is used once.
 type Transport struct {
 	send cipher.AEAD
 	recv cipher.AEAD
@@ -87,7 +98,12 @@ var newAEAD = func(key []byte) (cipher.AEAD, error) {
 	return gcm, nil
 }
 
-// Seal encrypts plaintext with additionalData under the sending key, adding TagSize bytes; a second call returns ErrTransportConsumed.
+// Seal encrypts plaintext under this peer's sending key, authenticating
+// additionalData alongside it. The result is TagSize bytes longer than the
+// plaintext.
+//
+// It may be called once: the approved exchange is one message per direction. A
+// second call returns ErrTransportConsumed and encrypts nothing.
 func (t *Transport) Seal(plaintext, additionalData []byte) ([]byte, error) {
 	if !t.sealed.CompareAndSwap(false, true) {
 		return nil, failure("Seal", ErrTransportConsumed, "send direction already used")
@@ -97,7 +113,15 @@ func (t *Transport) Seal(plaintext, additionalData []byte) ([]byte, error) {
 	return t.send.Seal(nil, nil, plaintext, additionalData), nil
 }
 
-// Open decrypts one frame (ErrAuthentication on tamper, wrong key or direction); a second successful Open returns ErrTransportConsumed.
+// Open decrypts a frame from the peer. It returns ErrAuthentication for a
+// tampered frame, a frame encrypted under the wrong key, and a frame replayed
+// in the wrong direction.
+//
+// It may open one frame: a second successful Open is a replay of an
+// authenticated frame and returns ErrTransportConsumed. The single-use latch is
+// set only AFTER authentication succeeds, so a frame that fails to authenticate
+// does not consume the permitted Open -- a garbage or forged frame cannot deny
+// the legitimate one.
 func (t *Transport) Open(ciphertext, additionalData []byte) ([]byte, error) {
 	plaintext, err := t.recv.Open(nil, nil, ciphertext, additionalData)
 	if err != nil {

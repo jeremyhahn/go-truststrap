@@ -53,10 +53,26 @@ type ServerConfig struct {
 	// ListenAddr is the TCP address to bind the listener to (e.g., ":8445").
 	ListenAddr string
 
-	// StaticKey is the Curve25519 key pair for the Noise suite (0x01), held in protected memory and borrowed per handshake; the caller destroys it after Stop reports a full drain. May be nil when only P-256 is served.
+	// StaticKey is the server's Curve25519 static key pair for the Noise suite
+	// (0x01), its private scalar held in protected memory. Clients must know
+	// the public component to complete the NK handshake. May be nil in a
+	// P-256-only deployment; a connection that then selects the Noise suite is
+	// refused with ErrUnsupportedSuite (or ErrFIPSUnsupported under FIPS).
+	//
+	// The server borrows the key for each handshake and never destroys it. The
+	// caller destroys it, and should do so only once Stop has reported a
+	// complete drain. If the key is destroyed or wiped while the server is
+	// still running, each Noise handshake from then on fails that one
+	// connection with an error wrapping enclave.ErrEnclaveDestroyed; the server
+	// keeps serving.
 	StaticKey *noiseproto.StaticKey
 
-	// P256StaticKey is the P-256 responder key for the approved suite (0x02); may be nil when only Noise is served, but one of the two keys is required.
+	// P256StaticKey is the server's long-term P-256 responder key for the
+	// approved suite (0x02). Clients must be provisioned with its public
+	// component (PublicBytes). May be nil in a Noise-only deployment; a
+	// connection that then selects the P-256 suite is refused with
+	// ErrUnsupportedSuite. At least one of StaticKey or P256StaticKey must be
+	// set. See docs/bootstrap-negotiation.md for persistence.
 	P256StaticKey *p256proto.StaticKey
 
 	// CABundler provides the CA certificate bundle for distribution.
@@ -98,10 +114,16 @@ type ClientConfig struct {
 	// a P-256-only client.
 	ServerStaticKey []byte
 
-	// ServerP256StaticKey is the server's uncompressed P-256 public key for suite 0x02; one of ServerStaticKey or ServerP256StaticKey is required.
+	// ServerP256StaticKey is the server's uncompressed P-256 responder public
+	// key (p256proto.PublicKeySize bytes) for the approved suite (0x02).
+	// Required to offer the P-256 suite; may be empty in a Noise-only client. At
+	// least one of ServerStaticKey or ServerP256StaticKey must be set.
 	ServerP256StaticKey []byte
 
-	// Suite pins the offered suite (SuiteNoiseNK or SuiteP256AESGCM); zero selects P-256 under FIPS, else Noise when its key is set.
+	// Suite optionally pins the suite this client offers: SuiteNoiseNK (0x01) or
+	// SuiteP256AESGCM (0x02). The zero value selects per policy -- FIPS requires
+	// P-256; otherwise Noise is preferred when its key is configured, else
+	// P-256. Selecting Noise under FIPS fails fast with ErrFIPSUnsupported.
 	Suite byte
 
 	// ConnectTimeout is the deadline for establishing the TCP connection.

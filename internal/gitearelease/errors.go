@@ -59,7 +59,9 @@ func (e *ConfigError) Error() string {
 	return "gitearelease: " + e.Field + " is required"
 }
 
-// APIError is a forge API call that failed; it carries method and path, never the token.
+// APIError is a forge API call that did not answer as expected. It carries
+// the method and the path, never the token, which travels in a header and
+// is not part of either.
 type APIError struct {
 	// Method is the HTTP method.
 	Method string

@@ -25,11 +25,22 @@ const (
 	// CA bundle retrieval. This is the last-resort fallback.
 	MethodDirect Method = "direct"
 
-	// MethodTOFU captures and persists the server's SPKI pin on first contact and verifies it afterwards; it runs only when listed in MethodOrder with AutoConfig.TOFU set.
+	// MethodTOFU uses trust-on-first-use SPKI pinning for CA bundle retrieval.
+	// On the first connection the server's SPKI pin is captured and persisted
+	// via a PinStore; all subsequent connections verify against that pin.
+	// TOFU is NOT included in DefaultMethodOrder because it requires explicit
+	// PinStore configuration and carries a first-use security caveat. It
+	// participates in AutoBootstrapper only when the caller's MethodOrder
+	// includes MethodTOFU and AutoConfig.TOFU is non-nil.
 	MethodTOFU Method = "tofu"
 )
 
-// DefaultMethodOrder is DANE, Noise, SPKI, Direct; MethodTOFU must be added explicitly.
+// DefaultMethodOrder is the default priority order for AutoBootstrapper.
+// Methods are tried in this order: DANE (strongest verification), Noise
+// (pre-shared key), SPKI (pinned TLS), Direct (system trust store).
+//
+// MethodTOFU is intentionally absent from DefaultMethodOrder. It must be
+// added explicitly by the caller when TOFU behaviour is desired.
 var DefaultMethodOrder = []Method{MethodDANE, MethodNoise, MethodSPKI, MethodDirect}
 
 // AttemptError records a single bootstrap method attempt failure.

@@ -5,7 +5,10 @@ package noiseproto
 
 import "github.com/flynn/noise"
 
-// WipeBytes zeros b in place; the garbage collector may have copied it.
+// WipeBytes zeros the contents of a byte slice in-place.
+// This is a defense-in-depth measure to reduce the window during which
+// sensitive key material remains in memory. Note that the Go garbage
+// collector may copy memory, so this does not guarantee complete erasure.
 func WipeBytes(b []byte) {
 	for i := range b {
 		b[i] = 0

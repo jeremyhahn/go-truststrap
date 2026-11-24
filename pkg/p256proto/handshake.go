@@ -21,7 +21,22 @@ type Initiator struct {
 	destroyed bool
 }
 
-// Destroy releases the handshake's locked key schedule; defer it after NewInitiator. Idempotent and nil-safe.
+// Destroy releases the handshake's locked key-schedule memory.
+//
+// A handshake owns locked pages from the moment it is constructed, and locked
+// memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the garbage
+// collector does not reclaim. **Every Initiator must be destroyed**, so the
+// idiomatic use is a deferred call right after construction:
+//
+//	i, err := NewInitiator(responderStatic)
+//	if err != nil {
+//		return err
+//	}
+//	defer i.Destroy()
+//
+// Destroy is idempotent and safe on a nil receiver, so deferring it costs
+// nothing when the handshake also completes or fails on its own -- both of
+// those already release the schedule.
 func (i *Initiator) Destroy() {
 	if i == nil {
 		return
@@ -52,7 +67,13 @@ func (i *Initiator) fail(err error) error {
 	return err
 }
 
-// NewInitiator prepares a handshake against the responder static public key (PublicKeySize bytes); a wrong key fails at the first tag check.
+// NewInitiator prepares a handshake against a responder whose static public
+// key the caller already holds, as PublicKeySize uncompressed bytes.
+//
+// The responder's static public key is mixed into the transcript before
+// anything else, so an initiator provisioned with the WRONG key diverges from
+// the responder at message zero and the handshake fails at a tag check rather
+// than completing against an impostor.
 func NewInitiator(responderStatic []byte) (*Initiator, error) {
 	responder, err := decodePublicKey("NewInitiator", responderStatic)
 	if err != nil {
@@ -69,7 +90,9 @@ func NewInitiator(responderStatic []byte) (*Initiator, error) {
 	return &Initiator{sym: sym, responder: responder}, nil
 }
 
-// WriteMessage1 produces version, suite, the ephemeral public key and a tag keyed by the es agreement.
+// WriteMessage1 produces message 1: version, suite, the initiator's ephemeral
+// public key, and a tag over the transcript keyed by the es agreement. The tag
+// is what proves to the responder that the initiator addressed THIS responder.
 func (i *Initiator) WriteMessage1() ([]byte, error) {
 	if err := i.unusable("WriteMessage1"); err != nil {
 		return nil, err
@@ -189,7 +212,26 @@ type Responder struct {
 	destroyed bool
 }
 
-// Destroy releases the locked key schedule and its budget reservation; defer it after NewResponder. Idempotent and nil-safe.
+// Destroy releases the handshake's locked key-schedule memory, returning its
+// reservation to the process's locked-memory budget.
+//
+// A responder locks nothing until ReadMessage1 has been admitted for a
+// structurally valid message 1 (see NewResponder and protected.go), so a bare or
+// abandoned connection pins no locked pages and needs no Destroy for memory's
+// sake. Once a schedule IS locked -- during and after a valid ReadMessage1 --
+// locked memory is a bounded per-process resource (RLIMIT_MEMLOCK) that the
+// garbage collector does not reclaim, and the budget stays charged until the
+// pages go back. Callers therefore still defer Destroy on every Responder: it is
+// the remedy for a peer that sends a valid message 1 and then abandons the
+// connection, and it is harmless on one that locked nothing.
+//
+//	r, err := NewResponder(static)
+//	if err != nil {
+//		return err
+//	}
+//	defer r.Destroy()
+//
+// Destroy is idempotent and safe on a nil receiver.
 func (r *Responder) Destroy() {
 	if r == nil {
 		return
@@ -220,7 +262,14 @@ func (r *Responder) fail(err error) error {
 	return err
 }
 
-// NewResponder prepares a handshake with the given static key; it locks no memory until ReadMessage1 admits a valid message 1.
+// NewResponder prepares a handshake using the given long-term static key.
+//
+// It locks NO memory and does not so much as reach the process allocator. The
+// transcript is seeded and the responder's static public key is mixed into it --
+// both public operations -- but the secret key schedule is not allocated until
+// ReadMessage1 has done the cheap structural checks on the peer's message and
+// the process budget has admitted it (see protected.go). A bare or abandoned
+// connection therefore pins no locked pages.
 func NewResponder(static *StaticKey) (*Responder, error) {
 	// Refuse a nil OR destroyed key: after Destroy the private half is gone, and
 	// a destroyed key must not authenticate. Checking alive (not just a non-nil
@@ -235,7 +284,9 @@ func NewResponder(static *StaticKey) (*Responder, error) {
 	return &Responder{sym: sym, static: static}, nil
 }
 
-// ReadMessage1 rejects an unknown version or suite before key agreement and verifies the tag.
+// ReadMessage1 consumes message 1. It rejects a version or suite it does not
+// speak BEFORE any key agreement, and verifies the message's tag, which
+// confirms the initiator addressed this responder's static key.
 func (r *Responder) ReadMessage1(msg []byte) error {
 	if err := r.unusable("ReadMessage1"); err != nil {
 		return err

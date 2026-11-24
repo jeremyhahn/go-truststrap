@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	// DefaultTOFUTimeout is the default HTTP request timeout for the TOFU bootstrapper.
+	// DefaultTOFUTimeout is the default HTTP request timeout for the TOFU
+	// bootstrapper.
 	DefaultTOFUTimeout = 10 * time.Second
 
-	// DefaultTOFUBundlePath is the default REST path of the bootstrap CA bundle endpoint.
+	// DefaultTOFUBundlePath is the REST API path for the bootstrap CA bundle
+	// endpoint.
 	DefaultTOFUBundlePath = "/v1/ca/bootstrap"
 
 	// tofuPinSource is the source tag written into newly captured pins.
@@ -38,7 +40,10 @@ type TOFUConfig struct {
 	// PinStore is the backend used to persist and retrieve TOFU pins. Required.
 	PinStore PinStore
 
-	// ConfirmFunc optionally approves a newly captured pin; an error fails with TOFURejectedError, and nil auto-accepts with a warning.
+	// ConfirmFunc is an optional hook called before a newly captured pin is
+	// persisted. Returning an error causes the bootstrap to fail with
+	// TOFURejectedError and prevents the pin from being stored.
+	// When nil, new pins are auto-accepted with a WARNING log entry.
 	ConfirmFunc func(ctx context.Context, pin *Pin) error
 
 	// ConnectTimeout is the per-dial HTTP timeout. Default: DefaultTOFUTimeout.
@@ -47,11 +52,16 @@ type TOFUConfig struct {
 	// Logger for structured logging. If nil, slog.Default() is used.
 	Logger *slog.Logger
 
-	// BundlePath is the REST path of the CA bundle endpoint. Default: DefaultTOFUBundlePath.
+	// BundlePath is the REST API path for the CA bundle endpoint.
+	// Default: DefaultTOFUBundlePath.
 	BundlePath string
 }
 
-// TOFUBootstrapper captures the server's SPKI pin on first contact, optionally confirms and persists it, then verifies like SPKIBootstrapper.
+// TOFUBootstrapper implements Bootstrapper using trust-on-first-use SPKI
+// pinning. The first time a server is contacted its leaf certificate SPKI pin
+// is captured via a dedicated capture dial (no application data is exchanged),
+// optionally confirmed via ConfirmFunc, and then persisted through PinStore.
+// Subsequent connections verify the stored pin exactly like SPKIBootstrapper.
 type TOFUBootstrapper struct {
 	serverURL   string
 	host        string
@@ -63,7 +73,8 @@ type TOFUBootstrapper struct {
 	bundlePath  string
 }
 
-// NewTOFUBootstrapper fails when cfg is nil, ServerURL is empty or PinStore is nil.
+// NewTOFUBootstrapper creates a new TOFU bootstrapper. Returns an error when
+// cfg is nil, ServerURL is empty, or PinStore is nil.
 func NewTOFUBootstrapper(cfg *TOFUConfig) (*TOFUBootstrapper, error) {
 	if cfg == nil {
 		return nil, ErrInvalidConfig
@@ -107,7 +118,16 @@ func NewTOFUBootstrapper(cfg *TOFUConfig) (*TOFUBootstrapper, error) {
 	}, nil
 }
 
-// FetchCABundle captures, confirms and stores a pin on first contact for host:port, then fetches over a strictly pin-verified connection.
+// FetchCABundle retrieves the CA bundle using TOFU SPKI-pinned TLS.
+//
+// On the first call for a given host:port the bootstrapper performs a
+// capture dial whose sole purpose is to observe the server's leaf certificate.
+// No application data is exchanged over that connection. The SPKI pin is
+// computed, optionally confirmed via ConfirmFunc, persisted, and then the
+// bundle is fetched over a second, strictly pin-verified connection.
+//
+// On subsequent calls the stored pin is retrieved and used directly for
+// strict SPKI verification, matching SPKIBootstrapper behaviour.
 func (b *TOFUBootstrapper) FetchCABundle(ctx context.Context, req *CABundleRequest) (*CABundleResponse, error) {
 	existingPin, err := b.pinStore.Get(ctx, b.host, b.port)
 	if err != nil {

@@ -58,18 +58,38 @@ const (
 	SuiteP256AESGCM = noiseboot.SuiteP256AESGCM
 )
 
-// NoiseConfig configures the bootstrapper for the Noise_NK and TSBOOT1_P256_AESGCM_SHA256 suites; at least one server key is required.
+// NoiseConfig configures the Noise bootstrapper. The bootstrapper speaks the
+// two suites the bootstrap wire negotiates -- Noise_NK over Curve25519 and the
+// approved TSBOOT1_P256_AESGCM_SHA256 -- and offers exactly one of them per
+// connection. At least one of ServerStaticKey and ServerP256StaticKey must be
+// set; both may be, which is the shape a fleet migrating to the approved suite
+// provisions.
 type NoiseConfig struct {
 	// ServerAddr is the Noise bootstrap server address (e.g., "kms.example.com:8445").
 	ServerAddr string
 
-	// ServerStaticKey is the server's hex 32-byte Curve25519 public key for SuiteNoiseNK, distributed out of band; empty disables that suite.
+	// ServerStaticKey is the hex-encoded 32-byte Curve25519 public key of the
+	// server, used by the Noise_NK suite (SuiteNoiseNK). This key must be
+	// distributed out-of-band (provisioning config, QR code, etc.). Empty means
+	// the Noise suite is not offered.
 	ServerStaticKey string
 
-	// ServerP256StaticKey is the server's hex 65-byte uncompressed P-256 point for SuiteP256AESGCM; empty disables that suite.
+	// ServerP256StaticKey is the hex-encoded 65-byte uncompressed P-256
+	// responder public point (0x04 || X || Y) of the server, used by the
+	// approved suite (SuiteP256AESGCM). It is distributed out-of-band exactly
+	// as ServerStaticKey is. Empty means the approved suite is not offered,
+	// which leaves a FIPS client with nothing it may propose.
 	ServerP256StaticKey string
 
-	// Suite pins the offered suite; zero picks P-256 when X25519 is unavailable, else Noise when its key is set. Pinning Noise without X25519 fails with ErrFIPSUnsupported.
+	// Suite optionally pins the suite this bootstrapper offers: SuiteNoiseNK or
+	// SuiteP256AESGCM. The zero value selects per policy, by probing whether
+	// the Noise/X25519 path is available in this process rather than by
+	// consulting a build tag or GODEBUG value: where it is unavailable -- a
+	// "fips" build, or GODEBUG=fips140=only -- the approved suite is required,
+	// and otherwise (including the permissive GODEBUG=fips140=on, which still
+	// permits X25519) Noise is preferred when its key is configured, else the
+	// approved suite. Pinning SuiteNoiseNK where X25519 is unavailable fails
+	// with noiseproto/bootstrap.ErrFIPSUnsupported rather than falling back.
 	Suite byte
 
 	// ConnectTimeout is the TCP connection timeout.
@@ -83,7 +103,15 @@ type NoiseConfig struct {
 	Logger *slog.Logger
 }
 
-// NoiseBootstrapper fetches the CA bundle over the bootstrap wire using the server's pre-shared static key, one pkg/noiseproto/bootstrap client per fetch.
+// NoiseBootstrapper implements Bootstrapper over the bootstrap wire. It
+// establishes an encrypted session with the bootstrap server using only the
+// server's pre-shared static public key for the suite it offers, then retrieves
+// the CA bundle over the encrypted channel.
+//
+// The handshake itself belongs to pkg/noiseproto/bootstrap: this type holds the
+// configuration, drives one client per fetch, and maps the response onto the
+// Bootstrapper contract. Suite selection is therefore the same decision here as
+// for a consumer using that package directly, made in one place.
 type NoiseBootstrapper struct {
 	config noiseboot.ClientConfig
 	logger *slog.Logger
@@ -100,7 +128,19 @@ type noiseFetch struct {
 	stop   func() bool
 }
 
-// NewNoiseBootstrapper validates the configured keys (64 hex Curve25519, 130 hex P-256 point) and Suite, returning NoiseConfigError; suite availability is decided at fetch time.
+// NewNoiseBootstrapper creates a new bootstrapper for the Noise bootstrap
+// wire. At least one server key must be configured: ServerStaticKey, a
+// hex-encoded 32-byte Curve25519 key (64 hex characters) for the Noise_NK
+// suite, or ServerP256StaticKey, a hex-encoded 65-byte uncompressed P-256 point
+// (130 hex characters) for the approved suite. A key that is configured but
+// malformed -- wrong length, wrong point prefix, or a P-256 point that is not
+// on the curve -- and a Suite pinned without the key it needs, are
+// configuration defects and are refused here, as a NoiseConfigError wrapping
+// ErrInvalidConfig, rather than at the first fetch.
+//
+// Whether a suite is *available* is a property of the running process, not of
+// the configuration, so it is not decided here: a Noise-only configuration
+// still constructs in a FIPS build and reports the refusal from FetchCABundle.
 func NewNoiseBootstrapper(cfg *NoiseConfig) (*NoiseBootstrapper, error) {
 	if cfg == nil {
 		return nil, ErrInvalidConfig
@@ -215,7 +255,20 @@ func suiteLabel(suite byte) string {
 	return "0x" + hex.EncodeToString([]byte{suite})
 }
 
-// FetchCABundle opens a connection, runs the selected handshake, requests get_ca_bundle and closes; one fetch at a time (ErrAlreadyConnected), and Close or ctx end it with ErrClosed.
+// FetchCABundle retrieves the CA bundle over the bootstrap wire. It establishes
+// a TCP connection, performs the selected suite's handshake, sends a
+// get_ca_bundle request, and returns the response. Each call creates a new
+// connection and closes it before returning; one fetch is in flight at a time,
+// and a second concurrent call fails with ErrAlreadyConnected.
+//
+// A suite that is unavailable in this process is never offered; if no suite is
+// both configured and available, the typed refusal
+// (noiseproto/bootstrap.ErrFIPSUnsupported) is returned wrapped in
+// ErrFetchFailed, before a connection is opened. A Close that arrives while the
+// fetch is in flight -- dialing, in the handshake, or waiting on the response
+// -- closes the connection and ends the fetch with ErrClosed, wrapped the same
+// way; so does cancelling ctx. In every case the fetch closes its own
+// connection before returning.
 func (b *NoiseBootstrapper) FetchCABundle(ctx context.Context, req *CABundleRequest) (*CABundleResponse, error) {
 	// OperationTimeout bounds the whole operation -- handshake and retrieval --
 	// so it is applied once, here, and inherited by both legs below.
@@ -262,7 +315,12 @@ func (b *NoiseBootstrapper) FetchCABundle(ctx context.Context, req *CABundleRequ
 	}, nil
 }
 
-// Close ends the fetch in flight with ErrClosed; the bootstrapper stays reusable and Close is idempotent.
+// Close ends the fetch in flight, if any: its ownership is revoked, its
+// context is cancelled, and its connection is closed, which ends a dial, a
+// handshake or a response read blocked on a stalled peer without waiting for
+// the operation's deadline. The fetch then returns ErrClosed. The bootstrapper
+// is reusable afterwards; with no fetch in flight Close is a no-op, and it is
+// safe to call more than once.
 func (b *NoiseBootstrapper) Close() error {
 	b.mu.Lock()
 	f := b.fetch

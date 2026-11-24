@@ -1,7 +1,17 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package gitearelease creates or reuses a Gitea release for a tag, with the tag's CHANGELOG section as body, and uploads dist/ as assets, replacing same-named ones.
+// Package gitearelease publishes a release to a Gitea-compatible forge: it creates
+// (or reuses) the release object for a tag, then uploads every file in dist/ as an
+// asset, replacing an asset of the same name so a re-run converges instead of
+// accumulating duplicates. It uses the forge's /api/v1 release API with the
+// standard library only.
+//
+// A failed lookup of an existing release is an error (only a 404 means absent),
+// and a response that cannot be decoded is an error rather than an empty id.
+//
+// The body is the tag's CHANGELOG section. The token is sent only in the
+// Authorization header; it never appears in a URL, an argument or a log line.
 package gitearelease
 
 import (
@@ -23,7 +33,8 @@ import (
 // maxErrorBody bounds how much of an error response is quoted back.
 const maxErrorBody = 512
 
-// Config is everything a publish needs.
+// Config is everything a publish needs. The release workflow supplies it from
+// its environment; see cmd/gitea-release.
 type Config struct {
 	// ServerURL is the Gitea instance root, e.g. https://forge.example.com.
 	ServerURL string
@@ -74,7 +85,10 @@ func IsPrerelease(tag string) bool {
 	return strings.Contains(tag, "-")
 }
 
-// Notes returns the CHANGELOG section under the literal column-1 `## [version]` heading, up to the next second-level heading.
+// Notes returns the CHANGELOG section for exactly version: the lines after its
+// own `## [version]` heading, up to the next second-level heading. The heading
+// match is literal and anchored at column 1, the same test the release
+// workflow's validate job applies.
 func Notes(changelog []byte, version string) (string, error) {
 	want := "## [" + version + "]"
 	var (

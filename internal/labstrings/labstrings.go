@@ -1,8 +1,67 @@
 // Copyright 2026 Jeremy Hahn
 // SPDX-License-Identifier: MIT
 
-// Package labstrings is the public-release gate: it reports lab hosts, addresses and owner paths (Scan, ScanRepo) and tracked files that must not be published (ForbiddenFiles).
-// Patterns come from the untracked file named by LABSTRINGS_PATTERNS, one `class<TAB>regexp` per line; waive a line with `lab-string-ok: <reason>` or an AllowRule.
+// Package labstrings is the release gate that keeps this repository publicly
+// releasable. It reports two things about the files in the git index:
+//
+//   - a line that names a host, an address or a filesystem path belonging to
+//     the private development lab (Scan, ScanRepo); and
+//   - a tracked file that must never reach the public tree at all, such as
+//     agent working files, build output, shell scripts or internal-only
+//     workflows (ForbiddenFiles).
+//
+// Anything committed is published, so the gate runs on the tree itself. The
+// rule is described in docs/release/public-releasability.md.
+//
+// What is reported:
+//
+//   - ClassLabAddress: an address on the lab subnet. Unreachable for every
+//     public reader, and it publishes the network layout.
+//   - ClassLabHost: a lab hostname; it also names machines worth attacking.
+//   - ClassOwnerPath: a path under a home directory or the lab's NFS mount.
+//     Meaningless off that one machine, and it leaks the account name.
+//
+// What to do with a finding, in order of preference:
+//
+//   - Use a documentation value: RFC 5737 addresses (192.0.2.0/24,
+//     198.51.100.0/24, 203.0.113.0/24), RFC 2606 names (example.com,
+//     *.example, *.invalid), or a role rather than a machine (`ci-runner-01`,
+//     `forge.internal`).
+//   - Move the value out of the tree: a forge address belongs in a CI
+//     repository variable, a lab address in a private repository.
+//   - If the value is the point (provenance for a benchmark, the host a
+//     captured log came from), waive the line in place.
+//
+// Two ways to accept a line, both explicit:
+//
+//   - An inline waiver: the text `lab-string-ok: <reason>` on the offending
+//     line or the line immediately above it, in whatever comment syntax the
+//     file uses. An empty reason is not a waiver.
+//   - An entry in DefaultAllowList, for whole trees and for files that cannot
+//     carry a comment. Each entry carries the classes it accepts and a reason;
+//     see allowlist.go.
+//
+// A forbidden file has no waiver: the fix is to untrack it.
+//
+// The patterns live in an untracked file whose path is in the
+// LABSTRINGS_PATTERNS environment variable (PatternsEnv), read once at startup.
+// Each line is
+//
+//	class<TAB>regexp
+//
+// where class is a label (a lowercase letter, then up to 31 lowercase letters,
+// digits or hyphens) and regexp is RE2 syntax (regexp.Compile). lab-address,
+// lab-host and owner-path carry specific guidance; any other class carries
+// defaultGuidance. Blank lines and lines starting with # are skipped. The
+// literal every match must contain, which the cheap pre-scan searches for, is
+// derived from the regexp. A malformed line is an error naming its line
+// number, and Scan and ScanRepo return it. With the variable unset there are
+// no lab patterns and ScanRepo reports nothing.
+//
+// The package is internal repository tooling, and `go test ./...` runs the gate.
+// Matching is textual: it needs no build tags or parser, runs on a tree that
+// does not compile, and covers Markdown, YAML, Dockerfiles and Kotlin as well
+// as Go.
 package labstrings
 
 import (
@@ -34,7 +93,8 @@ const (
 	// ClassLabHost is a hostname belonging to the development fleet.
 	ClassLabHost Class = "lab-host"
 
-	// ClassOwnerPath is a path that exists only on the owner's machine or the lab's network mount.
+	// ClassOwnerPath is a filesystem path that exists only on one developer
+	// machine or on the lab's network mount.
 	ClassOwnerPath Class = "owner-path"
 )
 
@@ -69,14 +129,23 @@ type Pattern struct {
 	// line, so the report can quote exactly what has to change.
 	Expr *regexp.Regexp
 
-	// Needle is a lowercase literal every match of Expr contains, derived by needleOf; empty means the sieve never skips.
+	// Needle is a lowercase literal that every string Expr can match must
+	// contain. It is the cheap precondition the sieve uses: a substring
+	// search runs at memory bandwidth where this regexp runs at a few
+	// megabytes a second, and the whole tree has to be read on every unit
+	// test pass. needleOf derives it from Expr itself, so it cannot drift
+	// from the expression; an Expr with no mandatory literal gets an empty
+	// Needle, which the sieve never skips.
 	Needle string
 
 	// Guidance is what the engineer who tripped this rule should do instead.
 	Guidance string
 }
 
-// PatternsEnv names the environment variable holding the untracked patterns file path.
+// PatternsEnv names the environment variable that holds the path of the
+// patterns file. The file is not tracked: the lab's own values are exactly
+// what this gate keeps out of the public tree, so they cannot be written
+// down in it.
 const PatternsEnv = "LABSTRINGS_PATTERNS"
 
 // maxPatternsFileSize caps the patterns file: it holds a few dozen lines, and
@@ -357,7 +426,10 @@ type Finding struct {
 	Guidance string
 }
 
-// String renders path:line: class only, never the matched text.
+// String renders a finding in the file:line:message form every editor and every
+// CI log viewer already knows how to jump to. It names the path, the line and
+// the class only: the matched text and the excerpt around it are the very value
+// that must not be published, and a CI log is published.
 func (f Finding) String() string {
 	return fmt.Sprintf("%s:%d: [%s]", f.Path, f.Line, f.Class)
 }
@@ -411,7 +483,15 @@ func TrackedFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// Scan reports lab values in the named files under root after validating rules; files absent from the tree are skipped and other read failures are *ReadError.
+// Scan reports the lab values in the named files, which are interpreted relative
+// to root. Rules are validated first: an allow-list that does not say why it
+// allows something is a defect in the gate, not a pass.
+//
+// Every file is read to its end, text or binary, however large: memory stays
+// bounded because the file is streamed. A file listed in the index but absent
+// from the working tree is skipped -- a deletion in progress has no content to
+// publish -- and anything else that cannot be read is a *ReadError, never a
+// pass.
 func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
 	if patternsErr != nil {
 		return nil, patternsErr
@@ -606,7 +686,10 @@ func excerpt(line string) string {
 	return trimmed[:excerptLimit] + " ..."
 }
 
-// Report writes actionable findings and returns whether anything was written.
+// Report writes the findings in a form an engineer can act on without opening
+// this file, and returns whether anything was written. Findings are the gate's
+// product: a gate whose output does not say what to do next gets waived
+// wholesale by the next person who trips it.
 func Report(w io.Writer, findings []Finding) (bool, error) {
 	if len(findings) == 0 {
 		return false, nil

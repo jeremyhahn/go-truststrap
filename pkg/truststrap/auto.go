@@ -39,7 +39,12 @@ type AutoConfig struct {
 	// Direct configures the direct HTTPS bootstrapper. Nil means skip Direct.
 	Direct *DirectConfig
 
-	// TOFU configures the trust-on-first-use bootstrapper; nil skips it, and it runs only when MethodOrder names MethodTOFU.
+	// TOFU configures the trust-on-first-use bootstrapper. Nil means skip TOFU.
+	//
+	// MethodTOFU is NOT included in DefaultMethodOrder. It participates only
+	// when the caller provides a non-nil TOFU config AND includes MethodTOFU
+	// in MethodOrder. This prevents accidental TOFU fallback in environments
+	// that intend a strictly pinned or DANE-verified trust model.
 	TOFU *TOFUConfig
 
 	// Logger for structured logging. If nil, slog.Default() is used.
@@ -60,7 +65,9 @@ type AutoBootstrapper struct {
 	logger     *slog.Logger
 }
 
-// NewAutoBootstrapper builds the method factories from non-nil configs and requires at least one in the order.
+// NewAutoBootstrapper creates a new AutoBootstrapper from the given config.
+// It builds a factory map from non-nil method configs and validates that
+// at least one method is configured in the order.
 func NewAutoBootstrapper(cfg *AutoConfig) (*AutoBootstrapper, error) {
 	if cfg == nil {
 		return nil, ErrInvalidConfig
